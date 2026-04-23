@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "framework": null,
+  "functions": {
+    "api/index.php": {
+      "runtime": "vercel-php@0.7.1"
+    }
+  },
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.php"
+    }
+  ],
+  "env": {
+    "APP_ENV": "production",
+    "APP_DEBUG": "false",
+    "LOG_CHANNEL": "stderr",
+    "DB_CONNECTION": "pgsql",
+    "DB_HOST": "@db_host",
+    "DB_PORT": "5432",
+    "DB_DATABASE": "@db_database",
+    "DB_USERNAME": "@db_username",
+    "DB_PASSWORD": "@db_password",
+    "DB_SSLMODE": "require",
+    "JWT_SECRET": "@jwt_secret",
+    "APP_KEY": "@app_key",
+    "CORS_ALLOWED_ORIGINS": "@cors_origins"
+  }
+}

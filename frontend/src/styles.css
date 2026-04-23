@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  background: #0a0f1e;
+  color: #e2e8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0a0f1e; }
+::-webkit-scrollbar-thumb { background: #1e2d4a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2a3f60; }
+
+/* Toast overrides */
+.toast-container .ngx-toastr {
+  background: #0d1427 !important;
+  border: 1px solid #1e2d4a !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4) !important;
+  color: #e2e8f0 !important;
+  font-family: 'Inter', sans-serif !important;
+}
+.toast-success { border-left: 3px solid #4ade80 !important; }
+.toast-error   { border-left: 3px solid #f87171 !important; }
+.toast-warning { border-left: 3px solid #fbbf24 !important; }
+.toast-info    { border-left: 3px solid #38bdf8 !important; }
+.toast-progress { background: #1e2d4a !important; }
+
+/* Selection */
+::selection { background: #0ea5e940; color: #f0f9ff; }
