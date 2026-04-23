@@ -171,4 +171,11 @@ export class ApiService {
     const p = new URLSearchParams(filters).toString();
     return `${this.url('relatorios/proprietario/pdf')}?${p}`;
   }
+
+  // Uploads
+  uploadToDrive(file: File): Observable<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    return this.http.post(this.url('uploads/drive'), fd);
+  }
 }

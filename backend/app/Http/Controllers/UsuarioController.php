@@ -16,7 +16,7 @@ class UsuarioController extends Controller
                 ->orWhere('login','ilike','%'.$request->search.'%'));
         }
         if ($request->filled('tipo')) $query->where('tipo', $request->tipo);
-        return response()->json($query->orderBy('nome')->paginate($request->get('per_page', 50)));
+        return new \Illuminate\Http\JsonResponse($query->orderBy('nome')->paginate($request->get('per_page', 50)));
     }
 
     public function store(Request $request)
@@ -28,12 +28,12 @@ class UsuarioController extends Controller
             'tipo'     => 'required|string|in:admin,operador,visualizador',
         ]);
         $data['password'] = Hash::make($data['password']);
-        return response()->json(Usuario::create($data), 201);
+        return new \Illuminate\Http\JsonResponse(Usuario::create($data), 201);
     }
 
     public function show(string $id)
     {
-        return response()->json(Usuario::findOrFail($id));
+        return new \Illuminate\Http\JsonResponse(Usuario::findOrFail($id));
     }
 
     public function update(Request $request, string $id)
@@ -51,16 +51,16 @@ class UsuarioController extends Controller
             unset($data['password']);
         }
         $usuario->update($data);
-        return response()->json($usuario->fresh());
+        return new \Illuminate\Http\JsonResponse($usuario->fresh());
     }
 
     public function destroy(string $id)
     {
         $currentUser = auth()->user();
         if ($currentUser && $currentUser->id_user === $id) {
-            return response()->json(['message' => 'Não é possível excluir o próprio usuário'], 422);
+            return new \Illuminate\Http\JsonResponse(['message' => 'Não é possível excluir o próprio usuário'], 422);
         }
         Usuario::findOrFail($id)->delete();
-        return response()->json(['message' => 'Usuário excluído']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Usuário excluído']);
     }
 }

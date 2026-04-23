@@ -17,7 +17,7 @@ class BaixaAbastecimentoController extends Controller
             $query->where('id_abastecimento', $request->id_abastecimento);
         }
 
-        return response()->json($query->orderByDesc('data_hora')->paginate($request->get('per_page', 20)));
+        return new \Illuminate\Http\JsonResponse($query->orderByDesc('data_hora')->paginate($request->get('per_page', 20)));
     }
 
     public function store(Request $request)
@@ -65,10 +65,10 @@ class BaixaAbastecimentoController extends Controller
             ]);
 
             DB::commit();
-            return response()->json($baixa->load('abastecimento'), 201);
+            return new \Illuminate\Http\JsonResponse($baixa->load('abastecimento'), 201);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['message' => 'Erro ao registrar baixa: ' . $e->getMessage()], 500);
+            return new \Illuminate\Http\JsonResponse(['message' => 'Erro ao registrar baixa: ' . $e->getMessage()], 500);
         }
     }
 
@@ -105,23 +105,23 @@ class BaixaAbastecimentoController extends Controller
             }
 
             DB::commit();
-            return response()->json(['message' => count($request->ids) . ' baixas registradas com sucesso']);
+            return new \Illuminate\Http\JsonResponse(['message' => count($request->ids) . ' baixas registradas com sucesso']);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['message' => 'Erro: ' . $e->getMessage()], 500);
+            return new \Illuminate\Http\JsonResponse(['message' => 'Erro: ' . $e->getMessage()], 500);
         }
     }
 
     public function show(string $id)
     {
-        return response()->json(BaixaAbastecimento::with('abastecimento.veiculo')->findOrFail($id));
+        return new \Illuminate\Http\JsonResponse(BaixaAbastecimento::with('abastecimento.veiculo')->findOrFail($id));
     }
 
     public function update(Request $request, string $id)
     {
         $baixa = BaixaAbastecimento::findOrFail($id);
         $baixa->update($request->only(['forma_pagamento','data_pagamento','nota_entrada']));
-        return response()->json($baixa->fresh());
+        return new \Illuminate\Http\JsonResponse($baixa->fresh());
     }
 
     public function destroy(string $id)
@@ -133,7 +133,7 @@ class BaixaAbastecimentoController extends Controller
             'data_baixa' => null,
         ]);
         $baixa->delete();
-        return response()->json(['message' => 'Baixa excluída e abastecimento revertido']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Baixa excluída e abastecimento revertido']);
     }
 
     public function forceDelete(string $id)

@@ -18,7 +18,7 @@ class ProprietarioController extends Controller
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
-        return response()->json($query->orderBy('nome')->paginate($request->get('per_page', 50)));
+        return new \Illuminate\Http\JsonResponse($query->orderBy('nome')->paginate($request->get('per_page', 50)));
     }
 
     public function store(Request $request)
@@ -30,12 +30,12 @@ class ProprietarioController extends Controller
             'celular'     => 'nullable|string',
         ]);
         $data['data_registro'] = now();
-        return response()->json(Proprietario::create($data), 201);
+        return new \Illuminate\Http\JsonResponse(Proprietario::create($data), 201);
     }
 
     public function show(string $id)
     {
-        return response()->json(Proprietario::with(['veiculos','motoristas'])->findOrFail($id));
+        return new \Illuminate\Http\JsonResponse(Proprietario::with(['veiculos','motoristas'])->findOrFail($id));
     }
 
     public function update(Request $request, string $id)
@@ -47,12 +47,12 @@ class ProprietarioController extends Controller
             'responsavel' => 'nullable|string',
             'celular'     => 'nullable|string',
         ]));
-        return response()->json($proprietario->fresh());
+        return new \Illuminate\Http\JsonResponse($proprietario->fresh());
     }
 
     public function destroy(string $id)
     {
         Proprietario::findOrFail($id)->delete();
-        return response()->json(['message' => 'Proprietário excluído']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Proprietário excluído']);
     }
 }

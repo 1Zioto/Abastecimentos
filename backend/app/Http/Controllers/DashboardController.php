@@ -42,7 +42,7 @@ class DashboardController extends Controller
             ->limit(5)
             ->get();
 
-        return response()->json([
+        return new \Illuminate\Http\JsonResponse([
             'totais' => [
                 'abastecimentos' => $totalAbastecimentos,
                 'litros'         => round($totalLitros, 2),

@@ -17,7 +17,7 @@ class VeiculoController extends Controller
                 ->orWhere('modelo','ilike','%'.$request->search.'%')
                 ->orWhere('marca','ilike','%'.$request->search.'%'));
         }
-        return response()->json($query->orderBy('placa')->paginate($request->get('per_page', 50)));
+        return new \Illuminate\Http\JsonResponse($query->orderBy('placa')->paginate($request->get('per_page', 50)));
     }
 
     public function store(Request $request)
@@ -35,12 +35,12 @@ class VeiculoController extends Controller
             'cor'             => 'nullable|string',
             'foto'            => 'nullable|string',
         ]);
-        return response()->json(Veiculo::create($data), 201);
+        return new \Illuminate\Http\JsonResponse(Veiculo::create($data), 201);
     }
 
     public function show(string $id)
     {
-        return response()->json(Veiculo::with('proprietario')->findOrFail($id));
+        return new \Illuminate\Http\JsonResponse(Veiculo::with('proprietario')->findOrFail($id));
     }
 
     public function update(Request $request, string $id)
@@ -59,17 +59,17 @@ class VeiculoController extends Controller
             'cor'             => 'nullable|string',
             'foto'            => 'nullable|string',
         ]));
-        return response()->json($veiculo->fresh('proprietario'));
+        return new \Illuminate\Http\JsonResponse($veiculo->fresh('proprietario'));
     }
 
     public function destroy(string $id)
     {
         Veiculo::findOrFail($id)->delete();
-        return response()->json(['message' => 'Veículo excluído']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Veículo excluído']);
     }
 
     public function byProprietario(string $id)
     {
-        return response()->json(Veiculo::where('id_proprietario', $id)->orderBy('placa')->get());
+        return new \Illuminate\Http\JsonResponse(Veiculo::where('id_proprietario', $id)->orderBy('placa')->get());
     }
 }

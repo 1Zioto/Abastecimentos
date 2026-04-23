@@ -44,7 +44,7 @@ class RelatorioController extends Controller
             'registros'          => $abastecimentos->count(),
         ];
 
-        return response()->json([
+        return new \Illuminate\Http\JsonResponse([
             'proprietario'   => $proprietario,
             'abastecimentos' => $abastecimentos,
             'totais'         => $totais,

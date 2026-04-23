@@ -12,6 +12,7 @@ use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\ValoresCombustivelController;
 use App\Http\Controllers\RelatorioController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DriveUploadController;
 
 /*
 |--------------------------------------------------------------------------
@@ -69,4 +70,7 @@ Route::middleware('auth:api')->group(function () {
     // Relatórios
     Route::get('relatorios/proprietario', [RelatorioController::class, 'porProprietario']);
     Route::get('relatorios/proprietario/pdf', [RelatorioController::class, 'porProprietarioPdf']);
+
+    // Uploads
+    Route::post('uploads/drive', [DriveUploadController::class, 'store']);
 });

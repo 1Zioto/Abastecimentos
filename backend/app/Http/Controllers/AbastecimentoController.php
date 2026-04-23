@@ -38,7 +38,7 @@ class AbastecimentoController extends Controller
         }
 
         $perPage = $request->get('per_page', 20);
-        return response()->json($query->orderByDesc('data_hora')->paginate($perPage));
+        return new \Illuminate\Http\JsonResponse($query->orderByDesc('data_hora')->paginate($perPage));
     }
 
     public function store(Request $request)
@@ -61,6 +61,9 @@ class AbastecimentoController extends Controller
             'status'            => 'nullable|string',
         ]);
 
+        $data['local'] = trim((string) ($data['local'] ?? '')) ?: 'Garagem';
+        $data['status'] = trim((string) ($data['status'] ?? '')) ?: 'Pendente';
+
         // Buscar valor atual do combustível — NÃO pode ser alterado depois
         $valorAtual = ValoresCombustivel::where('tipo_combustivel', $data['tipo_combustivel'])
             ->orderByDesc('data')
@@ -77,14 +80,14 @@ class AbastecimentoController extends Controller
         }
 
         $abastecimento = Abastecimento::create($data);
-        return response()->json($abastecimento->load(['veiculo','motorista','proprietario']), 201);
+        return new \Illuminate\Http\JsonResponse($abastecimento->load(['veiculo','motorista','proprietario']), 201);
     }
 
     public function show(string $id)
     {
         $abastecimento = Abastecimento::with(['veiculo','motorista','proprietario','baixas'])
             ->findOrFail($id);
-        return response()->json($abastecimento);
+        return new \Illuminate\Http\JsonResponse($abastecimento);
     }
 
     public function update(Request $request, string $id)
@@ -122,7 +125,7 @@ class AbastecimentoController extends Controller
         unset($data['valor_por_litro']);
 
         $abastecimento->update($data);
-        return response()->json($abastecimento->fresh(['veiculo','motorista','proprietario']));
+        return new \Illuminate\Http\JsonResponse($abastecimento->fresh(['veiculo','motorista','proprietario']));
     }
 
     public function destroy(string $id)
@@ -131,7 +134,7 @@ class AbastecimentoController extends Controller
         // Remover baixas vinculadas primeiro
         $abastecimento->baixas()->delete();
         $abastecimento->delete();
-        return response()->json(['message' => 'Abastecimento excluído com sucesso']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Abastecimento excluído com sucesso']);
     }
 
     public function forceDelete(string $id)
@@ -141,7 +144,28 @@ class AbastecimentoController extends Controller
 
     public function pendenteBaixa(Request $request)
     {
-        $query = Abastecimento::with(['veiculo','proprietario','motorista'])
+        $limit = (int) $request->get('limit', 400);
+        $limit = max(1, min($limit, 1000));
+
+        $query = Abastecimento::query()
+            ->select([
+                'id_abastecimento',
+                'data',
+                'data_hora',
+                'id_veiculo',
+                'id_motorista',
+                'id_proprietario',
+                'nome_motorista',
+                'nome_proprietario',
+                'quantidade_litros',
+                'valor_total',
+                'baixa_abastecimento',
+            ])
+            ->with([
+                'veiculo:id_veiculo,placa,modelo,id_proprietario',
+                'proprietario:id_proprietario,nome',
+                'motorista:id_motorista,nome,id_proprietario',
+            ])
             ->where('baixa_abastecimento', false);
 
         if ($request->filled('id_proprietario')) {
@@ -157,7 +181,9 @@ class AbastecimentoController extends Controller
             $query->whereDate('data', '<=', $request->data_fim);
         }
 
-        return response()->json($query->orderByDesc('data_hora')->get());
+        return new \Illuminate\Http\JsonResponse(
+            $query->orderByDesc('data_hora')->limit($limit)->get()
+        );
     }
 
     public function comprovante(string $id)

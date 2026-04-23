@@ -21,8 +21,8 @@ import { ToastrService } from 'ngx-toastr';
       <div class="login-card">
         <div class="brand">
           <span class="brand-icon">⛽</span>
-          <h1>FuelTrack</h1>
-          <p>Sistema de Gestão de Abastecimento</p>
+          <h1>Abastecimento Vipe</h1>
+          <p>Vipe Transportes (Garagem)</p>
         </div>
 
         <form [formGroup]="form" (ngSubmit)="onSubmit()" class="login-form">
@@ -72,7 +72,7 @@ import { ToastrService } from 'ngx-toastr';
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #050b18;
+      background: var(--bg-app);
       position: relative;
       overflow: hidden;
       font-family: 'Inter', sans-serif;
@@ -83,21 +83,21 @@ import { ToastrService } from 'ngx-toastr';
       position: absolute;
       border-radius: 50%;
       filter: blur(80px);
-      opacity: 0.15;
+      opacity: 0.08;
     }
-    .orb1 { width: 500px; height: 500px; background: #0ea5e9; top: -100px; right: -100px; }
-    .orb2 { width: 400px; height: 400px; background: #6366f1; bottom: -100px; left: -100px; }
+    .orb1 { width: 500px; height: 500px; background: var(--brand-yellow); top: -100px; right: -100px; }
+    .orb2 { width: 400px; height: 400px; background: var(--brand-charcoal); bottom: -100px; left: -100px; }
     .grid-lines {
       position: absolute; inset: 0;
       background-image:
-        linear-gradient(rgba(56,189,248,0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(56,189,248,0.04) 1px, transparent 1px);
+        linear-gradient(rgba(249,203,0,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(249,203,0,0.06) 1px, transparent 1px);
       background-size: 40px 40px;
     }
 
     .login-card {
-      background: #0d1427;
-      border: 1px solid #1e2d4a;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
       border-radius: 20px;
       padding: 40px 36px;
       width: 100%;
@@ -113,22 +113,22 @@ import { ToastrService } from 'ngx-toastr';
       font-family: 'Rajdhani', sans-serif;
       font-size: 32px;
       font-weight: 700;
-      color: #38bdf8;
+      color: var(--accent);
       letter-spacing: 3px;
       margin: 0;
     }
-    .brand p { font-size: 12px; color: #64748b; margin-top: 6px; }
+    .brand p { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
 
     .login-form { display: flex; flex-direction: column; gap: 18px; }
 
     .field { display: flex; flex-direction: column; gap: 6px; }
-    .field label { font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+    .field label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
     .field input {
-      background: #0a0f1e;
-      border: 1px solid #1e2d4a;
+      background: var(--bg-app);
+      border: 1px solid var(--border-color);
       border-radius: 10px;
       padding: 12px 14px;
-      color: #e2e8f0;
+      color: var(--text-primary);
       font-size: 14px;
       font-family: 'Inter', sans-serif;
       outline: none;
@@ -136,8 +136,8 @@ import { ToastrService } from 'ngx-toastr';
       width: 100%;
       box-sizing: border-box;
     }
-    .field input:focus { border-color: #0ea5e9; box-shadow: 0 0 0 3px rgba(14,165,233,0.1); }
-    .field input::placeholder { color: #334155; }
+    .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(249,203,0,0.18); }
+    .field input::placeholder { color: #666; }
 
     .input-wrapper { position: relative; }
     .input-wrapper input { padding-right: 44px; }
@@ -157,11 +157,11 @@ import { ToastrService } from 'ngx-toastr';
     }
 
     .submit-btn {
-      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+      background: var(--accent);
       border: none;
       border-radius: 10px;
       padding: 14px;
-      color: #fff;
+      color: var(--accent-contrast);
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
@@ -173,13 +173,13 @@ import { ToastrService } from 'ngx-toastr';
       font-family: 'Inter', sans-serif;
       margin-top: 6px;
     }
-    .submit-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 8px 20px rgba(14,165,233,0.3); }
+    .submit-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 8px 20px rgba(249,203,0,0.28); }
     .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .spinner {
       width: 16px; height: 16px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
+      border: 2px solid rgba(0,0,0,0.2);
+      border-top-color: #000;
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
     }
@@ -209,7 +209,7 @@ export class LoginComponent {
     const { login, password } = this.form.value;
     this.auth.login(login!, password!).subscribe({
       next: () => {
-        this.toastr.success('Bem-vindo ao FuelTrack!');
+          this.toastr.success('Bem-vindo ao Abastecimento Vipe!');
         this.router.navigate(['/dashboard']);
       },
       error: (err) => {

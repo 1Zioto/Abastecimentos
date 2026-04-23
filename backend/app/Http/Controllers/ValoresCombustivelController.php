@@ -11,7 +11,7 @@ class ValoresCombustivelController extends Controller
     {
         $query = ValoresCombustivel::query();
         if ($request->filled('tipo_combustivel')) $query->where('tipo_combustivel', $request->tipo_combustivel);
-        return response()->json($query->orderByDesc('data')->paginate($request->get('per_page', 30)));
+        return new \Illuminate\Http\JsonResponse($query->orderByDesc('data')->paginate($request->get('per_page', 30)));
     }
 
     public function store(Request $request)
@@ -22,12 +22,12 @@ class ValoresCombustivelController extends Controller
             'responsavel'      => 'nullable|string',
         ]);
         $data['data'] = now();
-        return response()->json(ValoresCombustivel::create($data), 201);
+        return new \Illuminate\Http\JsonResponse(ValoresCombustivel::create($data), 201);
     }
 
     public function show(string $id)
     {
-        return response()->json(ValoresCombustivel::findOrFail($id));
+        return new \Illuminate\Http\JsonResponse(ValoresCombustivel::findOrFail($id));
     }
 
     public function update(Request $request, string $id)
@@ -38,13 +38,13 @@ class ValoresCombustivelController extends Controller
             'valor'            => 'sometimes|numeric|min:0',
             'responsavel'      => 'nullable|string',
         ]));
-        return response()->json($registro->fresh());
+        return new \Illuminate\Http\JsonResponse($registro->fresh());
     }
 
     public function destroy(string $id)
     {
         ValoresCombustivel::findOrFail($id)->delete();
-        return response()->json(['message' => 'Registro excluído']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Registro excluído']);
     }
 
     public function valorAtual(string $tipo)
@@ -52,6 +52,6 @@ class ValoresCombustivelController extends Controller
         $valor = ValoresCombustivel::where('tipo_combustivel', $tipo)
             ->orderByDesc('data')
             ->first();
-        return response()->json($valor);
+        return new \Illuminate\Http\JsonResponse($valor);
     }
 }

@@ -1,5 +1,5 @@
 // src/app/features/baixa/baixa.component.ts
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
@@ -261,6 +261,11 @@ export class BaixaComponent implements OnInit {
   selected = signal<Set<string>>(new Set());
   loadingPendentes = signal(true);
   saving = signal(false);
+  totalSelecionado = computed(() =>
+    this.pendentes()
+      .filter((a) => this.selected().has(a.id_abastecimento))
+      .reduce((acc, a) => acc + this.toNumber(a.valor_total), 0)
+  );
 
   filters: any = { id_proprietario: '', placa: '', data_inicio: '', data_fim: '' };
 
@@ -304,10 +309,12 @@ export class BaixaComponent implements OnInit {
 
   clearSelection() { this.selected.set(new Set()); }
 
-  totalSelecionado(): number {
-    return this.pendentes()
-      .filter(a => this.selected().has(a.id_abastecimento))
-      .reduce((acc, a) => acc + (a.valor_total ?? 0), 0);
+  private toNumber(value: unknown): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const normalized = String(value).replace(',', '.').trim();
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   onSubmit() {

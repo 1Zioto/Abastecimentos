@@ -15,7 +15,7 @@ class MotoristaController extends Controller
             $query->where(fn($q) => $q->where('nome','ilike','%'.$request->search.'%')
                 ->orWhere('documento','ilike','%'.$request->search.'%'));
         }
-        return response()->json($query->orderBy('nome')->paginate($request->get('per_page', 50)));
+        return new \Illuminate\Http\JsonResponse($query->orderBy('nome')->paginate($request->get('per_page', 50)));
     }
 
     public function store(Request $request)
@@ -26,12 +26,12 @@ class MotoristaController extends Controller
             'documento'       => 'nullable|string',
             'celular'         => 'nullable|string',
         ]);
-        return response()->json(Motorista::create($data), 201);
+        return new \Illuminate\Http\JsonResponse(Motorista::create($data), 201);
     }
 
     public function show(string $id)
     {
-        return response()->json(Motorista::with('proprietario')->findOrFail($id));
+        return new \Illuminate\Http\JsonResponse(Motorista::with('proprietario')->findOrFail($id));
     }
 
     public function update(Request $request, string $id)
@@ -43,17 +43,17 @@ class MotoristaController extends Controller
             'documento'       => 'nullable|string',
             'celular'         => 'nullable|string',
         ]));
-        return response()->json($motorista->fresh());
+        return new \Illuminate\Http\JsonResponse($motorista->fresh());
     }
 
     public function destroy(string $id)
     {
         Motorista::findOrFail($id)->delete();
-        return response()->json(['message' => 'Motorista excluído']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Motorista excluído']);
     }
 
     public function byProprietario(string $id)
     {
-        return response()->json(Motorista::where('id_proprietario', $id)->orderBy('nome')->get());
+        return new \Illuminate\Http\JsonResponse(Motorista::where('id_proprietario', $id)->orderBy('nome')->get());
     }
 }
