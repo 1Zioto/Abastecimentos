@@ -58,7 +58,6 @@ export interface Abastecimento {
   tipo_despesa?: string;
   descricao?: string;
   valor?: number;
-  status1?: string;
   placa1?: string;
   recebedor?: string;
   observacao?: string;
@@ -138,11 +137,25 @@ export interface DashboardData {
     litros: number;
     valor: number;
     pendente_baixa: number;
-    veiculos: number;
-    proprietarios: number;
-    motoristas: number;
+    valor_total_vendido?: number;
+    valor_total_pendente_baixa?: number;
+    valor_total_recebido?: number;
+    veiculos?: number;
+    proprietarios?: number;
+    motoristas?: number;
   };
-  por_dia: { dia: string; total: number; litros: number; valor: number }[];
-  por_combustivel: { tipo_combustivel: string; total: number; litros: number; valor: number }[];
+  comparativo_12_meses: {
+    mes_ref: string;
+    label: string;
+    comprado_litros: number;
+    comprado_valor?: number;
+    vendido_litros: number;
+    vendido_valor?: number;
+    vendido_litros_pago?: number;
+    vendido_valor_pago?: number;
+    vendido_litros_pendente?: number;
+    vendido_valor_pendente?: number;
+  }[];
+  status_resumo: { status: 'Pendente' | 'Pago' | string; total: number; valor_total?: number; litros_total?: number }[];
   top_proprietarios: { id_proprietario: string; nome_proprietario: string; total: number; valor: number }[];
 }

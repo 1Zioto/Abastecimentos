@@ -6,9 +6,59 @@ use App\Models\BaixaAbastecimento;
 use App\Models\Abastecimento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class BaixaAbastecimentoController extends Controller
 {
+    private function emptyToNull($value)
+    {
+        if ($value === null) return null;
+        if (is_string($value) && trim($value) === '') return null;
+        return $value;
+    }
+
+    private function buildAbastecimentoBaixaUpdate(array $data): array
+    {
+        return [
+            'baixa_abastecimento' => true,
+            'data_baixa'   => $data['data_baixa'] ?? now(),
+            'tipo_despesa' => $data['tipo_despesa'] ?? null,
+            'descricao'    => $data['descricao'] ?? null,
+            'valor'        => $data['valor'] ?? null,
+            'status'       => $data['status'] ?? 'Pago',
+            'placa1'       => $data['placa1'] ?? null,
+            'recebedor'    => $data['recebedor'] ?? null,
+            'observacao'   => $data['observacao'] ?? null,
+            'anexo'        => $data['anexo'] ?? null,
+        ];
+    }
+
+    private function upsertBaixa(string $idAbastecimento, array $data): void
+    {
+        $existingId = DB::table('baixa_abastecimento')
+            ->where('id_abastecimento', $idAbastecimento)
+            ->value('id_baixa');
+
+        $payload = [
+            'id_abastecimento' => $idAbastecimento,
+            'data_hora'        => now(),
+            'usuario'          => auth()->user()?->nome ?? 'sistema',
+            'forma_pagamento'  => $data['forma_pagamento'] ?? '',
+            'data_pagamento'   => $data['data_pagamento'] ?? now(),
+            'nota_entrada'     => '',
+        ];
+
+        if ($existingId) {
+            DB::table('baixa_abastecimento')
+                ->where('id_baixa', $existingId)
+                ->update($payload);
+            return;
+        }
+
+        $payload['id_baixa'] = (string) Str::uuid();
+        DB::table('baixa_abastecimento')->insert($payload);
+    }
+
     public function index(Request $request)
     {
         $query = BaixaAbastecimento::with(['abastecimento.veiculo','abastecimento.proprietario']);
@@ -32,37 +82,30 @@ class BaixaAbastecimentoController extends Controller
             'tipo_despesa'     => 'nullable|string',
             'descricao'        => 'nullable|string',
             'valor'            => 'nullable|numeric',
-            'status1'          => 'nullable|string',
+            'status'           => 'nullable|string',
             'placa1'           => 'nullable|string',
             'recebedor'        => 'nullable|string',
             'observacao'       => 'nullable|string',
             'anexo'            => 'nullable|string',
         ]);
 
+        $data['data_pagamento'] = $this->emptyToNull($data['data_pagamento'] ?? null);
+        $data['data_baixa'] = $this->emptyToNull($data['data_baixa'] ?? null);
+        $data['status'] = $this->emptyToNull($data['status'] ?? null) ?? 'Pago';
+        $data['recebedor'] = $this->emptyToNull($data['recebedor'] ?? null);
+        $data['observacao'] = $this->emptyToNull($data['observacao'] ?? null);
+        $data['anexo'] = $this->emptyToNull($data['anexo'] ?? null);
+        $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
+        $data['tipo_despesa'] = $this->emptyToNull($data['tipo_despesa'] ?? null) ?? 'Combustível';
+
         DB::beginTransaction();
         try {
-            $baixa = BaixaAbastecimento::create([
-                'id_abastecimento' => $data['id_abastecimento'],
-                'data_hora'        => now(),
-                'usuario'          => auth()->user()->nome ?? 'sistema',
-                'forma_pagamento'  => $data['forma_pagamento'] ?? null,
-                'data_pagamento'   => $data['data_pagamento'] ?? null,
-                'nota_entrada'     => $data['nota_entrada'] ?? null,
-            ]);
+            $this->upsertBaixa($data['id_abastecimento'], $data);
+            $baixa = BaixaAbastecimento::where('id_abastecimento', $data['id_abastecimento'])->latest('data_hora')->first();
 
             // Atualizar o abastecimento com os dados de baixa
-            Abastecimento::where('id_abastecimento', $data['id_abastecimento'])->update([
-                'baixa_abastecimento' => true,
-                'data_baixa'   => $data['data_baixa'] ?? now(),
-                'tipo_despesa' => $data['tipo_despesa'] ?? null,
-                'descricao'    => $data['descricao'] ?? null,
-                'valor'        => $data['valor'] ?? null,
-                'status1'      => $data['status1'] ?? null,
-                'placa1'       => $data['placa1'] ?? null,
-                'recebedor'    => $data['recebedor'] ?? null,
-                'observacao'   => $data['observacao'] ?? null,
-                'anexo'        => $data['anexo'] ?? null,
-            ]);
+            Abastecimento::where('id_abastecimento', $data['id_abastecimento'])
+                ->update($this->buildAbastecimentoBaixaUpdate($data));
 
             DB::commit();
             return new \Illuminate\Http\JsonResponse($baixa->load('abastecimento'), 201);
@@ -74,42 +117,57 @@ class BaixaAbastecimentoController extends Controller
 
     public function storeLote(Request $request)
     {
-        $request->validate([
+        $data = $request->validate([
             'ids'              => 'required|array|min:1',
             'ids.*'            => 'exists:abastecimentos,id_abastecimento',
             'forma_pagamento'  => 'nullable|string',
             'data_pagamento'   => 'nullable|date',
+            'data_baixa'       => 'nullable|date',
             'tipo_despesa'     => 'nullable|string',
+            'descricao'        => 'nullable|string',
+            'valor'            => 'nullable|numeric',
+            'status'           => 'nullable|string',
             'recebedor'        => 'nullable|string',
             'observacao'       => 'nullable|string',
+            'anexo'            => 'nullable|string',
         ]);
 
-        DB::beginTransaction();
-        try {
-            foreach ($request->ids as $idAbastecimento) {
-                BaixaAbastecimento::create([
+        $data['data_pagamento'] = $this->emptyToNull($data['data_pagamento'] ?? null);
+        $data['data_baixa'] = $this->emptyToNull($data['data_baixa'] ?? null);
+        $data['tipo_despesa'] = $this->emptyToNull($data['tipo_despesa'] ?? null) ?? 'Combustível';
+        $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
+        $data['status'] = $this->emptyToNull($data['status'] ?? null) ?? 'Pago';
+        $data['recebedor'] = $this->emptyToNull($data['recebedor'] ?? null);
+        $data['observacao'] = $this->emptyToNull($data['observacao'] ?? null);
+        $data['anexo'] = $this->emptyToNull($data['anexo'] ?? null);
+        $data['valor'] = $this->emptyToNull($data['valor'] ?? null);
+
+        $errors = [];
+        $success = 0;
+
+        foreach ($data['ids'] as $idAbastecimento) {
+            try {
+                $this->upsertBaixa($idAbastecimento, $data);
+                Abastecimento::where('id_abastecimento', $idAbastecimento)
+                    ->update($this->buildAbastecimentoBaixaUpdate($data));
+                $success++;
+            } catch (\Throwable $e) {
+                $errors[] = [
                     'id_abastecimento' => $idAbastecimento,
-                    'data_hora'        => now(),
-                    'usuario'          => auth()->user()->nome ?? 'sistema',
-                    'forma_pagamento'  => $request->forma_pagamento,
-                    'data_pagamento'   => $request->data_pagamento,
-                ]);
-
-                Abastecimento::where('id_abastecimento', $idAbastecimento)->update([
-                    'baixa_abastecimento' => true,
-                    'data_baixa'   => $request->data_pagamento ?? now(),
-                    'tipo_despesa' => $request->tipo_despesa,
-                    'recebedor'    => $request->recebedor,
-                    'observacao'   => $request->observacao,
-                ]);
+                    'message' => $e->getMessage(),
+                ];
             }
-
-            DB::commit();
-            return new \Illuminate\Http\JsonResponse(['message' => count($request->ids) . ' baixas registradas com sucesso']);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return new \Illuminate\Http\JsonResponse(['message' => 'Erro: ' . $e->getMessage()], 500);
         }
+
+        if (!empty($errors)) {
+            return new \Illuminate\Http\JsonResponse([
+                'message' => 'Erro ao registrar parte das baixas.',
+                'success' => $success,
+                'errors' => $errors,
+            ], 500);
+        }
+
+        return new \Illuminate\Http\JsonResponse(['message' => $success . ' baixas registradas com sucesso']);
     }
 
     public function show(string $id)
@@ -131,9 +189,17 @@ class BaixaAbastecimentoController extends Controller
         Abastecimento::where('id_abastecimento', $baixa->id_abastecimento)->update([
             'baixa_abastecimento' => false,
             'data_baixa' => null,
+            'tipo_despesa' => null,
+            'descricao' => null,
+            'valor' => null,
+            'status' => 'Pendente',
+            'placa1' => null,
+            'recebedor' => null,
+            'observacao' => null,
+            'anexo' => null,
         ]);
         $baixa->delete();
-        return new \Illuminate\Http\JsonResponse(['message' => 'Baixa excluída e abastecimento revertido']);
+        return new \Illuminate\Http\JsonResponse(['message' => 'Baixa excluída e abastecimento retornou para Pendente']);
     }
 
     public function forceDelete(string $id)

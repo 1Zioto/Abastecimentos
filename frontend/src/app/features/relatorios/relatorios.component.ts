@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Proprietario, Veiculo, Abastecimento } from '../../shared/models';
+import jsPDF from 'jspdf';
 
 @Component({
   selector: 'app-relatorios',
@@ -42,11 +43,17 @@ import { Proprietario, Veiculo, Abastecimento } from '../../shared/models';
           </div>
           <div class="filter-field">
             <label>Data Início</label>
-            <input type="date" [(ngModel)]="filters.data_inicio" />
+            <div class="date-row">
+              <input #dataInicioInput type="date" [(ngModel)]="filters.data_inicio" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataInicioInput)">📅</button>
+            </div>
           </div>
           <div class="filter-field">
             <label>Data Fim</label>
-            <input type="date" [(ngModel)]="filters.data_fim" />
+            <div class="date-row">
+              <input #dataFimInput type="date" [(ngModel)]="filters.data_fim" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataFimInput)">📅</button>
+            </div>
           </div>
           <div class="filter-field">
             <label>Status</label>
@@ -177,6 +184,10 @@ import { Proprietario, Veiculo, Abastecimento } from '../../shared/models';
     .filter-field input, .filter-field select { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:8px 10px; color:#e2e8f0; font-size:12px; outline:none; }
     .filter-field input:focus, .filter-field select:focus { border-color:#0ea5e9; }
     .filter-field select option { background:#0d1427; }
+    .date-row { display:flex; gap:8px; align-items:center; }
+    .date-row input { flex:1; }
+    .btn-date { height:34px; min-width:40px; padding:0 10px; background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; color:#94a3b8; cursor:pointer; font-size:14px; }
+    .btn-date:hover { border-color:#38bdf8; color:#38bdf8; }
 
     .filter-actions { display:flex; gap:10px; }
     .btn-search { background:linear-gradient(135deg,#0ea5e9,#6366f1); border:none; border-radius:8px; padding:10px 20px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; }
@@ -258,9 +269,113 @@ export class RelatoriosComponent implements OnInit {
   }
 
   exportPdf() {
-    const token = localStorage.getItem('ft_token');
-    const url = this.api.getRelatorioProprietarioPdfUrl(this.filters) + `&token=${token}`;
-    window.open(url, '_blank');
+    const rel = this.relatorio();
+    if (!this.filters.id_proprietario || !rel) {
+      this.toastr.warning('Selecione um proprietário');
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const left = 36;
+    let y = 34;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Relatório por Proprietário', left, y);
+
+    y += 20;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(80);
+    doc.text(`Proprietário: ${rel.proprietario?.nome ?? '—'}`, left, y);
+    y += 14;
+    doc.text(
+      `Período: ${this.filters.data_inicio || 'Início'} até ${this.filters.data_fim || 'Hoje'} | Status: ${this.filters.status || 'Todos'}`,
+      left,
+      y
+    );
+    y += 20;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`Registros: ${rel.totais?.registros ?? 0}`, left, y);
+    doc.text(`Litros: ${Number(rel.totais?.quantidade_litros ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 140, y);
+    doc.text(`Valor Total: ${Number(rel.totais?.valor_total ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`, left + 330, y);
+
+    y += 20;
+    doc.setDrawColor(200);
+    doc.line(left, y, 806, y);
+    y += 14;
+
+    const headers = ['Data/Hora', 'Placa', 'Combustível', 'Motorista', 'Litros', 'R$/L', 'Total', 'Status'];
+    const widths = [90, 70, 110, 150, 70, 70, 90, 80];
+
+    const drawHeader = () => {
+      let x = left;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(31, 41, 55);
+      headers.forEach((h, idx) => {
+        doc.text(h, x, y);
+        x += widths[idx];
+      });
+      y += 10;
+      doc.setDrawColor(220);
+      doc.line(left, y, 806, y);
+      y += 12;
+    };
+
+    drawHeader();
+
+    const rows = (rel.abastecimentos ?? []) as Abastecimento[];
+    for (const item of rows) {
+      if (y > 560) {
+        doc.addPage();
+        y = 34;
+        drawHeader();
+      }
+
+      const dataHora = item.data_hora ? new Date(item.data_hora as any) : null;
+      const dataHoraFmt = dataHora && !isNaN(dataHora.getTime()) ? dataHora.toLocaleString('pt-BR') : '—';
+      const status = item.baixa_abastecimento ? 'Baixado' : (item.status ?? '—');
+
+      const values = [
+        dataHoraFmt,
+        item.veiculo?.placa ?? '—',
+        item.tipo_combustivel ?? '—',
+        item.nome_motorista ?? '—',
+        Number(item.quantidade_litros ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(item.valor_por_litro ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 }),
+        Number(item.valor_total ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+        status,
+      ];
+
+      let x = left;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(55, 65, 81);
+      values.forEach((v, idx) => {
+        const maxChars = Math.max(8, Math.floor(widths[idx] / 5.2));
+        const text = String(v).length > maxChars ? `${String(v).slice(0, maxChars - 1)}…` : String(v);
+        doc.text(text, x, y);
+        x += widths[idx];
+      });
+      y += 12;
+    }
+
+    const filename = `relatorio_${this.filters.id_proprietario}_${new Date().toISOString().slice(0, 10)}.pdf`;
+    doc.save(filename);
+  }
+
+  openDatePicker(input: HTMLInputElement) {
+    try {
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+        return;
+      }
+    } catch {}
+    input.focus();
   }
 
   getStatusClass(status?: string): string {

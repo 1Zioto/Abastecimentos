@@ -7,6 +7,7 @@ import { ApiService } from '../../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Proprietario, Veiculo, Motorista } from '../../../shared/models';
 import { AuthService } from '../../../core/services/auth.service';
+import { catchError, forkJoin, of } from 'rxjs';
 
 @Component({
   selector: 'app-abastecimento-form',
@@ -145,6 +146,9 @@ import { AuthService } from '../../../core/services/auth.service';
           <div class="field">
             <label>Odômetro (km)</label>
             <input type="number" formControlName="odometro" placeholder="Ex: 125000" />
+            @if (ultimoOdometroReferencia() !== null) {
+              <small class="upload-hint">Último odômetro do veículo: {{ ultimoOdometroReferencia() }} km</small>
+            }
           </div>
 
           <!-- Foto Hodômetro -->
@@ -153,8 +157,14 @@ import { AuthService } from '../../../core/services/auth.service';
             <input type="file" accept="image/*" (change)="onUploadFotoOdometro($event)" />
             @if (uploadingFotoOdometro()) {
               <small class="upload-hint">Enviando imagem...</small>
-            } @else if (form.value.foto_odometro) {
-              <a class="upload-link" [href]="form.value.foto_odometro" target="_blank">Imagem enviada ✓</a>
+            } @else if (resolveImageUrl(form.value.foto_odometro); as fotoOdometroUrl) {
+              <small class="upload-hint">Imagem enviada ✓</small>
+              <div class="preview-box">
+                <img class="preview-img" [src]="fotoOdometroUrl" alt="Foto hodômetro" />
+              </div>
+              <button type="button" class="btn-preview" (click)="openImagePreview(fotoOdometroUrl)">
+                Expandir
+              </button>
             }
           </div>
 
@@ -164,8 +174,14 @@ import { AuthService } from '../../../core/services/auth.service';
             <input type="file" accept="image/*" (change)="onUploadBomba($event)" />
             @if (uploadingBomba()) {
               <small class="upload-hint">Enviando imagem...</small>
-            } @else if (form.value.bomba) {
-              <a class="upload-link" [href]="form.value.bomba" target="_blank">Imagem enviada ✓</a>
+            } @else if (resolveImageUrl(form.value.bomba); as bombaUrl) {
+              <small class="upload-hint">Imagem enviada ✓</small>
+              <div class="preview-box">
+                <img class="preview-img" [src]="bombaUrl" alt="Imagem bomba" />
+              </div>
+              <button type="button" class="btn-preview" (click)="openImagePreview(bombaUrl)">
+                Expandir
+              </button>
             }
           </div>
 
@@ -175,6 +191,7 @@ import { AuthService } from '../../../core/services/auth.service';
             <select formControlName="status">
               <option value="Pendente">Pendente</option>
               <option value="Confirmado">Confirmado</option>
+              <option value="Pago">Pago</option>
               <option value="Cancelado">Cancelado</option>
             </select>
           </div>
@@ -287,6 +304,15 @@ import { AuthService } from '../../../core/services/auth.service';
           </div>
         </div>
       }
+
+      @if (previewImageUrl()) {
+        <div class="image-overlay" (click)="closeImagePreview()">
+          <div class="image-modal" (click)="$event.stopPropagation()">
+            <img [src]="previewImageUrl()" alt="Imagem ampliada" />
+            <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+          </div>
+        </div>
+      }
     </div>
   `,
   styles: [`
@@ -335,8 +361,35 @@ import { AuthService } from '../../../core/services/auth.service';
     .readonly-field { opacity: 0.7; cursor: not-allowed; }
     .readonly-field.highlight { color: #4ade80; font-weight: 600; border-color: #4ade8040; }
     .upload-hint { color: #94a3b8; font-size: 11px; }
-    .upload-link { color: #38bdf8; font-size: 12px; text-decoration: none; }
-    .upload-link:hover { text-decoration: underline; }
+    .preview-box {
+      margin-top: 6px;
+      border: 1px solid #1e2d4a;
+      border-radius: 10px;
+      padding: 6px;
+      background: #0a0f1e;
+      width: 100%;
+      max-width: 220px;
+    }
+    .preview-img {
+      display: block;
+      width: 100%;
+      height: 140px;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #0d1427;
+    }
+    .btn-preview {
+      margin-top: 6px;
+      background: #0a0f1e;
+      border: 1px solid #1e2d4a;
+      color: #38bdf8;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      cursor: pointer;
+      width: fit-content;
+    }
+    .btn-preview:hover { border-color: #38bdf8; }
     .search-with-add { display: flex; gap: 8px; }
     .search-with-add input { flex: 1; }
     .btn-plus {
@@ -450,6 +503,42 @@ import { AuthService } from '../../../core/services/auth.service';
       margin-bottom: 16px;
     }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .image-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1100;
+      padding: 20px;
+    }
+    .image-modal {
+      max-width: min(92vw, 1100px);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+    }
+    .image-modal img {
+      width: auto;
+      max-width: 100%;
+      max-height: calc(90vh - 56px);
+      object-fit: contain;
+      border-radius: 12px;
+      border: 1px solid #1e2d4a;
+      background: #0a0f1e;
+    }
+    .btn-close-image {
+      background: #0a0f1e;
+      border: 1px solid #1e2d4a;
+      color: #e2e8f0;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
   `]
 })
 export class AbastecimentoFormComponent implements OnInit {
@@ -475,6 +564,8 @@ export class AbastecimentoFormComponent implements OnInit {
   showVeiculosDropdown = signal(false);
   novoProprietarioModal = signal(false);
   novoVeiculoModal = signal(false);
+  previewImageUrl = signal('');
+  ultimoOdometroReferencia = signal<number | null>(null);
 
   filteredProprietarios = computed(() => {
     const term = this.proprietarioBusca().trim().toLowerCase();
@@ -490,7 +581,7 @@ export class AbastecimentoFormComponent implements OnInit {
       .slice(0, 30);
   });
 
-  tiposCombustivel = ['Diesel S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  tiposCombustivel = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
 
   novoProprietario: Partial<Proprietario> = {
     nome: '',
@@ -504,7 +595,7 @@ export class AbastecimentoFormComponent implements OnInit {
     marca: '',
     modelo: '',
     ano: '',
-    tipo_combustivel: '',
+    tipo_combustivel: 'OLEO DIESEL S10',
     numero_chassi: ''
   };
 
@@ -518,7 +609,7 @@ export class AbastecimentoFormComponent implements OnInit {
     nome_motorista:    [''],
     nome_proprietario: [''],
     local:             ['Garagem'],
-    tipo_combustivel:  ['', Validators.required],
+    tipo_combustivel:  ['OLEO DIESEL S10', Validators.required],
     valor_por_litro:   [{ value: 0, disabled: true }],
     quantidade_litros: [null as number | null, [Validators.required, Validators.min(0.01)]],
     valor_total:       [{ value: 0, disabled: true }],
@@ -533,6 +624,11 @@ export class AbastecimentoFormComponent implements OnInit {
     const usuarioLogado = this.auth.currentUser()?.nome ?? '';
     this.form.patchValue({ frentista: usuarioLogado });
     if (this.id) {
+      if (!this.auth.isAdmin()) {
+        this.toastr.error('Somente administradores podem editar registros');
+        this.router.navigate(['/abastecimentos']);
+        return;
+      }
       this.isEdit.set(true);
       this.loadAbastecimento(this.id);
     } else {
@@ -542,8 +638,10 @@ export class AbastecimentoFormComponent implements OnInit {
         data: local.toISOString().slice(0, 10),
         data_hora: local.toISOString().slice(0, 16),
         local: 'Garagem',
+        tipo_combustivel: 'OLEO DIESEL S10',
         status: 'Pendente',
       });
+      this.onCombustivelChange();
     }
   }
 
@@ -552,33 +650,53 @@ export class AbastecimentoFormComponent implements OnInit {
   }
 
   loadAbastecimento(id: string) {
-    this.api.getAbastecimento(id).subscribe(a => {
-      this.api.getVeiculosByProprietario(a.id_proprietario).subscribe(v => this.veiculos.set(v));
-      this.api.getMotoristassByProprietario(a.id_proprietario).subscribe(m => this.motoristas.set(m));
-      this.form.patchValue({
-        ...a,
-        data: a.data?.slice(0, 10),
-        data_hora: a.data_hora?.slice(0, 16),
-        local: a.local || 'Garagem',
-        status: a.status || 'Pendente',
-        valor_por_litro: a.valor_por_litro,
-        valor_total: a.valor_total,
-      } as any);
-      this.proprietarioBusca.set(a.nome_proprietario ?? '');
-      const veiculoTexto = a.veiculo ? `${a.veiculo.placa} — ${a.veiculo.modelo ?? 'Sem modelo'}` : '';
-      this.veiculoBusca.set(veiculoTexto);
-      this.form.patchValue({ frentista: this.auth.currentUser()?.nome ?? '' });
+    this.api.getAbastecimento(id).subscribe({
+      next: (a) => {
+        this.form.patchValue({
+          ...a,
+          data: a.data?.slice(0, 10),
+          data_hora: a.data_hora?.slice(0, 16),
+          local: a.local || 'Garagem',
+          status: a.status || 'Pendente',
+          valor_por_litro: a.valor_por_litro,
+          valor_total: a.valor_total,
+        } as any);
+        this.proprietarioBusca.set(a.nome_proprietario ?? '');
+        const veiculoTexto = a.veiculo ? `${a.veiculo.placa} — ${a.veiculo.modelo ?? 'Sem modelo'}` : '';
+        this.veiculoBusca.set(veiculoTexto);
+        this.form.patchValue({ frentista: this.auth.currentUser()?.nome ?? '' });
+
+        forkJoin({
+          veiculos: this.api.getVeiculosByProprietario(a.id_proprietario).pipe(catchError(() => of([] as Veiculo[]))),
+          motoristas: this.api.getMotoristassByProprietario(a.id_proprietario).pipe(catchError(() => of([] as Motorista[]))),
+        }).subscribe(({ veiculos, motoristas }) => {
+          this.veiculos.set(veiculos);
+          this.motoristas.set(motoristas);
+          this.fetchUltimoOdometroVeiculo(a.id_veiculo, a.odometro ?? null);
+        });
+      },
+      error: (err) => {
+        this.toastr.error(err.error?.message ?? 'Erro ao carregar abastecimento');
+      }
     });
   }
 
   onProprietarioChange() {
     const id = this.form.value.id_proprietario;
-    if (!id) { this.veiculos.set([]); this.motoristas.set([]); return; }
+    if (!id) {
+      this.veiculos.set([]);
+      this.motoristas.set([]);
+      this.ultimoOdometroReferencia.set(null);
+      this.form.patchValue({ odometro: null });
+      return;
+    }
     const prop = this.proprietarios().find(p => p.id_proprietario === id);
     this.form.patchValue({ nome_proprietario: prop?.nome ?? '' });
     this.api.getVeiculosByProprietario(id).subscribe(v => this.veiculos.set(v));
     this.api.getMotoristassByProprietario(id).subscribe(m => this.motoristas.set(m));
     this.form.patchValue({ id_veiculo: '', id_motorista: '' });
+    this.ultimoOdometroReferencia.set(null);
+    this.form.patchValue({ odometro: null });
   }
 
   onVeiculoChange() {
@@ -587,6 +705,11 @@ export class AbastecimentoFormComponent implements OnInit {
     if (v?.tipo_combustivel) {
       this.form.patchValue({ tipo_combustivel: v.tipo_combustivel });
       this.onCombustivelChange();
+    }
+    if (id) {
+      this.fetchUltimoOdometroVeiculo(id, v?.odometro ?? null);
+    } else {
+      this.ultimoOdometroReferencia.set(null);
     }
   }
 
@@ -617,8 +740,43 @@ export class AbastecimentoFormComponent implements OnInit {
     this.form.patchValue({ valor_total: total } as any);
   }
 
+  fetchUltimoOdometroVeiculo(idVeiculo: string, fallbackOdometro: number | null = null) {
+    this.api.getAbastecimentos({ id_veiculo: idVeiculo, per_page: 1 }).subscribe({
+      next: (r) => {
+        const ultimoDoAbastecimento = r.data?.[0]?.odometro;
+        const candidatos = [ultimoDoAbastecimento, fallbackOdometro]
+          .filter((v) => v !== null && v !== undefined)
+          .map((v) => Number(v));
+        const ultimo = candidatos.length ? Math.max(...candidatos) : null;
+        this.ultimoOdometroReferencia.set(ultimo);
+        if (!this.isEdit()) {
+          this.form.patchValue({ odometro: ultimo });
+        }
+      },
+      error: () => {
+        this.ultimoOdometroReferencia.set(fallbackOdometro);
+        if (!this.isEdit()) {
+          this.form.patchValue({ odometro: fallbackOdometro });
+        }
+      },
+    });
+  }
+
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+
+    const odometroInformado = this.form.getRawValue().odometro;
+    const ultimoOdometro = this.ultimoOdometroReferencia();
+    if (
+      odometroInformado !== null &&
+      odometroInformado !== undefined &&
+      ultimoOdometro !== null &&
+      Number(odometroInformado) < ultimoOdometro
+    ) {
+      this.toastr.error(`Odômetro inválido. Informe um valor maior ou igual a ${ultimoOdometro} km.`);
+      return;
+    }
+
     this.saving.set(true);
 
     const raw = this.form.getRawValue() as any;
@@ -667,6 +825,8 @@ export class AbastecimentoFormComponent implements OnInit {
     this.veiculoBusca.set(term);
     this.showVeiculosDropdown.set(true);
     this.form.patchValue({ id_veiculo: '' });
+    this.ultimoOdometroReferencia.set(null);
+    this.form.patchValue({ odometro: null });
   }
 
   selectVeiculo(v: Veiculo) {
@@ -716,7 +876,7 @@ export class AbastecimentoFormComponent implements OnInit {
       this.toastr.warning('Selecione um proprietário primeiro');
       return;
     }
-    this.novoVeiculo = { placa: '', marca: '', modelo: '', ano: '', tipo_combustivel: '', numero_chassi: '' };
+    this.novoVeiculo = { placa: '', marca: '', modelo: '', ano: '', tipo_combustivel: 'OLEO DIESEL S10', numero_chassi: '' };
     this.novoVeiculoModal.set(true);
   }
 
@@ -789,5 +949,30 @@ export class AbastecimentoFormComponent implements OnInit {
         this.uploadingBomba.set(false);
       }
     });
+  }
+
+  resolveImageUrl(url?: string | null): string | null {
+    if (!url) return null;
+    const normalized = String(url).trim();
+    if (!normalized) return null;
+    if (
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('data:image/') ||
+      normalized.startsWith('blob:')
+    ) {
+      return normalized;
+    }
+    return null;
+  }
+
+  openImagePreview(url?: string | null) {
+    const imageUrl = this.resolveImageUrl(url);
+    if (!imageUrl) return;
+    this.previewImageUrl.set(imageUrl);
+  }
+
+  closeImagePreview() {
+    this.previewImageUrl.set('');
   }
 }

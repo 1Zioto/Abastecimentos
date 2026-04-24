@@ -226,11 +226,11 @@ export class ShellComponent {
   sidebarCollapsed = signal(false);
 
   navItems: NavItem[] = [
-    { label: 'Dashboard',        icon: '📊', route: '/dashboard' },
+    { label: 'Dashboard',        icon: '📊', route: '/dashboard', adminOnly: true },
     { label: 'Abastecimentos',   icon: '⛽', route: '/abastecimentos' },
-    { label: 'Baixa',            icon: '✅', route: '/baixa' },
+    { label: 'Baixa',            icon: '✅', route: '/baixa', adminOnly: true },
     { label: 'Entrada de Notas', icon: '🧾', route: '/entrada-notas' },
-    { label: 'Relatórios',       icon: '📈', route: '/relatorios' },
+    { label: 'Relatórios',       icon: '📈', route: '/relatorios', adminOnly: true },
     { label: 'Combustível',      icon: '💲', route: '/valores-combustivel' },
     { label: 'Proprietários',    icon: '🏢', route: '/proprietarios' },
     { label: 'Veículos',         icon: '🚗', route: '/veiculos' },

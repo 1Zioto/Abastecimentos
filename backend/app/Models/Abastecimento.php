@@ -41,7 +41,6 @@ class Abastecimento extends Model
         'tipo_despesa',
         'descricao',
         'valor',
-        'status1',
         'placa1',
         'recebedor',
         'observacao',

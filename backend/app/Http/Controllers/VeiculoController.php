@@ -70,6 +70,24 @@ class VeiculoController extends Controller
 
     public function byProprietario(string $id)
     {
-        return new \Illuminate\Http\JsonResponse(Veiculo::where('id_proprietario', $id)->orderBy('placa')->get());
+        return new \Illuminate\Http\JsonResponse(
+            Veiculo::query()
+                ->select([
+                    'id_veiculo',
+                    'placa',
+                    'marca',
+                    'modelo',
+                    'ano',
+                    'tipo_combustivel',
+                    'numero_chassi',
+                    'id_proprietario',
+                    'odometro',
+                    'renavam',
+                    'cor',
+                ])
+                ->where('id_proprietario', $id)
+                ->orderBy('placa')
+                ->get()
+        );
     }
 }

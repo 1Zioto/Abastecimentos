@@ -65,7 +65,14 @@ class AuthController extends Controller
 
     public function logout()
     {
-        JWTAuth::invalidate(JWTAuth::getToken());
+        try {
+            $token = JWTAuth::getToken();
+            if ($token) {
+                JWTAuth::invalidate($token);
+            }
+        } catch (\Throwable $e) {
+        }
+
         return new \Illuminate\Http\JsonResponse(['message' => 'Logout realizado com sucesso']);
     }
 

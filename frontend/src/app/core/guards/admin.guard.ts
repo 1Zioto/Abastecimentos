@@ -8,6 +8,6 @@ export const adminGuard: CanActivateFn = () => {
   const router = inject(Router);
   const user = auth.currentUser();
   if (user?.tipo === 'admin') return true;
-  router.navigate(['/dashboard']);
+  router.navigate(['/abastecimentos']);
   return false;
 };

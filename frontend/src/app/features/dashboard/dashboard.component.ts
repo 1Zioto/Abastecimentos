@@ -4,8 +4,6 @@ import { RouterLink } from '@angular/router';
 import { ApiService } from '../../core/services/api.service';
 import { DashboardData } from '../../shared/models';
 
-type LinePoint = { x: number; y: number };
-
 @Component({
   selector: 'app-dashboard',
   standalone: true,
@@ -15,19 +13,7 @@ type LinePoint = { x: number; y: number };
       <header class="dashboard-header">
         <div>
           <h1>Dashboard</h1>
-          <p>Visão geral do sistema de abastecimento</p>
-        </div>
-        <div class="header-filters">
-          <select (change)="onMesChange($event)" class="filter-select" aria-label="Selecionar mês">
-            @for (m of meses; track m.value) {
-              <option [value]="m.value" [selected]="m.value === mesSelecionado()">{{ m.label }}</option>
-            }
-          </select>
-          <select (change)="onAnoChange($event)" class="filter-select" aria-label="Selecionar ano">
-            @for (a of anos; track a) {
-              <option [value]="a" [selected]="a === anoSelecionado()">{{ a }}</option>
-            }
-          </select>
+          <p>Visão geral dos últimos 12 meses</p>
         </div>
       </header>
 
@@ -41,50 +27,26 @@ type LinePoint = { x: number; y: number };
       @if (data(); as d) {
         <section class="kpi-grid">
           <article class="kpi-card">
-            <div class="kpi-icon icon-info">⛽</div>
+            <div class="kpi-icon icon-success">💰</div>
             <div class="kpi-content">
-              <span class="kpi-value">{{ d.totais.abastecimentos | number }}</span>
-              <span class="kpi-label">Abastecimentos</span>
-            </div>
-          </article>
-
-          <article class="kpi-card">
-            <div class="kpi-icon icon-success">🧪</div>
-            <div class="kpi-content">
-              <span class="kpi-value">{{ d.totais.litros | number:'1.0-0' }} L</span>
-              <span class="kpi-label">Total em litros</span>
-            </div>
-          </article>
-
-          <article class="kpi-card">
-            <div class="kpi-icon icon-primary">💰</div>
-            <div class="kpi-content">
-              <span class="kpi-value">{{ d.totais.valor | currency:'BRL':'symbol':'1.2-2' }}</span>
-              <span class="kpi-label">Valor total</span>
+              <span class="kpi-value">{{ kpiValorVendido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+              <span class="kpi-label">Valor Total Vendido</span>
             </div>
           </article>
 
           <article class="kpi-card">
             <div class="kpi-icon icon-pending">⏳</div>
             <div class="kpi-content">
-              <span class="kpi-value">{{ d.totais.pendente_baixa | number }}</span>
-              <span class="kpi-label">Pendentes</span>
+              <span class="kpi-value">{{ kpiValorPendente(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+              <span class="kpi-label">Valor Pendente de Baixa</span>
             </div>
           </article>
 
           <article class="kpi-card">
-            <div class="kpi-icon icon-vehicle">🚗</div>
+            <div class="kpi-icon icon-primary">💰</div>
             <div class="kpi-content">
-              <span class="kpi-value">{{ d.totais.veiculos | number }}</span>
-              <span class="kpi-label">Veículos</span>
-            </div>
-          </article>
-
-          <article class="kpi-card">
-            <div class="kpi-icon icon-owner">🏢</div>
-            <div class="kpi-content">
-              <span class="kpi-value">{{ d.totais.proprietarios | number }}</span>
-              <span class="kpi-label">Proprietários</span>
+              <span class="kpi-value">{{ kpiValorRecebido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+              <span class="kpi-label">Valor Total Recebido</span>
             </div>
           </article>
         </section>
@@ -92,50 +54,147 @@ type LinePoint = { x: number; y: number };
         <section class="charts-grid">
           <article class="panel line-panel">
             <div class="panel-header">
-              <h3>Abastecimentos — Últimos 30 dias</h3>
+              <h3>Últimos 12 meses — Comprado x Vendido (L)</h3>
             </div>
-            <div class="line-chart-wrap">
-              <svg class="line-svg" viewBox="0 0 100 40" preserveAspectRatio="none" aria-label="Gráfico de linha">
-                <line x1="0" y1="10" x2="100" y2="10" class="grid-line"></line>
-                <line x1="0" y1="20" x2="100" y2="20" class="grid-line"></line>
-                <line x1="0" y1="30" x2="100" y2="30" class="grid-line"></line>
-                <polyline [attr.points]="linePointsString()" class="line-area" />
-                <polyline [attr.points]="linePointsString()" class="line-path" />
-                @for (point of linePoints(); track $index) {
-                  <circle [attr.cx]="point.x" [attr.cy]="point.y" r="0.9" class="line-dot"></circle>
+            @if (selectedMesRef() || selectedStatus()) {
+              <div class="active-filters">
+                @if (selectedMesRef()) {
+                  <span class="filter-chip">Mês: {{ mesLabelSelecionado(d) }}</span>
                 }
-              </svg>
-              <div class="line-labels">
-                <span>{{ firstDayLabel() }}</span>
-                <span>{{ lastDayLabel() }}</span>
+                @if (selectedStatus()) {
+                  <span class="filter-chip">Status: {{ selectedStatus() }}</span>
+                }
+                <button class="btn-clear-filters" (click)="clearChartFilters()">Limpar filtros</button>
               </div>
+            }
+            <div class="bar-chart-wrap">
+              <div class="bar-chart-grid"></div>
+              <div class="bar-groups">
+                @for (item of d.comparativo_12_meses; track item.mes_ref) {
+                  <div class="bar-group" [class.active]="selectedMesRef() === item.mes_ref" (click)="toggleMesFilter(item.mes_ref)">
+                    <div class="bars">
+                      <div class="bar bar-comprado" [style.height.%]="barHeight(getCompradoLitros(item))" [title]="'Comprado: ' + (getCompradoLitros(item) | number:'1.0-2') + ' L'">
+                        <span class="bar-value">{{ getCompradoLitros(item) | number:'1.0-0' }}</span>
+                      </div>
+                      <div class="bar bar-vendido" [style.height.%]="barHeight(getVendidoLitros(item))" [title]="'Vendido: ' + (getVendidoLitros(item) | number:'1.0-2') + ' L'">
+                        <span class="bar-value">{{ getVendidoLitros(item) | number:'1.0-0' }}</span>
+                      </div>
+                    </div>
+                    <span class="bar-label">{{ item.label }}</span>
+                  </div>
+                }
+              </div>
+            </div>
+            <div class="compare-legend">
+              <span><i class="legend-dot comprado"></i> Comprado (Entrada de Notas)</span>
+              <span><i class="legend-dot vendido"></i> Vendido (Registros de Abastecimento)</span>
             </div>
           </article>
 
           <article class="panel donut-panel">
             <div class="panel-header">
-              <h3>Consumo por combustível</h3>
+              <h3>Pendente x Pago</h3>
             </div>
             <div class="donut-layout">
-              <div class="donut-chart" [style.background]="donutGradient()">
-                <div class="donut-center">
-                  <span class="donut-total">{{ d.totais.litros | number:'1.0-0' }} L</span>
-                  <span class="donut-sub">Total</span>
-                </div>
-              </div>
+              <svg viewBox="0 0 220 220" class="donut-svg">
+                <g transform="translate(110,110)">
+                  @for (slice of donutSlices(d); track slice.status) {
+                    <path
+                      class="donut-slice"
+                      [attr.d]="slice.path"
+                      [attr.fill]="slice.color"
+                      [class.selected]="selectedStatus() === slice.status"
+                      (click)="toggleStatusFilter(slice.status); $event.stopPropagation()"
+                    ></path>
+                  }
+                  <circle cx="0" cy="0" r="46" fill="#FFFFFF"></circle>
+                  <text x="0" y="-2" text-anchor="middle" class="donut-center-value">{{ totalStatusLitros(d) | number:'1.0-0' }} L</text>
+                  <text x="0" y="18" text-anchor="middle" class="donut-center-sub">Total</text>
+                </g>
+              </svg>
             </div>
             <div class="fuel-legend">
-              @for (item of d.por_combustivel; track item.tipo_combustivel; let i = $index) {
-                <div class="legend-item">
+              @for (item of statusResumoFiltrado(d); track item.status; let i = $index) {
+                <div class="legend-item legend-clickable" (click)="toggleStatusFilter(item.status)">
                   <span class="legend-dot" [style.background]="donutColors[i % donutColors.length]"></span>
-                  <span class="legend-label">{{ item.tipo_combustivel | uppercase }}</span>
-                  <span class="legend-value">{{ item.litros | number:'1.0-0' }} L</span>
+                  <span class="legend-label">{{ item.status }}</span>
+                  <span class="legend-value">{{ (item.litros_total ?? 0) | number:'1.0-2' }} L</span>
                 </div>
               }
             </div>
-            @if (!hasFuelData(d)) {
+            @if (!hasStatusData(d)) {
               <p class="chart-helper">Sem dados no período selecionado.</p>
             }
+          </article>
+        </section>
+
+        <section class="charts-grid">
+          <article class="panel line-panel">
+            <div class="panel-header">
+              <h3>Últimos 12 meses — Comprado x Vendido (R$)</h3>
+            </div>
+            <div class="bar-chart-wrap">
+              <div class="bar-chart-grid"></div>
+              <div class="bar-groups">
+                @for (item of d.comparativo_12_meses; track item.mes_ref) {
+                  <div class="bar-group" [class.active]="selectedMesRef() === item.mes_ref" (click)="toggleMesFilter(item.mes_ref)">
+                    <div class="bars">
+                      <div class="bar bar-comprado" [style.height.%]="barHeightValor(getCompradoValor(item))" [title]="'Comprado: ' + (getCompradoValor(item) | currency:'BRL':'symbol':'1.2-2')">
+                        <span class="bar-value">{{ getCompradoValor(item) | number:'1.0-0' }}</span>
+                      </div>
+                      <div class="bar bar-vendido" [style.height.%]="barHeightValor(getVendidoValor(item))" [title]="'Vendido: ' + (getVendidoValor(item) | currency:'BRL':'symbol':'1.2-2')">
+                        <span class="bar-value">{{ getVendidoValor(item) | number:'1.0-0' }}</span>
+                      </div>
+                    </div>
+                    <span class="bar-label">{{ item.label }}</span>
+                  </div>
+                }
+              </div>
+            </div>
+            <div class="compare-legend">
+              <span><i class="legend-dot comprado"></i> Comprado (R$)</span>
+              <span><i class="legend-dot vendido"></i> Vendido (R$)</span>
+            </div>
+          </article>
+
+          <article class="panel donut-panel">
+            <div class="panel-header">
+              <h3>Últimos 12 meses — Pendente x Pago (R$)</h3>
+            </div>
+            <div class="donut-layout">
+              <svg viewBox="0 0 220 220" class="donut-svg">
+                <g transform="translate(110,110)">
+                  @for (slice of donutSlicesValor(d); track slice.status) {
+                    <path
+                      class="donut-slice"
+                      [attr.d]="slice.path"
+                      [attr.fill]="slice.color"
+                      [class.selected]="selectedStatus() === slice.status"
+                      (click)="toggleStatusFilter(slice.status); $event.stopPropagation()"
+                    ></path>
+                  }
+                  <circle cx="0" cy="0" r="46" fill="#FFFFFF"></circle>
+                  <text x="0" y="-2" text-anchor="middle" class="donut-center-value">{{ totalStatusValor(d) | currency:'BRL':'symbol':'1.0-0' }}</text>
+                  <text x="0" y="18" text-anchor="middle" class="donut-center-sub">Total</text>
+                </g>
+              </svg>
+            </div>
+            <div class="fuel-legend">
+              @for (item of statusResumoFiltrado(d); track item.status; let i = $index) {
+                <div class="legend-item legend-clickable" (click)="toggleStatusFilter(item.status)">
+                  <span class="legend-dot" [style.background]="donutColors[i % donutColors.length]"></span>
+                  <span class="legend-label">{{ item.status }}</span>
+                  <span class="legend-value">{{ (item.valor_total ?? 0) | currency:'BRL':'symbol':'1.2-2' }}</span>
+                </div>
+              }
+            </div>
+            @if (!hasStatusValorData(d)) {
+              <p class="chart-helper">Sem dados no período selecionado.</p>
+            }
+            <div class="compare-legend">
+              <span><i class="legend-dot pendente"></i> Pendente (R$)</span>
+              <span><i class="legend-dot pago"></i> Pago (R$)</span>
+            </div>
           </article>
         </section>
 
@@ -236,7 +295,7 @@ type LinePoint = { x: number; y: number };
 
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
       margin-bottom: 18px;
     }
@@ -273,9 +332,6 @@ type LinePoint = { x: number; y: number };
     .icon-success { background: #DCFCE7; }
     .icon-info { background: #FEE2E2; }
     .icon-pending { background: #DBEAFE; }
-    .icon-vehicle { background: #EDE9FE; }
-    .icon-owner { background: #E0F2FE; }
-
     .kpi-content {
       display: flex;
       flex-direction: column;
@@ -329,7 +385,7 @@ type LinePoint = { x: number; y: number };
 
     .panel-header h3 {
       margin: 0;
-      font-size: 15px;
+      font-size: 23px;
       font-weight: 600;
       color: #111827;
     }
@@ -351,56 +407,134 @@ type LinePoint = { x: number; y: number };
       color: #92400E;
     }
 
-    .line-chart-wrap {
+    .bar-chart-wrap {
+      position: relative;
       height: 270px;
+      border-radius: 12px;
+      background: #F8FAFC;
+      border: 1px solid #E5E7EB;
+      padding: 12px 10px 8px;
+      overflow: hidden;
+    }
+
+    .bar-chart-grid {
+      position: absolute;
+      inset: 12px 10px 26px;
+      background-image: linear-gradient(to top, #E5E7EB 1px, transparent 1px);
+      background-size: 100% 25%;
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .bar-groups {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 6px;
+      align-items: end;
+    }
+
+    .bar-group {
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      min-width: 0;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background 0.2s ease;
     }
 
-    .line-svg {
+    .bar-group:hover {
+      background: #EEF2FF;
+    }
+
+    .bar-group.active {
+      background: #DBEAFE;
+    }
+
+    .bars {
+      height: 220px;
       width: 100%;
-      height: 240px;
-      overflow: visible;
-      border-radius: 12px;
-      background: linear-gradient(to bottom, #FFF7D6 0%, #FFFFFF 70%);
-    }
-
-    .grid-line {
-      stroke: #F3F4F6;
-      stroke-width: 0.25;
-    }
-
-    .line-path {
-      fill: none;
-      stroke: #EAB308;
-      stroke-width: 0.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .line-area {
-      fill: none;
-      stroke: #EAB308;
-      stroke-opacity: 0.08;
-      stroke-width: 6;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .line-dot {
-      fill: #EAB308;
-      stroke: #FFFFFF;
-      stroke-width: 0.3;
-    }
-
-    .line-labels {
       display: flex;
-      justify-content: space-between;
-      color: #9CA3AF;
-      font-size: 11px;
-      margin-top: 4px;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 4px;
     }
+
+    .bar {
+      width: 42%;
+      min-height: 2px;
+      border-radius: 6px 6px 2px 2px;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+      position: relative;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+    }
+
+    .bar:hover {
+      transform: translateY(-2px);
+      opacity: 0.9;
+    }
+
+    .bar-comprado { background: #2563EB; }
+    .bar-vendido { background: #22C55E; }
+    .bar-pendente { background: #F59E0B; }
+    .bar-pago { background: #16A34A; }
+
+    .bar-value {
+      position: absolute;
+      top: -20px;
+      left: 50%;
+      transform: translateX(-50%) rotate(-90deg);
+      transform-origin: center;
+      color: #111827;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+      pointer-events: none;
+      text-shadow: none;
+    }
+
+    .bar-label {
+      font-size: 13px;
+      color: #6B7280;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .compare-legend {
+      display: flex;
+      gap: 18px;
+      margin-top: 10px;
+      color: #6B7280;
+      font-size: 15px;
+      flex-wrap: wrap;
+    }
+
+    .compare-legend .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .compare-legend .legend-dot.comprado { background: #2563EB; }
+    .compare-legend .legend-dot.vendido { background: #22C55E; }
+    .compare-legend .legend-dot.pendente { background: #F59E0B; }
+    .compare-legend .legend-dot.pago { background: #16A34A; }
+
+    .legend-dot.comprado { background: #F59E0B; }
+    .legend-dot.vendido { background: #22C55E; }
 
     .donut-layout {
       display: flex;
@@ -408,42 +542,17 @@ type LinePoint = { x: number; y: number };
       margin-bottom: 12px;
     }
 
-    .donut-chart {
-      width: 190px;
-      height: 190px;
-      border-radius: 50%;
-      position: relative;
-      transition: transform 0.2s ease;
-    }
+    .active-filters { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    .filter-chip { background:#EEF2FF; color:#1E3A8A; border:1px solid #C7D2FE; padding:4px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+    .btn-clear-filters { border:1px solid #E5E7EB; background:#FFFFFF; color:#374151; border-radius:8px; padding:4px 10px; font-size:11px; cursor:pointer; }
+    .btn-clear-filters:hover { background:#F9FAFB; }
 
-    .donut-chart:hover {
-      transform: scale(1.02);
-    }
-
-    .donut-center {
-      position: absolute;
-      inset: 26px;
-      border-radius: 50%;
-      background: #FFFFFF;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      border: 1px solid #E5E7EB;
-    }
-
-    .donut-total {
-      font-size: 16px;
-      font-weight: 700;
-      color: #111827;
-      line-height: 1.1;
-    }
-
-    .donut-sub {
-      font-size: 11px;
-      color: #9CA3AF;
-      margin-top: 3px;
-    }
+    .donut-svg { width: 210px; height: 210px; }
+    .donut-slice { cursor: pointer; transition: opacity 0.2s ease, transform 0.2s ease; }
+    .donut-slice:hover { opacity: 0.9; }
+    .donut-slice.selected { opacity: 1; stroke:#111827; stroke-width:2; }
+    .donut-center-value { font-size: 17px; font-weight: 700; fill:#111827; }
+    .donut-center-sub { font-size: 13px; fill:#9CA3AF; }
 
     .fuel-legend {
       display: flex;
@@ -462,9 +571,11 @@ type LinePoint = { x: number; y: number };
       grid-template-columns: 14px 1fr auto;
       align-items: center;
       gap: 8px;
-      font-size: 12px;
+      font-size: 15px;
       color: #6B7280;
     }
+    .legend-clickable { cursor:pointer; border-radius:8px; padding:4px 6px; transition: background 0.2s ease; }
+    .legend-clickable:hover { background:#F3F4F6; }
 
     .legend-dot {
       width: 10px;
@@ -587,7 +698,7 @@ type LinePoint = { x: number; y: number };
     }
 
     @media (max-width: 1160px) {
-      .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .charts-grid { grid-template-columns: 1fr; }
     }
 
@@ -605,25 +716,12 @@ export class DashboardComponent implements OnInit {
 
   data = signal<DashboardData | null>(null);
   loading = signal(true);
-  mesSelecionado = signal(new Date().getMonth() + 1);
-  anoSelecionado = signal(new Date().getFullYear());
+  selectedMesRef = signal<string | null>(null);
+  selectedStatus = signal<'Pendente' | 'Pago' | null>(null);
 
-  linePoints = signal<LinePoint[]>([]);
-  linePointsString = signal('');
   donutGradient = signal('conic-gradient(#CBD5F5 0% 100%)');
-  firstDayLabel = signal('');
-  lastDayLabel = signal('');
 
-  readonly donutColors = ['#2563EB', '#22C55E', '#F59E0B', '#0EA5E9', '#CBD5F5'];
-
-  meses = [
-    { value: 1, label: 'Janeiro' }, { value: 2, label: 'Fevereiro' }, { value: 3, label: 'Março' },
-    { value: 4, label: 'Abril' }, { value: 5, label: 'Maio' }, { value: 6, label: 'Junho' },
-    { value: 7, label: 'Julho' }, { value: 8, label: 'Agosto' }, { value: 9, label: 'Setembro' },
-    { value: 10, label: 'Outubro' }, { value: 11, label: 'Novembro' }, { value: 12, label: 'Dezembro' }
-  ];
-
-  anos = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+  readonly donutColors = ['#F59E0B', '#16A34A'];
 
   ngOnInit() {
     this.load();
@@ -631,10 +729,11 @@ export class DashboardComponent implements OnInit {
 
   load() {
     this.loading.set(true);
-    this.api.getDashboard(this.mesSelecionado(), this.anoSelecionado()).subscribe({
+    this.api.getDashboard().subscribe({
       next: (d) => {
-        this.data.set(d);
-        this.refreshCharts(d);
+        const normalized = this.normalizeDashboard(d as DashboardData & any);
+        this.data.set(normalized);
+        this.refreshCharts(normalized);
         this.loading.set(false);
       },
       error: () => {
@@ -645,54 +744,20 @@ export class DashboardComponent implements OnInit {
   }
 
   refreshCharts(d: DashboardData) {
-    this.refreshLineChart(d);
     this.refreshDonutChart(d);
   }
 
-  refreshLineChart(d: DashboardData) {
-    if (!d.por_dia.length) {
-      const fallbackCount: number = 30;
-      const fallbackPoints = Array.from({ length: fallbackCount }, (_, index) => {
-        const x = fallbackCount === 1 ? 50 : (index / (fallbackCount - 1)) * 100;
-        return { x, y: 36 };
-      });
-
-      const now = new Date();
-      const first = new Date(now);
-      first.setDate(now.getDate() - 29);
-
-      this.linePoints.set(fallbackPoints);
-      this.linePointsString.set(fallbackPoints.map((p) => `${p.x},${p.y}`).join(' '));
-      this.firstDayLabel.set(`${String(first.getDate()).padStart(2, '0')}/${String(first.getMonth() + 1).padStart(2, '0')}`);
-      this.lastDayLabel.set(`${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}`);
-      return;
-    }
-
-    const values = d.por_dia.map((item) => item.total || 0);
-    const maxValue = Math.max(...values, 1);
-    const points = values.map((value, index) => {
-      const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-      const y = 36 - (value / maxValue) * 28;
-      return { x, y };
-    });
-
-    this.linePoints.set(points);
-    this.linePointsString.set(points.map((p) => `${p.x},${p.y}`).join(' '));
-    this.firstDayLabel.set(this.formatDiaLabel(d.por_dia[0].dia));
-    this.lastDayLabel.set(this.formatDiaLabel(d.por_dia[d.por_dia.length - 1].dia));
-  }
-
   refreshDonutChart(d: DashboardData) {
-    const items = d.por_combustivel.filter((item) => (item.litros || 0) > 0);
+    const items = (d?.status_resumo ?? []).filter((item) => (item?.total || 0) > 0);
     if (!items.length) {
       this.donutGradient.set('conic-gradient(#CBD5F5 0% 100%)');
       return;
     }
 
-    const total = items.reduce((sum, item) => sum + (item.litros || 0), 0);
+    const total = items.reduce((sum, item) => sum + (item.total || 0), 0);
     let start = 0;
     const parts = items.map((item, index) => {
-      const pct = ((item.litros || 0) / total) * 100;
+      const pct = ((item.total || 0) / total) * 100;
       const end = start + pct;
       const color = this.donutColors[index % this.donutColors.length];
       const part = `${color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
@@ -703,26 +768,373 @@ export class DashboardComponent implements OnInit {
     this.donutGradient.set(`conic-gradient(${parts.join(', ')})`);
   }
 
-  formatDiaLabel(dia: string): string {
-    if (!dia || dia.length < 10) return '';
-    return `${dia.slice(8, 10)}/${dia.slice(5, 7)}`;
+  barHeight(value: number): number {
+    const current = this.data();
+    if (!current?.comparativo_12_meses?.length) return 0;
+    const selectedStatus = this.selectedStatus();
+    const comparativo = current.comparativo_12_meses.filter((item) => {
+      const mes = this.selectedMesRef();
+      return !mes || item.mes_ref === mes;
+    });
+    const max = Math.max(
+      1,
+      ...comparativo.map((item) =>
+        Math.max(
+          item.comprado_litros || 0,
+          selectedStatus === 'Pago'
+            ? (item.vendido_litros_pago ?? item.vendido_litros ?? 0)
+            : selectedStatus === 'Pendente'
+              ? (item.vendido_litros_pendente ?? item.vendido_litros ?? 0)
+              : (item.vendido_litros ?? 0)
+        )
+      )
+    );
+    return Math.max(2, Math.round(((value || 0) / max) * 100));
   }
 
-  hasDailyData(d: DashboardData): boolean {
-    return d.por_dia.length > 0;
+  barHeightValor(value: number): number {
+    const current = this.data();
+    if (!current?.comparativo_12_meses?.length) return 0;
+    const mes = this.selectedMesRef();
+    const status = this.selectedStatus();
+    const comparativo = current.comparativo_12_meses.filter((item) => !mes || item.mes_ref === mes);
+    const max = Math.max(
+      1,
+      ...comparativo.map((item) =>
+        Math.max(
+          Number(item.comprado_valor ?? 0),
+          status === 'Pago'
+            ? Number(item.vendido_valor_pago ?? item.vendido_valor ?? 0)
+            : status === 'Pendente'
+              ? Number(item.vendido_valor_pendente ?? item.vendido_valor ?? 0)
+              : Number(item.vendido_valor ?? 0),
+          Number(item.vendido_valor_pendente ?? 0),
+          Number(item.vendido_valor_pago ?? 0)
+        )
+      )
+    );
+    return Math.max(2, Math.round(((value || 0) / max) * 100));
   }
 
-  hasFuelData(d: DashboardData): boolean {
-    return d.por_combustivel.length > 0 && d.por_combustivel.some((item) => (item.litros || 0) > 0);
+  toggleMesFilter(mesRef: string): void {
+    this.selectedMesRef.set(this.selectedMesRef() === mesRef ? null : mesRef);
   }
 
-  onMesChange(event: Event) {
-    this.mesSelecionado.set(+(event.target as HTMLSelectElement).value);
-    this.load();
+  toggleStatusFilter(status: string): void {
+    const normalized = this.normalizeStatus(status);
+    if (!normalized) return;
+    this.selectedStatus.set(this.selectedStatus() === normalized ? null : normalized);
   }
 
-  onAnoChange(event: Event) {
-    this.anoSelecionado.set(+(event.target as HTMLSelectElement).value);
-    this.load();
+  clearChartFilters(): void {
+    this.selectedMesRef.set(null);
+    this.selectedStatus.set(null);
   }
+
+  mesLabelSelecionado(d: DashboardData): string {
+    const selected = this.selectedMesRef();
+    if (!selected) return '';
+    const found = (d?.comparativo_12_meses ?? []).find((item) => item.mes_ref === selected);
+    return found?.label || selected;
+  }
+
+  getCompradoLitros(item: DashboardData['comparativo_12_meses'][number]): number {
+    return Number(item?.comprado_litros ?? 0);
+  }
+
+  getVendidoLitros(item: DashboardData['comparativo_12_meses'][number]): number {
+    const status = this.selectedStatus();
+    if (status === 'Pago') return Number(item?.vendido_litros_pago ?? item?.vendido_litros ?? 0);
+    if (status === 'Pendente') return Number(item?.vendido_litros_pendente ?? item?.vendido_litros ?? 0);
+    return Number(item?.vendido_litros ?? 0);
+  }
+
+  getCompradoValor(item: DashboardData['comparativo_12_meses'][number]): number {
+    return Number(item?.comprado_valor ?? 0);
+  }
+
+  getVendidoValor(item: DashboardData['comparativo_12_meses'][number]): number {
+    const status = this.selectedStatus();
+    if (status === 'Pago') return Number(item?.vendido_valor_pago ?? item?.vendido_valor ?? 0);
+    if (status === 'Pendente') return Number(item?.vendido_valor_pendente ?? item?.vendido_valor ?? 0);
+    return Number(item?.vendido_valor ?? 0);
+  }
+
+  getPendenteValor(item: DashboardData['comparativo_12_meses'][number]): number {
+    return Number(item?.vendido_valor_pendente ?? 0);
+  }
+
+  getPagoValor(item: DashboardData['comparativo_12_meses'][number]): number {
+    return Number(item?.vendido_valor_pago ?? 0);
+  }
+
+  statusResumoFiltrado(d: DashboardData): DashboardData['status_resumo'] {
+    const base = this.buildStatusResumoByMes(d);
+    const selectedStatus = this.selectedStatus();
+    if (!selectedStatus) return base;
+    return base.filter((item) => this.normalizeStatus(item.status) === selectedStatus);
+  }
+
+  totalStatusLitros(d: DashboardData): number {
+    return this.statusResumoFiltrado(d).reduce((sum, item) => sum + Number(item?.litros_total ?? 0), 0);
+  }
+
+  totalStatusValor(d: DashboardData): number {
+    return this.statusResumoFiltrado(d).reduce((sum, item) => sum + Number(item?.valor_total ?? 0), 0);
+  }
+
+  donutSlices(d: DashboardData): Array<{ status: string; color: string; path: string }> {
+    const items = this.statusResumoFiltrado(d).filter((item) => Number(item?.litros_total ?? 0) > 0);
+    if (!items.length) return [];
+
+    const total = items.reduce((sum, item) => sum + Number(item.litros_total ?? 0), 0);
+    let accumulated = 0;
+    return items.map((item, index) => {
+      const value = Number(item.litros_total ?? 0);
+      const startAngle = (accumulated / total) * 360 - 90;
+      accumulated += value;
+      const endAngle = (accumulated / total) * 360 - 90;
+      return {
+        status: item.status,
+        color: this.donutColors[index % this.donutColors.length],
+        path: this.createDonutArcPath(startAngle, endAngle, 92, 46),
+      };
+    });
+  }
+
+  donutSlicesValor(d: DashboardData): Array<{ status: string; color: string; path: string }> {
+    const items = this.statusResumoFiltrado(d).filter((item) => Number(item?.valor_total ?? 0) > 0);
+    if (!items.length) return [];
+
+    const total = items.reduce((sum, item) => sum + Number(item.valor_total ?? 0), 0);
+    let accumulated = 0;
+    return items.map((item, index) => {
+      const value = Number(item.valor_total ?? 0);
+      const startAngle = (accumulated / total) * 360 - 90;
+      accumulated += value;
+      const endAngle = (accumulated / total) * 360 - 90;
+      return {
+        status: item.status,
+        color: this.donutColors[index % this.donutColors.length],
+        path: this.createDonutArcPath(startAngle, endAngle, 92, 46),
+      };
+    });
+  }
+
+  kpiValorVendido(d: DashboardData): number {
+    return this.getFilteredTotals(d).vendido;
+  }
+
+  kpiValorPendente(d: DashboardData): number {
+    return this.getFilteredTotals(d).pendente;
+  }
+
+  kpiValorRecebido(d: DashboardData): number {
+    return this.getFilteredTotals(d).recebido;
+  }
+
+  totalStatus(d: DashboardData): number {
+    return this.statusResumoFiltrado(d).reduce((sum, item) => sum + (item.total || 0), 0);
+  }
+
+  hasStatusData(d: DashboardData): boolean {
+    return this.statusResumoFiltrado(d).some((item) => (item.total || 0) > 0 || (item.litros_total || 0) > 0);
+  }
+
+  hasStatusValorData(d: DashboardData): boolean {
+    return this.statusResumoFiltrado(d).some((item) => (item.valor_total || 0) > 0);
+  }
+
+  normalizeDashboard(raw: DashboardData & any): DashboardData {
+    const comparativoRaw = Array.isArray(raw?.comparativo_12_meses)
+      ? raw.comparativo_12_meses
+      : (Array.isArray(raw?.comparativo12Meses) ? raw.comparativo12Meses : []);
+
+    const comparativo = comparativoRaw.length
+      ? comparativoRaw
+      : this.buildFallbackComparativo12Meses();
+
+    const statusResumo = Array.isArray(raw?.status_resumo)
+      ? raw.status_resumo
+      : (Array.isArray(raw?.statusResumo) ? raw.statusResumo : this.toLegacyStatusResumo(raw));
+
+    const statusResumoFinal = statusResumo.length
+      ? statusResumo
+      : this.toLegacyStatusResumo(raw);
+
+    return {
+      totais: {
+        abastecimentos: Number(raw?.totais?.abastecimentos ?? 0),
+        litros: Number(raw?.totais?.litros ?? 0),
+        valor: Number(raw?.totais?.valor ?? 0),
+        pendente_baixa: Number(raw?.totais?.pendente_baixa ?? 0),
+        valor_total_vendido: Number(raw?.totais?.valor_total_vendido ?? raw?.totais?.valor ?? 0),
+        valor_total_pendente_baixa: Number(raw?.totais?.valor_total_pendente_baixa ?? 0),
+        valor_total_recebido: Number(raw?.totais?.valor_total_recebido ?? 0),
+      },
+      comparativo_12_meses: comparativo.map((item: any) => ({
+        mes_ref: String(item?.mes_ref ?? ''),
+        label: String(item?.label ?? ''),
+        comprado_litros: Number(item?.comprado_litros ?? 0),
+        comprado_valor: Number(item?.comprado_valor ?? 0),
+        vendido_litros: Number(item?.vendido_litros ?? 0),
+        vendido_valor: Number(item?.vendido_valor ?? 0),
+        vendido_litros_pago: Number(item?.vendido_litros_pago ?? 0),
+        vendido_valor_pago: Number(item?.vendido_valor_pago ?? 0),
+        vendido_litros_pendente: Number(item?.vendido_litros_pendente ?? 0),
+        vendido_valor_pendente: Number(item?.vendido_valor_pendente ?? 0),
+      })),
+      status_resumo: statusResumoFinal.map((item: any) => ({
+        status: String(item?.status ?? 'Pendente'),
+        total: Number(item?.total ?? 0),
+        valor_total: Number(item?.valor_total ?? 0),
+        litros_total: Number(item?.litros_total ?? 0),
+      })),
+      top_proprietarios: Array.isArray(raw?.top_proprietarios) ? raw.top_proprietarios : [],
+    };
+  }
+
+  toLegacyStatusResumo(raw: any): { status: string; total: number; valor_total: number; litros_total: number }[] {
+    const pendentes = Number(raw?.totais?.pendente_baixa ?? 0);
+    const total = Number(raw?.totais?.abastecimentos ?? 0);
+    const pagos = Math.max(0, total - pendentes);
+    const valorPendente = Number(raw?.totais?.valor_total_pendente_baixa ?? 0);
+    const valorVendido = Number(raw?.totais?.valor_total_vendido ?? raw?.totais?.valor ?? 0);
+    const valorPago = Math.max(0, valorVendido - valorPendente);
+    const litrosTotal = Number(raw?.totais?.litros ?? 0);
+    return [
+      { status: 'Pendente', total: pendentes, valor_total: valorPendente, litros_total: litrosTotal },
+      { status: 'Pago', total: pagos, valor_total: valorPago, litros_total: 0 },
+    ];
+  }
+
+  buildFallbackComparativo12Meses(): Array<{ mes_ref: string; label: string; comprado_litros: number; vendido_litros: number }> {
+    const now = new Date();
+    const data: Array<{ mes_ref: string; label: string; comprado_litros: number; vendido_litros: number }> = [];
+    for (let offset = 11; offset >= 0; offset--) {
+      const ref = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const month = String(ref.getMonth() + 1).padStart(2, '0');
+      const year = String(ref.getFullYear());
+      data.push({
+        mes_ref: `${year}-${month}`,
+        label: `${month}/${year.slice(2)}`,
+        comprado_litros: 0,
+        vendido_litros: 0,
+      });
+    }
+    return data;
+  }
+
+  private getFilteredTotals(d: DashboardData): { vendido: number; pendente: number; recebido: number } {
+    const comparativo = (d?.comparativo_12_meses ?? []).filter((item) => {
+      const selectedMes = this.selectedMesRef();
+      return !selectedMes || item.mes_ref === selectedMes;
+    });
+
+    const vendidoTotal = comparativo.reduce((sum, item) => sum + Number(item.vendido_valor ?? 0), 0);
+    const pendenteTotal = comparativo.reduce((sum, item) => sum + Number(item.vendido_valor_pendente ?? 0), 0);
+    const recebidoTotal = comparativo.reduce((sum, item) => sum + Number(item.vendido_valor_pago ?? 0), 0);
+
+    let vendido = vendidoTotal;
+    let pendente = pendenteTotal;
+    let recebido = recebidoTotal;
+
+    if (!comparativo.length || (vendido <= 0 && pendente <= 0 && recebido <= 0)) {
+      vendido = Number(d?.totais?.valor_total_vendido ?? d?.totais?.valor ?? 0);
+      pendente = Number(d?.totais?.valor_total_pendente_baixa ?? 0);
+      recebido = Number(d?.totais?.valor_total_recebido ?? 0);
+    }
+
+    if (vendido > 0 && pendente <= 0 && recebido <= 0) {
+      pendente = vendido;
+      recebido = 0;
+    }
+
+    const selectedStatus = this.selectedStatus();
+    if (selectedStatus === 'Pendente') {
+      vendido = pendente;
+      recebido = 0;
+    } else if (selectedStatus === 'Pago') {
+      vendido = recebido;
+      pendente = 0;
+    }
+
+    return { vendido, pendente, recebido };
+  }
+
+  private buildStatusResumoByMes(d: DashboardData): DashboardData['status_resumo'] {
+    const selectedMes = this.selectedMesRef();
+    if (!selectedMes) {
+      const base = (d?.status_resumo ?? []).map((item) => ({
+        status: item.status,
+        total: Number(item.total ?? 0),
+        valor_total: Number(item.valor_total ?? 0),
+        litros_total: Number(item.litros_total ?? 0),
+      }));
+      if (base.length) {
+        const totalLitros = base.reduce((sum, item) => sum + Number(item.litros_total ?? 0), 0);
+        if (totalLitros > 0) return base;
+      }
+
+      const pendente = Number(d?.totais?.valor_total_pendente_baixa ?? 0);
+      const recebido = Number(d?.totais?.valor_total_recebido ?? 0);
+      const vendido = Number(d?.totais?.valor_total_vendido ?? d?.totais?.valor ?? 0);
+      const litros = Number(d?.totais?.litros ?? 0);
+      const pendenteFinal = pendente > 0 ? pendente : (recebido <= 0 ? vendido : 0);
+      const recebidoFinal = recebido > 0 ? recebido : Math.max(0, vendido - pendenteFinal);
+
+      return [
+        { status: 'Pendente', total: Number(d?.totais?.pendente_baixa ?? 0), valor_total: pendenteFinal, litros_total: litros },
+        { status: 'Pago', total: 0, valor_total: recebidoFinal, litros_total: 0 },
+      ];
+    }
+
+    const month = (d?.comparativo_12_meses ?? []).find((item) => item.mes_ref === selectedMes);
+    return [
+      {
+        status: 'Pendente',
+        total: 0,
+        valor_total: Number(month?.vendido_valor_pendente ?? 0),
+        litros_total: Number(month?.vendido_litros_pendente ?? 0),
+      },
+      {
+        status: 'Pago',
+        total: 0,
+        valor_total: Number(month?.vendido_valor_pago ?? 0),
+        litros_total: Number(month?.vendido_litros_pago ?? 0),
+      },
+    ];
+  }
+
+  private normalizeStatus(status: string | undefined | null): 'Pendente' | 'Pago' | null {
+    if (!status) return null;
+    const normalized = String(status).trim().toLowerCase();
+    if (normalized === 'pendente') return 'Pendente';
+    if (normalized === 'pago') return 'Pago';
+    return null;
+  }
+
+  private createDonutArcPath(startDeg: number, endDeg: number, outerR: number, innerR: number): string {
+    const startOuter = this.polarToCartesian(0, 0, outerR, endDeg);
+    const endOuter = this.polarToCartesian(0, 0, outerR, startDeg);
+    const startInner = this.polarToCartesian(0, 0, innerR, startDeg);
+    const endInner = this.polarToCartesian(0, 0, innerR, endDeg);
+    const largeArc = endDeg - startDeg <= 180 ? 0 : 1;
+    return [
+      `M ${startOuter.x} ${startOuter.y}`,
+      `A ${outerR} ${outerR} 0 ${largeArc} 0 ${endOuter.x} ${endOuter.y}`,
+      `L ${startInner.x} ${startInner.y}`,
+      `A ${innerR} ${innerR} 0 ${largeArc} 1 ${endInner.x} ${endInner.y}`,
+      'Z',
+    ].join(' ');
+  }
+
+  private polarToCartesian(cx: number, cy: number, radius: number, angleDeg: number): { x: number; y: number } {
+    const angleRad = (angleDeg * Math.PI) / 180;
+    return {
+      x: cx + radius * Math.cos(angleRad),
+      y: cy + radius * Math.sin(angleRad),
+    };
+  }
+
 }

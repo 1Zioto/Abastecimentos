@@ -49,6 +49,7 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('abastecimentos', AbastecimentoController::class);
     Route::delete('abastecimentos/{id}/force', [AbastecimentoController::class, 'forceDelete']);
     Route::get('abastecimentos/{id}/comprovante', [AbastecimentoController::class, 'comprovante']);
+    Route::get('abastecimentos/{id}/comprovante/debug', [AbastecimentoController::class, 'comprovanteDebug']);
     Route::get('abastecimentos/filter/baixa-pendente', [AbastecimentoController::class, 'pendenteBaixa']);
 
     // Baixa Abastecimento

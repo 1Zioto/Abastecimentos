@@ -28,6 +28,7 @@ class EntradaNotaController extends Controller
             'foto_nota'          => 'nullable|string',
             'tipo'               => 'nullable|string',
         ]);
+        $data['responsavel'] = auth()->user()?->nome ?? ($data['responsavel'] ?? null);
         return new \Illuminate\Http\JsonResponse(EntradaNota::create($data), 201);
     }
 
@@ -39,7 +40,7 @@ class EntradaNotaController extends Controller
     public function update(Request $request, string $id)
     {
         $nota = EntradaNota::findOrFail($id);
-        $nota->update($request->validate([
+        $data = $request->validate([
             'data'               => 'sometimes|date',
             'numero_nota_fiscal' => 'nullable|string',
             'valor'              => 'nullable|numeric|min:0',
@@ -48,7 +49,9 @@ class EntradaNotaController extends Controller
             'responsavel'        => 'nullable|string',
             'foto_nota'          => 'nullable|string',
             'tipo'               => 'nullable|string',
-        ]));
+        ]);
+        $data['responsavel'] = auth()->user()?->nome ?? ($data['responsavel'] ?? $nota->responsavel);
+        $nota->update($data);
         return new \Illuminate\Http\JsonResponse($nota->fresh());
     }
 

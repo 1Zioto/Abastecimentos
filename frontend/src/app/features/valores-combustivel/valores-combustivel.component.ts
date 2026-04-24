@@ -5,6 +5,7 @@ import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angu
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { ValorCombustivel } from '../../shared/models';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-valores-combustivel',
@@ -17,15 +18,22 @@ import { ValorCombustivel } from '../../shared/models';
           <h1>Tabela de Preços</h1>
           <p>Gerencie os preços dos combustíveis. O preço vigente é usado nos novos abastecimentos.</p>
         </div>
-        <button class="btn-primary" (click)="showForm.set(true)">+ Novo Preço</button>
+        @if (isAdmin()) {
+          <button class="btn-primary" (click)="showForm.set(true)">+ Novo Preço</button>
+        }
       </div>
 
       <div class="info-banner">
         ⚠️ <strong>Importante:</strong> Uma vez registrado o abastecimento, o valor por litro fica gravado e não é alterado mesmo que o preço seja atualizado aqui.
       </div>
+      @if (!isAdmin()) {
+        <div class="readonly-banner">
+          👀 Modo visualização: apenas administradores podem alterar os valores de combustível.
+        </div>
+      }
 
       <!-- Form -->
-      @if (showForm()) {
+      @if (showForm() && isAdmin()) {
         <div class="form-card">
           <h3>{{ editItem() ? 'Editar Preço' : 'Novo Preço' }}</h3>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
@@ -77,10 +85,14 @@ import { ValorCombustivel } from '../../shared/models';
                   <td>{{ v.data | date:'dd/MM/yyyy HH:mm' }}</td>
                   <td>{{ v.responsavel ?? '—' }}</td>
                   <td>
-                    <div class="actions">
-                      <button class="action-btn" (click)="edit(v)">✏️</button>
-                      <button class="action-btn" (click)="confirmDelete(v)">🗑️</button>
-                    </div>
+                    @if (isAdmin()) {
+                      <div class="actions">
+                        <button class="action-btn" (click)="edit(v)">✏️</button>
+                        <button class="action-btn" (click)="confirmDelete(v)">🗑️</button>
+                      </div>
+                    } @else {
+                      <span class="muted">Somente leitura</span>
+                    }
                   </td>
                 </tr>
               }
@@ -92,7 +104,7 @@ import { ValorCombustivel } from '../../shared/models';
         </div>
       </div>
 
-      @if (deleteTarget()) {
+      @if (deleteTarget() && isAdmin()) {
         <div class="modal-overlay" (click)="deleteTarget.set(null)">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Confirmar Exclusão</h3>
@@ -115,6 +127,7 @@ import { ValorCombustivel } from '../../shared/models';
     .page-header p { font-size:13px; color:#64748b; margin-top:4px; }
     .btn-primary { background:linear-gradient(135deg,#0ea5e9,#6366f1); border:none; border-radius:8px; padding:10px 20px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; }
     .info-banner { background:#fef9c310; border:1px solid #eab30840; color:#fbbf24; padding:12px 16px; border-radius:8px; font-size:12px; margin-bottom:16px; }
+    .readonly-banner { background:#0b1220; border:1px solid #334155; color:#94a3b8; padding:12px 16px; border-radius:8px; font-size:12px; margin-bottom:16px; }
     .form-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:20px; margin-bottom:16px; }
     .form-card h3 { font-size:14px; font-weight:700; color:#f8fafc; margin:0 0 14px; }
     .form-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:14px; margin-bottom:14px; }
@@ -138,6 +151,7 @@ import { ValorCombustivel } from '../../shared/models';
     .actions { display:flex; gap:6px; }
     .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; }
     .action-btn:hover { background:#1e2d4a; }
+    .muted { color:#64748b; font-size:12px; }
     .empty-cell { text-align:center; padding:32px; color:#475569; }
     .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:1000; }
     .modal { background:#0d1427; border:1px solid #1e2d4a; border-radius:14px; padding:28px; max-width:380px; width:90%; }
@@ -151,6 +165,7 @@ export class ValoresCombustivelComponent implements OnInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
+  private auth = inject(AuthService);
 
   valores = signal<ValorCombustivel[]>([]);
   showForm = signal(false);
@@ -158,29 +173,42 @@ export class ValoresCombustivelComponent implements OnInit {
   deleteTarget = signal<ValorCombustivel | null>(null);
   saving = signal(false);
 
-  tipos = ['Diesel S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  tipos = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
 
   form = this.fb.group({
-    tipo_combustivel: ['', Validators.required],
+    tipo_combustivel: ['OLEO DIESEL S10', Validators.required],
     valor: [null as number | null, [Validators.required, Validators.min(0.001)]],
     responsavel: [''],
   });
 
   ngOnInit() { this.load(); }
 
+  isAdmin(): boolean {
+    return this.auth.isAdmin();
+  }
+
   load() {
     this.api.getValoresCombustivel({ per_page: 100 }).subscribe(r => this.valores.set(r.data));
   }
 
   edit(v: ValorCombustivel) {
+    if (!this.isAdmin()) return;
     this.editItem.set(v);
     this.form.patchValue(v as any);
     this.showForm.set(true);
   }
 
-  cancelForm() { this.showForm.set(false); this.editItem.set(null); this.form.reset(); }
+  cancelForm() {
+    this.showForm.set(false);
+    this.editItem.set(null);
+    this.form.reset({ tipo_combustivel: 'OLEO DIESEL S10' });
+  }
 
   onSubmit() {
+    if (!this.isAdmin()) {
+      this.toastr.error('Somente administradores podem alterar combustível');
+      return;
+    }
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
     this.saving.set(true);
     const data = this.form.value as any;
@@ -193,9 +221,16 @@ export class ValoresCombustivelComponent implements OnInit {
     });
   }
 
-  confirmDelete(v: ValorCombustivel) { this.deleteTarget.set(v); }
+  confirmDelete(v: ValorCombustivel) {
+    if (!this.isAdmin()) return;
+    this.deleteTarget.set(v);
+  }
 
   executeDelete() {
+    if (!this.isAdmin()) {
+      this.toastr.error('Somente administradores podem alterar combustível');
+      return;
+    }
     this.api.deleteValorCombustivel(this.deleteTarget()!.id_valor).subscribe({
       next: () => { this.toastr.success('Excluído'); this.deleteTarget.set(null); this.load(); },
       error: () => this.toastr.error('Erro ao excluir')

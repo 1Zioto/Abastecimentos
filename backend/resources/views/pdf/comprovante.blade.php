@@ -26,7 +26,7 @@
 <body>
 <div class="header">
   <div>
-    <div class="h1">⛽ FUELTRACK</div>
+    <h1>FUELTRACK</h1>
     <div class="sub">Sistema de Gestão de Abastecimento</div>
   </div>
   <div class="badge">COMPROVANTE</div>
@@ -34,11 +34,16 @@
 
 <div class="body">
   <div class="title">Comprovante de Abastecimento</div>
+  @php
+    $rawDataHora = method_exists($abastecimento, 'getRawOriginal') ? $abastecimento->getRawOriginal('data_hora') : ($abastecimento->data_hora ?? null);
+    $tsDataHora = $rawDataHora ? strtotime((string) $rawDataHora) : false;
+    $dataHoraFmt = $tsDataHora ? date('d/m/Y H:i', $tsDataHora) : '—';
+  @endphp
 
   <div class="grid">
     <div class="field">
       <div class="label">Data / Hora</div>
-      <div class="value">{{ \Carbon\Carbon::parse($abastecimento->data_hora)->format('d/m/Y H:i') }}</div>
+      <div class="value">{{ $dataHoraFmt }}</div>
     </div>
     <div class="field">
       <div class="label">Frentista</div>
@@ -46,7 +51,7 @@
     </div>
     <div class="field">
       <div class="label">Placa do Veículo</div>
-      <div class="value">{{ $abastecimento->veiculo->placa ?? $abastecimento->id_veiculo }}</div>
+      <div class="value">{{ optional($abastecimento->veiculo)->placa ?? $abastecimento->id_veiculo ?? '—' }}</div>
     </div>
     <div class="field">
       <div class="label">Veículo</div>
@@ -62,7 +67,7 @@
     </div>
     <div class="field">
       <div class="label">Tipo de Combustível</div>
-      <div class="value">{{ strtoupper($abastecimento->tipo_combustivel) }}</div>
+      <div class="value">{{ strtoupper((string) ($abastecimento->tipo_combustivel ?? '')) ?: '—' }}</div>
     </div>
     <div class="field">
       <div class="label">Local</div>
@@ -74,7 +79,9 @@
     </div>
     <div class="field">
       <div class="label">Odômetro</div>
-      <div class="value">{{ number_format($abastecimento->odometro, 0, ',', '.') }} km</div>
+      <div class="value">
+        {{ $abastecimento->odometro !== null ? number_format((float) $abastecimento->odometro, 0, ',', '.') . ' km' : '—' }}
+      </div>
     </div>
     <div class="field">
       <div class="label">Status</div>
@@ -85,15 +92,15 @@
   <div class="totals">
     <div>
       <div class="t-label">Quantidade</div>
-      <div class="t-value">{{ number_format($abastecimento->quantidade_litros, 2, ',', '.') }} L</div>
+      <div class="t-value">{{ number_format((float) ($abastecimento->quantidade_litros ?? 0), 2, ',', '.') }} L</div>
     </div>
     <div>
       <div class="t-label">Valor por Litro</div>
-      <div class="t-value">R$ {{ number_format($abastecimento->valor_por_litro, 3, ',', '.') }}</div>
+      <div class="t-value">R$ {{ number_format((float) ($abastecimento->valor_por_litro ?? 0), 3, ',', '.') }}</div>
     </div>
     <div>
       <div class="t-label">Valor Total</div>
-      <div class="t-value accent">R$ {{ number_format($abastecimento->valor_total, 2, ',', '.') }}</div>
+      <div class="t-value accent">R$ {{ number_format((float) ($abastecimento->valor_total ?? 0), 2, ',', '.') }}</div>
     </div>
   </div>
 

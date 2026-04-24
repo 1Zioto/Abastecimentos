@@ -12,9 +12,10 @@ export const routes: Routes = [
     loadComponent: () => import('./layout/shell/shell.component').then(m => m.ShellComponent),
     canActivate: [authGuard],
     children: [
-      { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
+      { path: '', redirectTo: 'abastecimentos', pathMatch: 'full' },
       {
         path: 'dashboard',
+        canActivate: [adminGuard],
         loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
       },
       {
@@ -27,10 +28,12 @@ export const routes: Routes = [
       },
       {
         path: 'abastecimentos/:id/editar',
+        canActivate: [adminGuard],
         loadComponent: () => import('./features/abastecimentos/form/abastecimento-form.component').then(m => m.AbastecimentoFormComponent)
       },
       {
         path: 'baixa',
+        canActivate: [adminGuard],
         loadComponent: () => import('./features/baixa/baixa.component').then(m => m.BaixaComponent)
       },
       {
@@ -39,6 +42,7 @@ export const routes: Routes = [
       },
       {
         path: 'relatorios',
+        canActivate: [adminGuard],
         loadComponent: () => import('./features/relatorios/relatorios.component').then(m => m.RelatoriosComponent)
       },
       {

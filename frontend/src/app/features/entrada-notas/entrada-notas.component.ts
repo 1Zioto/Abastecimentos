@@ -5,6 +5,7 @@ import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angu
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { EntradaNota } from '../../shared/models';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-entrada-notas',
@@ -63,7 +64,7 @@ import { EntradaNota } from '../../shared/models';
                 <label>Tipo</label>
                 <select formControlName="tipo">
                   <option value="">Selecione...</option>
-                  <option value="Diesel S10">Diesel S10</option>
+                <option value="OLEO DIESEL S10">OLEO DIESEL S10</option>
                   <option value="Diesel Comum">Diesel Comum</option>
                   <option value="Gasolina Comum">Gasolina Comum</option>
                   <option value="Gasolina Aditivada">Gasolina Aditivada</option>
@@ -77,20 +78,30 @@ import { EntradaNota } from '../../shared/models';
                 <input type="number" formControlName="quantidade" placeholder="0.00" step="0.01" (input)="calcValor()" />
               </div>
               <div class="field">
-                <label>Valor por Litro</label>
+                <label>Valor por Litro(compra)</label>
                 <input type="number" formControlName="valor_litro" placeholder="0.000" step="0.001" (input)="calcValor()" />
               </div>
               <div class="field">
                 <label>Valor Total</label>
-                <input type="number" formControlName="valor" placeholder="0.00" step="0.01" class="highlight-field" />
+                <input type="hidden" formControlName="valor" />
+                <input type="text" [value]="formatCurrencyBR(form.value.valor)" readonly class="highlight-field readonly-field" />
               </div>
               <div class="field">
                 <label>Responsável</label>
-                <input type="text" formControlName="responsavel" placeholder="Nome" />
+                <input type="text" formControlName="responsavel" readonly class="readonly-field" />
               </div>
               <div class="field">
-                <label>Foto / Anexo (URL)</label>
-                <input type="text" formControlName="foto_nota" placeholder="https://..." />
+                <label>Foto / Anexo (Imagem)</label>
+                <input type="file" accept="image/*" (change)="onUploadFotoNota($event)" />
+                @if (uploadingFotoNota()) {
+                  <small class="upload-hint">Enviando imagem...</small>
+                } @else if (resolveImageUrl(form.value.foto_nota); as fotoNotaUrl) {
+                  <small class="upload-hint">Imagem enviada ✓</small>
+                  <div class="preview-box">
+                    <img class="preview-img" [src]="fotoNotaUrl" alt="Anexo da nota" />
+                  </div>
+                  <button type="button" class="btn-preview" (click)="openImagePreview(fotoNotaUrl)">Expandir</button>
+                }
               </div>
             </div>
             <div class="form-actions">
@@ -151,8 +162,8 @@ import { EntradaNota } from '../../shared/models';
                   </td>
                   <td>{{ n.responsavel ?? '—' }}</td>
                   <td>
-                    @if (n.foto_nota) {
-                      <a [href]="n.foto_nota" target="_blank" class="link-btn">📎 Ver</a>
+                    @if (resolveImageUrl(n.foto_nota); as fotoNotaListUrl) {
+                      <button type="button" class="link-btn" (click)="openImagePreview(fotoNotaListUrl)">Ver imagem</button>
                     } @else { — }
                   </td>
                   <td>
@@ -180,6 +191,15 @@ import { EntradaNota } from '../../shared/models';
               <button class="btn-cancel" (click)="deleteTarget.set(null)">Cancelar</button>
               <button class="btn-danger" (click)="executeDelete()">Excluir</button>
             </div>
+          </div>
+        </div>
+      }
+
+      @if (previewImageUrl()) {
+        <div class="image-overlay" (click)="closeImagePreview()">
+          <div class="image-modal" (click)="$event.stopPropagation()">
+            <img [src]="previewImageUrl()" alt="Imagem ampliada" />
+            <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
           </div>
         </div>
       }
@@ -212,6 +232,12 @@ import { EntradaNota } from '../../shared/models';
     .field input:focus, .field select:focus { border-color: #0ea5e9; }
     .field select option { background: #0d1427; }
     .highlight-field { border-color: #4ade8040 !important; color: #4ade80 !important; font-weight: 600; }
+    .readonly-field { opacity: 0.8; cursor: not-allowed; }
+    .upload-hint { color: #94a3b8; font-size: 11px; }
+    .preview-box { margin-top: 6px; border: 1px solid #1e2d4a; border-radius: 10px; padding: 6px; background: #0a0f1e; width: 100%; max-width: 220px; }
+    .preview-img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: 8px; background: #0d1427; }
+    .btn-preview { margin-top: 6px; background: #0a0f1e; border: 1px solid #1e2d4a; color: #38bdf8; padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; width: fit-content; }
+    .btn-preview:hover { border-color: #38bdf8; }
     .form-actions { display: flex; gap: 10px; justify-content: flex-end; }
     .btn-cancel { background: transparent; border: 1px solid #1e2d4a; color: #64748b; padding: 8px 16px; border-radius: 7px; cursor: pointer; font-size: 13px; }
 
@@ -232,7 +258,7 @@ import { EntradaNota } from '../../shared/models';
     .val-green { color: #4ade80; font-weight: 600; }
     .code-badge { background: #0a0f1e; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-size: 11px; }
     .fuel-badge { background: #1e2d4a; color: #38bdf8; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 600; }
-    .link-btn { color: #38bdf8; font-size: 11px; text-decoration: none; }
+    .link-btn { color: #38bdf8; font-size: 11px; text-decoration: none; background: transparent; border: none; cursor: pointer; padding: 0; }
     .link-btn:hover { text-decoration: underline; }
     .actions { display: flex; gap: 6px; }
     .action-btn { background: transparent; border: none; cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 5px; }
@@ -244,18 +270,25 @@ import { EntradaNota } from '../../shared/models';
     .modal p { font-size: 13px; color: #94a3b8; margin-bottom: 16px; }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
     .btn-danger { background: #dc2626; border: none; color: #fff; padding: 8px 16px; border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .image-overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, 0.9); display: flex; align-items: center; justify-content: center; z-index: 1100; padding: 20px; }
+    .image-modal { max-width: min(92vw, 1100px); max-height: 90vh; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+    .image-modal img { width: auto; max-width: 100%; max-height: calc(90vh - 56px); object-fit: contain; border-radius: 12px; border: 1px solid #1e2d4a; background: #0a0f1e; }
+    .btn-close-image { background: #0a0f1e; border: 1px solid #1e2d4a; color: #e2e8f0; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; }
   `]
 })
 export class EntradaNotasComponent implements OnInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
+  private auth = inject(AuthService);
 
   notas = signal<EntradaNota[]>([]);
   showForm = signal(false);
   editItem = signal<EntradaNota | null>(null);
   deleteTarget = signal<EntradaNota | null>(null);
   saving = signal(false);
+  uploadingFotoNota = signal(false);
+  previewImageUrl = signal('');
 
   filtroTipo = '';
   filtroDataInicio = '';
@@ -264,7 +297,7 @@ export class EntradaNotasComponent implements OnInit {
   form = this.fb.group({
     data:               ['', Validators.required],
     numero_nota_fiscal: [''],
-    tipo:               [''],
+    tipo:               ['OLEO DIESEL S10'],
     quantidade:         [null as number | null],
     valor_litro:        [null as number | null],
     valor:              [null as number | null],
@@ -301,22 +334,34 @@ export class EntradaNotasComponent implements OnInit {
 
   newItem() {
     this.editItem.set(null);
-    this.form.reset({ data: new Date().toISOString().slice(0, 10) });
+    this.form.reset({
+      data: new Date().toISOString().slice(0, 10),
+      tipo: 'OLEO DIESEL S10',
+      responsavel: this.auth.currentUser()?.nome ?? ''
+    });
     this.showForm.set(true);
   }
 
   edit(n: EntradaNota) {
     this.editItem.set(n);
     this.form.patchValue({ ...n, data: n.data?.slice(0, 10) } as any);
+    this.form.patchValue({ responsavel: this.auth.currentUser()?.nome ?? n.responsavel ?? '' });
     this.showForm.set(true);
   }
 
-  cancelForm() { this.showForm.set(false); this.editItem.set(null); this.form.reset(); }
+  cancelForm() {
+    this.showForm.set(false);
+    this.editItem.set(null);
+    this.form.reset({ tipo: 'OLEO DIESEL S10', responsavel: this.auth.currentUser()?.nome ?? '' });
+  }
 
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
     this.saving.set(true);
-    const data = this.form.value as any;
+    const data = {
+      ...(this.form.value as any),
+      responsavel: this.auth.currentUser()?.nome ?? this.form.value.responsavel ?? '',
+    };
     const obs = this.editItem()
       ? this.api.updateEntradaNota(this.editItem()!.id_financeiro, data)
       : this.api.createEntradaNota(data);
@@ -333,5 +378,58 @@ export class EntradaNotasComponent implements OnInit {
       next: () => { this.toastr.success('Nota excluída'); this.deleteTarget.set(null); this.load(); },
       error: () => this.toastr.error('Erro ao excluir')
     });
+  }
+
+  onUploadFotoNota(event: Event) {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    this.uploadingFotoNota.set(true);
+    this.api.uploadToDrive(file).subscribe({
+      next: (res) => {
+        const url = res?.file?.downloadUrl || res?.file?.webViewLink || '';
+        this.form.patchValue({ foto_nota: url });
+        this.uploadingFotoNota.set(false);
+        this.toastr.success('Imagem da nota enviada');
+      },
+      error: (err) => {
+        this.toastr.error(err.error?.message ?? 'Erro no upload da imagem');
+        this.uploadingFotoNota.set(false);
+      }
+    });
+  }
+
+  resolveImageUrl(url?: string | null): string | null {
+    if (!url) return null;
+    const normalized = String(url).trim();
+    if (!normalized) return null;
+    if (
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('data:image/') ||
+      normalized.startsWith('blob:')
+    ) {
+      return normalized;
+    }
+    return null;
+  }
+
+  openImagePreview(url?: string | null) {
+    const imageUrl = this.resolveImageUrl(url);
+    if (!imageUrl) return;
+    this.previewImageUrl.set(imageUrl);
+  }
+
+  closeImagePreview() {
+    this.previewImageUrl.set('');
+  }
+
+  formatCurrencyBR(value: number | null | undefined): string {
+    const amount = Number(value ?? 0);
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number.isFinite(amount) ? amount : 0);
   }
 }

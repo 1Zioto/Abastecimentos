@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:'DejaVu Sans',sans-serif; font-size:10px; color:#1a1a1a; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size:10px; color:#1a1a1a; }
   .header { background:#0f172a; color:#fff; padding:14px 20px; margin-bottom:16px; }
   .header h1 { font-size:16px; font-weight:700; letter-spacing:2px; }
   .header .meta { font-size:9px; color:#94a3b8; margin-top:4px; }
@@ -14,7 +14,6 @@
   table { width:100%; border-collapse:collapse; font-size:9px; }
   thead th { background:#0f172a; color:#fff; padding:6px 8px; text-align:left; font-size:8px; text-transform:uppercase; letter-spacing:0.5px; }
   tbody tr:nth-child(even) { background:#f8fafc; }
-  tbody tr:hover { background:#eff6ff; }
   tbody td { padding:5px 8px; border-bottom:1px solid #e2e8f0; color:#374151; }
   .text-right { text-align:right; }
   .text-center { text-align:center; }
@@ -28,11 +27,17 @@
 </style>
 </head>
 <body>
+@php
+  $tsInicio = $request->data_inicio ? strtotime((string) $request->data_inicio) : false;
+  $tsFim = $request->data_fim ? strtotime((string) $request->data_fim) : false;
+  $dataInicioFmt = $tsInicio ? date('d/m/Y', $tsInicio) : 'Início';
+  $dataFimFmt = $tsFim ? date('d/m/Y', $tsFim) : 'Hoje';
+@endphp
 <div class="header">
-  <h1>⛽ FUELTRACK — Relatório por Proprietário</h1>
+  <h1>FUELTRACK - Relatorio por Proprietario</h1>
   <div class="meta">
-    Período: {{ $request->data_inicio ? \Carbon\Carbon::parse($request->data_inicio)->format('d/m/Y') : 'Início' }}
-    até {{ $request->data_fim ? \Carbon\Carbon::parse($request->data_fim)->format('d/m/Y') : 'Hoje' }}
+    Período: {{ $dataInicioFmt }}
+    até {{ $dataFimFmt }}
     — Gerado em {{ now()->format('d/m/Y H:i') }}
   </div>
 </div>
@@ -61,10 +66,15 @@
   </thead>
   <tbody>
     @forelse($abastecimentos as $a)
+    @php
+      $rawDataHora = method_exists($a, 'getRawOriginal') ? $a->getRawOriginal('data_hora') : ($a->data_hora ?? null);
+      $tsDataHora = $rawDataHora ? strtotime((string) $rawDataHora) : false;
+      $dataHoraFmt = $tsDataHora ? date('d/m/Y H:i', $tsDataHora) : '—';
+    @endphp
     <tr>
-      <td>{{ \Carbon\Carbon::parse($a->data_hora)->format('d/m/Y H:i') }}</td>
+      <td>{{ $dataHoraFmt }}</td>
       <td><strong>{{ optional($a->veiculo)->placa ?? '—' }}</strong></td>
-      <td>{{ strtoupper($a->tipo_combustivel) }}</td>
+      <td>{{ strtoupper((string) ($a->tipo_combustivel ?? '')) ?: '—' }}</td>
       <td>{{ $a->nome_motorista ?? '—' }}</td>
       <td class="text-right">{{ number_format($a->quantidade_litros,2,',','.') }}</td>
       <td class="text-right">{{ number_format($a->valor_por_litro,3,',','.') }}</td>

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ValoresCombustivel;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 
 class ValoresCombustivelController extends Controller
 {
@@ -16,6 +17,10 @@ class ValoresCombustivelController extends Controller
 
     public function store(Request $request)
     {
+        if ($adminResponse = $this->ensureAdmin()) {
+            return $adminResponse;
+        }
+
         $data = $request->validate([
             'tipo_combustivel' => 'required|string',
             'valor'            => 'required|numeric|min:0',
@@ -32,6 +37,10 @@ class ValoresCombustivelController extends Controller
 
     public function update(Request $request, string $id)
     {
+        if ($adminResponse = $this->ensureAdmin()) {
+            return $adminResponse;
+        }
+
         $registro = ValoresCombustivel::findOrFail($id);
         $registro->update($request->validate([
             'tipo_combustivel' => 'sometimes|string',
@@ -43,6 +52,10 @@ class ValoresCombustivelController extends Controller
 
     public function destroy(string $id)
     {
+        if ($adminResponse = $this->ensureAdmin()) {
+            return $adminResponse;
+        }
+
         ValoresCombustivel::findOrFail($id)->delete();
         return new \Illuminate\Http\JsonResponse(['message' => 'Registro excluído']);
     }
@@ -53,5 +66,15 @@ class ValoresCombustivelController extends Controller
             ->orderByDesc('data')
             ->first();
         return new \Illuminate\Http\JsonResponse($valor);
+    }
+
+    private function ensureAdmin(): ?JsonResponse
+    {
+        $currentUser = auth('api')->user();
+        if (!$currentUser || $currentUser->tipo !== 'admin') {
+            return new JsonResponse(['message' => 'Somente administradores podem alterar combustível'], 403);
+        }
+
+        return null;
     }
 }

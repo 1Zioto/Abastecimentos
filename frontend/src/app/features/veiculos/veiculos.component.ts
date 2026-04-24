@@ -137,13 +137,13 @@ export class VeiculosComponent implements OnInit {
   items = signal<Veiculo[]>([]); proprietarios = signal<Proprietario[]>([]); total = signal(0);
   showForm = signal(false); editItem = signal<Veiculo | null>(null); deleteTarget = signal<Veiculo | null>(null); saving = signal(false);
   search = ''; filtroProprietario = '';
-  tipos = ['Diesel S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
-  form = this.fb.group({ placa:['',Validators.required],id_proprietario:['',Validators.required],marca:[''],modelo:[''],ano:[''],cor:[''],tipo_combustivel:[''],renavam:[''],numero_chassi:[''],odometro:[null] });
+  tipos = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  form = this.fb.group({ placa:['',Validators.required],id_proprietario:['',Validators.required],marca:[''],modelo:[''],ano:[''],cor:[''],tipo_combustivel:['OLEO DIESEL S10'],renavam:[''],numero_chassi:[''],odometro:[null] });
   ngOnInit() { this.api.getProprietariosAll().subscribe(r=>this.proprietarios.set(r.data)); this.load(); }
   load() { this.api.getVeiculos({search:this.search,id_proprietario:this.filtroProprietario,per_page:100}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
-  newItem() { this.editItem.set(null);this.form.reset();this.showForm.set(true); }
+  newItem() { this.editItem.set(null);this.form.reset({ tipo_combustivel: 'OLEO DIESEL S10' });this.showForm.set(true); }
   edit(v:Veiculo) { this.editItem.set(v);this.form.patchValue(v as any);this.showForm.set(true); }
-  cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset(); }
+  cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset({ tipo_combustivel: 'OLEO DIESEL S10' }); }
   onSubmit() {
     if(this.form.invalid){this.form.markAllAsTouched();return;}
     this.saving.set(true);

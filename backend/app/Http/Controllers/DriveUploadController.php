@@ -14,18 +14,27 @@ class DriveUploadController extends Controller
             'file' => 'required|file|max:20480',
         ]);
 
-        $folderId = (string) env('GOOGLE_DRIVE_FOLDER_ID', '');
-        if ($folderId === '') {
-            return new \Illuminate\Http\JsonResponse([
-                'message' => 'GOOGLE_DRIVE_FOLDER_ID não configurado.',
-            ], 500);
-        }
-
         try {
-            $credentials = $this->resolveCredentials();
-            $accessToken = $this->fetchAccessToken($credentials);
-
             $uploaded = $data['file'];
+
+            $cloudinaryUrl = (string) env('CLOUDINARY_URL', '');
+            if ($cloudinaryUrl !== '') {
+                $uploadedFile = $this->uploadToCloudinary($uploaded, $cloudinaryUrl);
+
+                return new \Illuminate\Http\JsonResponse([
+                    'message' => 'Arquivo enviado para o Cloudinary.',
+                    'file' => $uploadedFile,
+                ], 201);
+            }
+
+            $folderId = (string) env('GOOGLE_DRIVE_FOLDER_ID', '');
+            if ($folderId === '') {
+                return new \Illuminate\Http\JsonResponse([
+                    'message' => 'Configure CLOUDINARY_URL ou GOOGLE_DRIVE_FOLDER_ID.',
+                ], 500);
+            }
+
+            $accessToken = $this->fetchAccessToken();
             $extension = $uploaded->getClientOriginalExtension();
             $targetName = Str::uuid()->toString() . ($extension ? '.' . strtolower($extension) : '');
             $mimeType = $uploaded->getMimeType() ?: 'application/octet-stream';
@@ -97,7 +106,75 @@ class DriveUploadController extends Controller
         }
     }
 
-    private function resolveCredentials(): array
+    private function uploadToCloudinary($uploaded, string $cloudinaryUrl): array
+    {
+        $parsed = parse_url($cloudinaryUrl);
+        $cloudName = $parsed['host'] ?? '';
+        $user = isset($parsed['user']) ? urldecode($parsed['user']) : '';
+        $pass = isset($parsed['pass']) ? urldecode($parsed['pass']) : '';
+
+        if ($cloudName === '' || $user === '' || $pass === '') {
+            throw new \RuntimeException('CLOUDINARY_URL inválido.');
+        }
+
+        $timestamp = time();
+        $publicId = (string) Str::uuid();
+        $folder = trim((string) env('CLOUDINARY_FOLDER', 'abastecimentos'));
+
+        $signatureData = [
+            'public_id' => $publicId,
+            'timestamp' => (string) $timestamp,
+        ];
+        if ($folder !== '') {
+            $signatureData['folder'] = $folder;
+        }
+
+        ksort($signatureData);
+        $toSign = collect($signatureData)
+            ->map(fn ($value, $key) => $key . '=' . $value)
+            ->implode('&');
+        $signature = sha1($toSign . $pass);
+
+        $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/auto/upload";
+        $fileBytes = file_get_contents($uploaded->getRealPath());
+        if ($fileBytes === false) {
+            throw new \RuntimeException('Não foi possível ler o arquivo para upload.');
+        }
+
+        $payload = [
+            'api_key' => $user,
+            'timestamp' => $timestamp,
+            'signature' => $signature,
+            'public_id' => $publicId,
+        ];
+        if ($folder !== '') {
+            $payload['folder'] = $folder;
+        }
+
+        $response = Http::connectTimeout(10)
+            ->timeout(30)
+            ->attach('file', $fileBytes, $uploaded->getClientOriginalName())
+            ->post($uploadUrl, $payload);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Falha no Cloudinary: ' . $response->body());
+        }
+
+        $json = $response->json() ?? [];
+        $url = $json['secure_url'] ?? ($json['url'] ?? null);
+
+        return [
+            'id' => $json['public_id'] ?? null,
+            'name' => $uploaded->getClientOriginalName(),
+            'mimeType' => $uploaded->getMimeType() ?: 'application/octet-stream',
+            'size' => (int) ($json['bytes'] ?? $uploaded->getSize() ?? 0),
+            'webViewLink' => $url,
+            'webContentLink' => $url,
+            'downloadUrl' => $url,
+        ];
+    }
+
+    private function resolveServiceAccountCredentials(): array
     {
         $jsonEnv = (string) env('GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON', '');
         if ($jsonEnv !== '') {
@@ -113,7 +190,7 @@ class DriveUploadController extends Controller
             return $this->decodeCredentialJson($content);
         }
 
-        throw new \RuntimeException('Credenciais do Google Drive não configuradas.');
+        throw new \RuntimeException('Credenciais de service account não configuradas.');
     }
 
     private function decodeCredentialJson(string $raw): array
@@ -162,7 +239,28 @@ class DriveUploadController extends Controller
         return $key;
     }
 
-    private function fetchAccessToken(array $credentials): string
+    private function fetchAccessToken(): string
+    {
+        $serviceAccountJson = (string) env('GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON', '');
+        if ($serviceAccountJson !== '') {
+            $credentials = $this->resolveServiceAccountCredentials();
+            return $this->fetchAccessTokenFromServiceAccount($credentials);
+        }
+
+        $clientId = (string) env('GOOGLE_DRIVE_CLIENT_ID', '');
+        $clientSecret = (string) env('GOOGLE_DRIVE_CLIENT_SECRET', '');
+        $refreshToken = (string) env('GOOGLE_DRIVE_REFRESH_TOKEN', '');
+
+        if ($clientId !== '' && $clientSecret !== '' && $refreshToken !== '') {
+            return $this->fetchAccessTokenFromRefreshToken($clientId, $clientSecret, $refreshToken);
+        }
+
+        throw new \RuntimeException(
+            'Credenciais do Google Drive não configuradas. Use GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON ou GOOGLE_DRIVE_CLIENT_ID/GOOGLE_DRIVE_CLIENT_SECRET/GOOGLE_DRIVE_REFRESH_TOKEN.'
+        );
+    }
+
+    private function fetchAccessTokenFromServiceAccount(array $credentials): string
     {
         $clientEmail = $credentials['client_email'];
         $privateKey = $credentials['private_key'];
@@ -195,6 +293,30 @@ class DriveUploadController extends Controller
         $accessToken = $response->json('access_token');
         if (!$accessToken) {
             throw new \RuntimeException('Token de acesso do Google não retornado.');
+        }
+
+        return $accessToken;
+    }
+
+    private function fetchAccessTokenFromRefreshToken(string $clientId, string $clientSecret, string $refreshToken): string
+    {
+        $response = Http::asForm()
+            ->connectTimeout(10)
+            ->timeout(20)
+            ->post('https://oauth2.googleapis.com/token', [
+                'client_id' => $clientId,
+                'client_secret' => $clientSecret,
+                'refresh_token' => $refreshToken,
+                'grant_type' => 'refresh_token',
+            ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Falha ao obter token via refresh_token: ' . $response->body());
+        }
+
+        $accessToken = $response->json('access_token');
+        if (!$accessToken) {
+            throw new \RuntimeException('Token de acesso OAuth não retornado.');
         }
 
         return $accessToken;

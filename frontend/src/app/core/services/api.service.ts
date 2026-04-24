@@ -1,6 +1,6 @@
 // src/app/core/services/api.service.ts
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import {
@@ -26,8 +26,8 @@ export class ApiService {
   }
 
   // Dashboard
-  getDashboard(mes?: number, ano?: number): Observable<DashboardData> {
-    return this.http.get<DashboardData>(this.url('dashboard'), { params: this.toParams({ mes, ano }) });
+  getDashboard(): Observable<DashboardData> {
+    return this.http.get<DashboardData>(this.url('dashboard'));
   }
 
   // Proprietários
@@ -103,6 +103,12 @@ export class ApiService {
   getComprovantePdfUrl(id: string): string {
     return this.url(`abastecimentos/${id}/comprovante`);
   }
+  getComprovantePdf(id: string): Observable<HttpResponse<Blob>> {
+    return this.http.get(this.url(`abastecimentos/${id}/comprovante`), {
+      observe: 'response',
+      responseType: 'blob',
+    });
+  }
 
   // Baixas
   getBaixas(filters: any = {}): Observable<PaginatedResponse<BaixaAbastecimento>> {
@@ -166,6 +172,13 @@ export class ApiService {
   // Relatórios
   getRelatorioProprietario(filters: any): Observable<any> {
     return this.http.get(this.url('relatorios/proprietario'), { params: this.toParams(filters) });
+  }
+  getRelatorioProprietarioPdf(filters: any): Observable<HttpResponse<Blob>> {
+    return this.http.get(this.url('relatorios/proprietario/pdf'), {
+      params: this.toParams(filters),
+      observe: 'response',
+      responseType: 'blob',
+    });
   }
   getRelatorioProprietarioPdfUrl(filters: any): string {
     const p = new URLSearchParams(filters).toString();

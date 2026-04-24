@@ -54,6 +54,18 @@ class MotoristaController extends Controller
 
     public function byProprietario(string $id)
     {
-        return new \Illuminate\Http\JsonResponse(Motorista::where('id_proprietario', $id)->orderBy('nome')->get());
+        return new \Illuminate\Http\JsonResponse(
+            Motorista::query()
+                ->select([
+                    'id_motorista',
+                    'nome',
+                    'id_proprietario',
+                    'documento',
+                    'celular',
+                ])
+                ->where('id_proprietario', $id)
+                ->orderBy('nome')
+                ->get()
+        );
     }
 }

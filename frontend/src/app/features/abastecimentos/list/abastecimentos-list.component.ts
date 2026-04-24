@@ -6,6 +6,8 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Abastecimento, Proprietario } from '../../../shared/models';
+import { AuthService } from '../../../core/services/auth.service';
+import jsPDF from 'jspdf';
 
 @Component({
   selector: 'app-abastecimentos-list',
@@ -51,6 +53,7 @@ import { Abastecimento, Proprietario } from '../../../shared/models';
               <option value="">Todos</option>
               <option value="Confirmado">Confirmado</option>
               <option value="Pendente">Pendente</option>
+              <option value="Pago">Pago</option>
               <option value="Cancelado">Cancelado</option>
             </select>
           </div>
@@ -86,6 +89,8 @@ import { Abastecimento, Proprietario } from '../../../shared/models';
                   <th class="text-right">Total</th>
                   <th>Status</th>
                   <th>Baixa</th>
+                  <th>Hodômetro</th>
+                  <th>Bomba</th>
                   <th>Ações</th>
                 </tr>
               </thead>
@@ -104,7 +109,7 @@ import { Abastecimento, Proprietario } from '../../../shared/models';
                     <td class="text-right">{{ a.valor_por_litro | number:'1.3-3' }}</td>
                     <td class="text-right val-green">{{ a.valor_total | currency:'BRL':'symbol':'1.2-2' }}</td>
                     <td>
-                      <span class="badge" [class]="getStatusClass(a.status)">{{ a.status ?? '—' }}</span>
+                      <span class="badge" [class]="getStatusClass(getDisplayStatus(a))">{{ getDisplayStatus(a) }}</span>
                     </td>
                     <td>
                       <span class="badge" [class]="a.baixa_abastecimento ? 'badge-green' : 'badge-orange'">
@@ -112,19 +117,37 @@ import { Abastecimento, Proprietario } from '../../../shared/models';
                       </span>
                     </td>
                     <td>
+                      @if (resolveImageUrl(a.foto_odometro); as fotoOdometroUrl) {
+                        <img class="thumb" [src]="fotoOdometroUrl" alt="Hodômetro" />
+                      } @else {
+                        <span class="muted">Sem foto</span>
+                      }
+                    </td>
+                    <td>
+                      @if (resolveImageUrl(a.bomba); as bombaUrl) {
+                        <img class="thumb" [src]="bombaUrl" alt="Bomba" />
+                      } @else {
+                        <span class="muted">Sem foto</span>
+                      }
+                    </td>
+                    <td>
                       <div class="actions">
-                        <a [routerLink]="['/abastecimentos', a.id_abastecimento, 'editar']"
-                           class="action-btn edit" title="Editar">✏️</a>
+                        @if (isAdmin()) {
+                          <a [routerLink]="['/abastecimentos', a.id_abastecimento, 'editar']"
+                             class="action-btn edit" title="Editar">✏️</a>
+                        }
                         <button class="action-btn print" title="Comprovante"
-                                (click)="printComprovante(a.id_abastecimento)">🖨️</button>
-                        <button class="action-btn del" title="Excluir"
-                                (click)="confirmDelete(a)">🗑️</button>
+                                (click)="printComprovante(a)">🖨️</button>
+                        @if (isAdmin()) {
+                          <button class="action-btn del" title="Excluir"
+                                  (click)="confirmDelete(a)">🗑️</button>
+                        }
                       </div>
                     </td>
                   </tr>
                 }
                 @empty {
-                  <tr><td colspan="11" class="empty-cell">Nenhum abastecimento encontrado</td></tr>
+                  <tr><td colspan="13" class="empty-cell">Nenhum abastecimento encontrado</td></tr>
                 }
               </tbody>
             </table>
@@ -221,6 +244,15 @@ import { Abastecimento, Proprietario } from '../../../shared/models';
     .badge-orange { background:#ffedd520; color:#fb923c; }
 
     .actions { display:flex; gap:6px; }
+    .thumb {
+      width: 58px;
+      height: 58px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid #1e2d4a;
+      background: #0a0f1e;
+    }
+    .muted { color: #64748b; font-size: 11px; }
     .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; transition:background 0.2s; text-decoration:none; }
     .action-btn:hover { background:#1e2d4a; }
 
@@ -248,6 +280,7 @@ import { Abastecimento, Proprietario } from '../../../shared/models';
 export class AbastecimentosListComponent implements OnInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
+  private auth = inject(AuthService);
 
   abastecimentos = signal<Abastecimento[]>([]);
   proprietarios = signal<Proprietario[]>([]);
@@ -256,7 +289,7 @@ export class AbastecimentosListComponent implements OnInit {
   deleteTarget = signal<Abastecimento | null>(null);
   pagination = signal({ current_page: 1, last_page: 1, per_page: 20, total: 0, from: 0, to: 0 });
 
-  tiposCombustivel = ['Diesel S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  tiposCombustivel = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
 
   filters: any = {
     id_proprietario: '', placa: '', data_inicio: '', data_fim: '', status: '', tipo_combustivel: '', page: 1
@@ -298,17 +331,100 @@ export class AbastecimentosListComponent implements OnInit {
 
   getStatusClass(status?: string): string {
     if (status === 'Confirmado') return 'badge badge-blue';
+    if (status === 'Pago') return 'badge badge-green';
     if (status === 'Cancelado') return 'badge badge-red';
     return 'badge badge-yellow';
   }
 
-  printComprovante(id: string) {
-    window.open(this.api.getComprovantePdfUrl(id) + `?token=${localStorage.getItem('ft_token')}`, '_blank');
+  getDisplayStatus(a: Abastecimento): string {
+    if (a.status === 'Pago' || a.baixa_abastecimento) return 'Pago';
+    return a.status ?? '—';
+  }
+
+  resolveImageUrl(url?: string | null): string | null {
+    if (!url) return null;
+    const normalized = String(url).trim();
+    if (!normalized) return null;
+    if (
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('data:image/') ||
+      normalized.startsWith('blob:')
+    ) {
+      return normalized;
+    }
+    return null;
+  }
+
+  printComprovante(a: Abastecimento) {
+    const dataHora = a.data_hora ? new Date(a.data_hora as any) : null;
+    const dataHoraFmt = dataHora && !isNaN(dataHora.getTime()) ? dataHora.toLocaleString('pt-BR') : '—';
+    const valorTotal = Number(a.valor_total ?? 0);
+    const valorLitro = Number(a.valor_por_litro ?? 0);
+    const litros = Number(a.quantidade_litros ?? 0);
+    const placa = a.veiculo?.placa ?? '—';
+    const veiculo = [a.veiculo?.marca ?? '', a.veiculo?.modelo ?? ''].join(' ').trim() || '—';
+    const status = this.getDisplayStatus(a);
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    let y = 48;
+    const left = 44;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text('Comprovante de Abastecimento', left, y);
+
+    y += 24;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(80);
+    doc.text(`ID: ${a.id_abastecimento ?? '—'}`, left, y);
+
+    y += 24;
+    doc.setDrawColor(220);
+    doc.line(left, y, 552, y);
+    y += 22;
+
+    const rows: Array<[string, string]> = [
+      ['Data/Hora', dataHoraFmt],
+      ['Placa', placa],
+      ['Veículo', veiculo],
+      ['Motorista', a.nome_motorista ?? '—'],
+      ['Proprietário', a.nome_proprietario ?? '—'],
+      ['Combustível', a.tipo_combustivel ?? '—'],
+      ['Status', status],
+      ['Litros', `${litros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`],
+      ['Valor por Litro', `R$ ${valorLitro.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`],
+      ['Valor Total', valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })],
+    ];
+
+    rows.forEach(([label, value]) => {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(55, 65, 81);
+      doc.text(`${label}:`, left, y);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(17, 24, 39);
+      doc.text(String(value), left + 120, y);
+      y += 22;
+    });
+
+    y += 10;
+    doc.setTextColor(120);
+    doc.setFontSize(9);
+    doc.text(`Emitido em ${new Date().toLocaleString('pt-BR')}`, left, y);
+
+    doc.save(`comprovante_${a.id_abastecimento ?? 'abastecimento'}.pdf`);
   }
 
   confirmDelete(a: Abastecimento) { this.deleteTarget.set(a); }
 
   executeDelete() {
+    if (!this.isAdmin()) {
+      this.toastr.error('Somente administradores podem excluir abastecimentos');
+      return;
+    }
+
     const target = this.deleteTarget();
     if (!target) return;
     this.deleting.set(true);
@@ -324,5 +440,9 @@ export class AbastecimentosListComponent implements OnInit {
         this.deleting.set(false);
       }
     });
+  }
+
+  isAdmin(): boolean {
+    return this.auth.isAdmin();
   }
 }
