@@ -829,6 +829,12 @@ export class AbastecimentoFormComponent implements OnInit {
   }
 
   selectProprietario(p: Proprietario) {
+    if (p.status === 'Bloqueado') {
+      const detalhe = p.observacao ? `\nMotivo: ${p.observacao}` : '';
+      this.toastr.error(`Proprietário bloqueado. Não é possível registrar abastecimento.${detalhe}`);
+      this.showProprietariosDropdown.set(false);
+      return;
+    }
     this.proprietarioBusca.set(p.nome);
     this.form.patchValue({ id_proprietario: p.id_proprietario, nome_proprietario: p.nome, id_veiculo: '', id_motorista: '' });
     this.showProprietariosDropdown.set(false);

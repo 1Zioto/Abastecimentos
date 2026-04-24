@@ -27,11 +27,14 @@ import { Proprietario } from '../../shared/models';
               <div class="field"><label>Nome *</label><input type="text" formControlName="nome" /></div>
               <div class="field"><label>Status</label>
                 <select formControlName="status">
-                  <option value="Ativo">Ativo</option><option value="Inativo">Inativo</option>
+                  <option value="Ativo">Ativo</option>
+                  <option value="Inativo">Inativo</option>
+                  <option value="Bloqueado">Bloqueado</option>
                 </select>
               </div>
               <div class="field"><label>Responsável</label><input type="text" formControlName="responsavel" /></div>
               <div class="field"><label>Celular</label><input type="text" formControlName="celular" /></div>
+              <div class="field wide"><label>Observação</label><textarea formControlName="observacao" rows="2" placeholder="Motivo do bloqueio ou observação"></textarea></div>
             </div>
             <div class="form-actions">
               <button type="button" class="btn-cancel" (click)="cancelForm()">Cancelar</button>
@@ -42,22 +45,26 @@ import { Proprietario } from '../../shared/models';
       }
       <div class="table-card">
         <table class="data-table">
-          <thead><tr><th>Nome</th><th>Status</th><th>Responsável</th><th>Celular</th><th>Cadastro</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Status</th><th>Responsável</th><th>Celular</th><th>Observação</th><th>Cadastro</th><th>Ações</th></tr></thead>
           <tbody>
             @for (p of items(); track p.id_proprietario) {
               <tr>
                 <td><strong>{{ p.nome }}</strong></td>
-                <td><span class="badge" [class]="p.status === 'Ativo' ? 'badge-green' : 'badge-gray'">{{ p.status ?? '—' }}</span></td>
+                <td><span class="badge" [class]="getStatusClass(p.status)">{{ p.status ?? '—' }}</span></td>
                 <td>{{ p.responsavel ?? '—' }}</td>
                 <td>{{ p.celular ?? '—' }}</td>
+                <td class="obs-cell">{{ p.observacao ?? '—' }}</td>
                 <td>{{ p.data_registro | date:'dd/MM/yyyy' }}</td>
                 <td><div class="actions">
                   <button class="action-btn" (click)="edit(p)">✏️</button>
+                  <button class="action-btn" [title]="p.status === 'Bloqueado' ? 'Desbloquear' : 'Bloquear'" (click)="toggleBloqueio(p)">
+                    {{ p.status === 'Bloqueado' ? '🔓' : '🔒' }}
+                  </button>
                   <button class="action-btn" (click)="confirmDelete(p)">🗑️</button>
                 </div></td>
               </tr>
             }
-            @empty { <tr><td colspan="6" class="empty-cell">Nenhum proprietário</td></tr> }
+            @empty { <tr><td colspan="7" class="empty-cell">Nenhum proprietário</td></tr> }
           </tbody>
         </table>
       </div>
@@ -92,9 +99,10 @@ import { Proprietario } from '../../shared/models';
     .form-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-bottom:14px}
     .field{display:flex;flex-direction:column;gap:5px}
     .field label{font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px}
-    .field input,.field select{background:#0a0f1e;border:1px solid #1e2d4a;border-radius:7px;padding:8px 10px;color:#e2e8f0;font-size:12px;outline:none}
-    .field input:focus,.field select:focus{border-color:#0ea5e9}
+    .field input,.field select,.field textarea{background:#0a0f1e;border:1px solid #1e2d4a;border-radius:7px;padding:8px 10px;color:#e2e8f0;font-size:12px;outline:none;font-family:'Inter',sans-serif}
+    .field input:focus,.field select:focus,.field textarea:focus{border-color:#0ea5e9}
     .field select option{background:#0d1427}
+    .field.wide{grid-column:1 / -1}
     .form-actions{display:flex;gap:10px;justify-content:flex-end}
     .btn-cancel{background:transparent;border:1px solid #1e2d4a;color:#64748b;padding:8px 16px;border-radius:7px;cursor:pointer;font-size:13px}
     .table-card{background:#0d1427;border:1px solid #1e2d4a;border-radius:12px;overflow:hidden}
@@ -105,6 +113,8 @@ import { Proprietario } from '../../shared/models';
     .badge{padding:3px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase}
     .badge-green{background:#dcfce720;color:#4ade80}
     .badge-gray{background:#1e2d4a;color:#64748b}
+    .badge-red{background:#fee2e220;color:#f87171}
+    .obs-cell{max-width:260px;color:#94a3b8;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .actions{display:flex;gap:6px}
     .action-btn{background:transparent;border:none;cursor:pointer;font-size:14px;padding:4px 6px;border-radius:5px}
     .action-btn:hover{background:#1e2d4a}
@@ -122,7 +132,7 @@ export class ProprietariosComponent implements OnInit {
   items = signal<Proprietario[]>([]); total = signal(0);
   showForm = signal(false); editItem = signal<Proprietario | null>(null); deleteTarget = signal<Proprietario | null>(null); saving = signal(false);
   search = '';
-  form = this.fb.group({ nome:['',Validators.required],status:['Ativo'],responsavel:[''],celular:[''] });
+  form = this.fb.group({ nome:['',Validators.required],status:['Ativo'],responsavel:[''],celular:[''],observacao:[''] });
   ngOnInit() { this.load(); }
   load() { this.api.getProprietarios({search:this.search,per_page:100}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
   newItem() { this.editItem.set(null);this.form.reset({status:'Ativo'});this.showForm.set(true); }
@@ -136,4 +146,27 @@ export class ProprietariosComponent implements OnInit {
   }
   confirmDelete(p:Proprietario){this.deleteTarget.set(p);}
   executeDelete(){this.api.deleteProprietario(this.deleteTarget()!.id_proprietario).subscribe({next:()=>{this.toastr.success('Excluído');this.deleteTarget.set(null);this.load();},error:err=>this.toastr.error(err.error?.message??'Erro')});}
+  getStatusClass(status?: string) {
+    if (status === 'Ativo') return 'badge-green';
+    if (status === 'Bloqueado') return 'badge-red';
+    return 'badge-gray';
+  }
+  toggleBloqueio(p: Proprietario) {
+    if (p.status === 'Bloqueado') {
+      const confirmar = confirm(`Desbloquear ${p.nome}?`);
+      if (!confirmar) return;
+      this.api.updateProprietario(p.id_proprietario, { status: 'Ativo' }).subscribe({
+        next: () => { this.toastr.success('Proprietário desbloqueado'); this.load(); },
+        error: err => this.toastr.error(err.error?.message ?? 'Erro ao desbloquear')
+      });
+      return;
+    }
+
+    const observacao = prompt(`Informe o motivo para bloquear ${p.nome}:`, p.observacao ?? '');
+    if (observacao === null) return;
+    this.api.updateProprietario(p.id_proprietario, { status: 'Bloqueado', observacao: observacao.trim() }).subscribe({
+      next: () => { this.toastr.success('Proprietário bloqueado'); this.load(); },
+      error: err => this.toastr.error(err.error?.message ?? 'Erro ao bloquear')
+    });
+  }
 }

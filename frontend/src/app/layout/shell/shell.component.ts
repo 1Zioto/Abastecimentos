@@ -17,6 +17,14 @@ interface NavItem {
   imports: [RouterOutlet, RouterLink, RouterLinkActive, CommonModule],
   template: `
     <div class="shell" [class.sidebar-collapsed]="sidebarCollapsed()">
+      <header class="mobile-topbar">
+        <div class="mobile-brand">
+          <span class="logo-icon">⛽</span>
+          <span>Abastecimento Vipe</span>
+        </div>
+        <button class="logout-btn" (click)="auth.logout()" title="Sair">⏻</button>
+      </header>
+
       <!-- Sidebar -->
       <aside class="sidebar">
         <div class="sidebar-header">
@@ -225,6 +233,110 @@ interface NavItem {
       background: #F3F4F6;
       overflow-y: auto;
       overflow-x: hidden;
+    }
+
+    .mobile-topbar {
+      display: none;
+    }
+
+    @media (max-width: 768px) {
+      :host { min-height: 100vh; }
+
+      .shell,
+      .shell.sidebar-collapsed {
+        display: block;
+        height: 100vh;
+        background: #F3F4F6;
+      }
+
+      .mobile-topbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 64px;
+        z-index: 150;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: #FFFFFF;
+        border-bottom: 1px solid #E5E7EB;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      }
+
+      .mobile-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        color: #111827;
+        font-weight: 800;
+        font-size: 15px;
+      }
+
+      .mobile-brand .logo-icon {
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+      }
+
+      .sidebar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 76px;
+        z-index: 160;
+        border-right: none;
+        border-top: 1px solid #E5E7EB;
+        box-shadow: 0 -10px 28px rgba(15, 23, 42, 0.08);
+      }
+
+      .sidebar-header,
+      .sidebar-footer {
+        display: none;
+      }
+
+      .sidebar-nav {
+        height: 100%;
+        padding: 8px 10px;
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 8px;
+      }
+
+      .nav-item {
+        min-width: 72px;
+        height: 58px;
+        flex-direction: column;
+        justify-content: center;
+        gap: 4px;
+        padding: 7px 8px;
+        border-radius: 14px;
+      }
+
+      .nav-icon {
+        width: auto;
+        font-size: 18px;
+      }
+
+      .nav-label {
+        display: block;
+        max-width: 70px;
+        font-size: 10px;
+        line-height: 1.05;
+        text-align: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .main-content {
+        height: 100vh;
+        padding-top: 64px;
+        padding-bottom: 76px;
+      }
     }
   `]
 })

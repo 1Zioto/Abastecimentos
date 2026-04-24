@@ -28,6 +28,7 @@ class ProprietarioController extends Controller
             'status'      => 'nullable|string',
             'responsavel' => 'nullable|string',
             'celular'     => 'nullable|string',
+            'observacao'  => 'nullable|string',
         ]);
         $data['data_registro'] = now();
         return new \Illuminate\Http\JsonResponse(Proprietario::create($data), 201);
@@ -46,6 +47,7 @@ class ProprietarioController extends Controller
             'status'      => 'nullable|string',
             'responsavel' => 'nullable|string',
             'celular'     => 'nullable|string',
+            'observacao'  => 'nullable|string',
         ]));
         return new \Illuminate\Http\JsonResponse($proprietario->fresh());
     }

@@ -13,7 +13,7 @@ class Proprietario extends Model
     protected $keyType = 'string';
     public $timestamps = false;
 
-    protected $fillable = ['id_proprietario','nome','status','responsavel','celular','data_registro'];
+    protected $fillable = ['id_proprietario','nome','status','responsavel','celular','observacao','data_registro'];
     protected $casts = ['data_registro' => 'datetime'];
 
     protected static function boot()

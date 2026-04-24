@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Abastecimento;
+use App\Models\Proprietario;
 use App\Models\ValoresCombustivel;
 use App\Models\Veiculo;
 use Illuminate\Http\JsonResponse;
@@ -208,6 +209,18 @@ class AbastecimentoController extends Controller
 
         $data['local'] = trim((string) ($data['local'] ?? '')) ?: 'Garagem';
         $data['status'] = trim((string) ($data['status'] ?? '')) ?: 'Pendente';
+
+        $proprietario = Proprietario::query()
+            ->select(['id_proprietario', 'nome', 'status', 'observacao'])
+            ->findOrFail($data['id_proprietario']);
+
+        if ($proprietario->status === 'Bloqueado') {
+            return new JsonResponse([
+                'message' => 'Proprietário bloqueado. Não é possível registrar abastecimento para este proprietário.',
+                'observacao' => $proprietario->observacao,
+            ], 422);
+        }
+
         $this->normalizarStatusBaixa($data);
 
         // Buscar valor atual do combustível — NÃO pode ser alterado depois

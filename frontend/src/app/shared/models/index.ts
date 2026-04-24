@@ -6,6 +6,7 @@ export interface Proprietario {
   status?: string;
   responsavel?: string;
   celular?: string;
+  observacao?: string;
   data_registro?: string;
 }
 
