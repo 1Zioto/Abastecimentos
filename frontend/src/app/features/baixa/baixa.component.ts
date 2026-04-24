@@ -33,19 +33,19 @@ import { Abastecimento, Proprietario } from '../../shared/models';
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Data/Hora</th>
-                  <th>Empresa</th>
-                  <th>Placa</th>
-                  <th>Motorista</th>
-                  <th>Forma Pgto</th>
-                  <th>Data Pgto</th>
-                  <th class="text-right">Valor</th>
+                  <th class="sortable" (click)="sortBy('data_hora')">Data/Hora <span>{{ sortIcon('data_hora') }}</span></th>
+                  <th class="sortable" (click)="sortBy('empresa')">Empresa <span>{{ sortIcon('empresa') }}</span></th>
+                  <th class="sortable" (click)="sortBy('placa')">Placa <span>{{ sortIcon('placa') }}</span></th>
+                  <th class="sortable" (click)="sortBy('motorista')">Motorista <span>{{ sortIcon('motorista') }}</span></th>
+                  <th class="sortable" (click)="sortBy('forma_pagamento')">Forma Pgto <span>{{ sortIcon('forma_pagamento') }}</span></th>
+                  <th class="sortable" (click)="sortBy('data_pagamento')">Data Pgto <span>{{ sortIcon('data_pagamento') }}</span></th>
+                  <th class="text-right sortable" (click)="sortBy('valor')">Valor <span>{{ sortIcon('valor') }}</span></th>
                   <th>Anexo</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                @for (b of baixas(); track b.id_baixa) {
+                @for (b of sortedBaixas(); track b.id_baixa) {
                   <tr>
                     <td>{{ b.data_hora | date:'dd/MM/yyyy HH:mm' }}</td>
                     <td>{{ b.abastecimento?.nome_proprietario || b.abastecimento?.proprietario?.nome || '—' }}</td>
@@ -108,11 +108,17 @@ import { Abastecimento, Proprietario } from '../../shared/models';
                 </div>
                 <div class="filter-field">
                   <label>Data Início</label>
-                  <input type="date" [(ngModel)]="filters.data_inicio" (change)="loadPendentes()" />
+                  <div class="date-row">
+                    <input #dataInicioInput type="date" [(ngModel)]="filters.data_inicio" (change)="loadPendentes()" />
+                    <button type="button" class="btn-date" (click)="openDatePicker(dataInicioInput)">📅</button>
+                  </div>
                 </div>
                 <div class="filter-field">
                   <label>Data Fim</label>
-                  <input type="date" [(ngModel)]="filters.data_fim" (change)="loadPendentes()" />
+                  <div class="date-row">
+                    <input #dataFimInput type="date" [(ngModel)]="filters.data_fim" (change)="loadPendentes()" />
+                    <button type="button" class="btn-date" (click)="openDatePicker(dataFimInput)">📅</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -274,7 +280,7 @@ import { Abastecimento, Proprietario } from '../../shared/models';
     * { box-sizing:border-box; }
     .page { padding:28px; font-family:'Inter',sans-serif; color:#e2e8f0; }
     .page-header { margin-bottom:20px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
     .page-header p { font-size:13px; color:#64748b; margin-top:4px; }
 
     .card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:16px; }
@@ -288,6 +294,9 @@ import { Abastecimento, Proprietario } from '../../shared/models';
       letter-spacing:0.5px; color:#64748b; border-bottom:1px solid #1e2d4a;
       white-space:nowrap; background:#080e1c;
     }
+    .data-table thead th.sortable { cursor:pointer; user-select:none; transition:color 0.15s; }
+    .data-table thead th.sortable:hover { color:#38bdf8; }
+    .data-table thead th.sortable span { display:inline-block; min-width:12px; color:#38bdf8; }
     .data-table tbody td { padding:10px 12px; border-bottom:1px solid #1e2d4a20; }
     .data-table tbody tr:hover td { background:#1e2d4a15; }
     .text-right { text-align:right; }
@@ -366,7 +375,7 @@ import { Abastecimento, Proprietario } from '../../shared/models';
     }
     .readonly-field { opacity:0.8; cursor:not-allowed; }
     .date-row { display:flex; gap:8px; align-items:center; }
-    .date-row input { flex:1; }
+    .date-row input { flex:1; min-width:0; }
     .btn-date { height:34px; min-width:40px; padding:0 10px; background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; color:#94a3b8; cursor:pointer; font-size:14px; }
     .btn-date:hover { border-color:#38bdf8; color:#38bdf8; }
 
@@ -388,6 +397,8 @@ export class BaixaComponent implements OnInit {
   private fb = inject(FormBuilder);
 
   baixas = signal<any[]>([]);
+  sortColumn = signal<string>('data_hora');
+  sortDirection = signal<'asc' | 'desc'>('desc');
   loadingBaixas = signal(true);
   showNovaBaixaModal = signal(false);
 
@@ -405,6 +416,19 @@ export class BaixaComponent implements OnInit {
       .filter((a) => this.selected().has(a.id_abastecimento))
       .reduce((acc, a) => acc + this.toNumber(a.valor_total), 0)
   );
+
+  sortedBaixas = computed(() => {
+    const column = this.sortColumn();
+    const direction = this.sortDirection() === 'asc' ? 1 : -1;
+    return [...this.baixas()].sort((a, b) => {
+      const left = this.sortValue(a, column);
+      const right = this.sortValue(b, column);
+      if (typeof left === 'number' && typeof right === 'number') {
+        return (left - right) * direction;
+      }
+      return String(left).localeCompare(String(right), 'pt-BR', { sensitivity: 'base' }) * direction;
+    });
+  });
 
   filters: any = { id_proprietario: '', placa: '', data_inicio: '', data_fim: '' };
 
@@ -437,6 +461,41 @@ export class BaixaComponent implements OnInit {
         this.loadingBaixas.set(false);
       }
     });
+  }
+
+  sortBy(column: string) {
+    if (this.sortColumn() === column) {
+      this.sortDirection.set(this.sortDirection() === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    this.sortColumn.set(column);
+    this.sortDirection.set(column.includes('data') ? 'desc' : 'asc');
+  }
+
+  sortIcon(column: string): string {
+    if (this.sortColumn() !== column) return '';
+    return this.sortDirection() === 'asc' ? '↑' : '↓';
+  }
+
+  private sortValue(baixa: any, column: string): string | number {
+    switch (column) {
+      case 'data_hora':
+        return baixa?.data_hora ? new Date(baixa.data_hora).getTime() : 0;
+      case 'empresa':
+        return baixa?.abastecimento?.nome_proprietario || baixa?.abastecimento?.proprietario?.nome || '';
+      case 'placa':
+        return baixa?.abastecimento?.veiculo?.placa || '';
+      case 'motorista':
+        return baixa?.abastecimento?.nome_motorista || baixa?.abastecimento?.motorista?.nome || '';
+      case 'forma_pagamento':
+        return baixa?.forma_pagamento || '';
+      case 'data_pagamento':
+        return baixa?.data_pagamento ? new Date(baixa.data_pagamento).getTime() : 0;
+      case 'valor':
+        return this.toNumber(baixa?.abastecimento?.valor_total);
+      default:
+        return '';
+    }
   }
 
   openNovaBaixa() {
@@ -575,6 +634,7 @@ export class BaixaComponent implements OnInit {
       }
     } catch {}
     input.focus();
+    input.click();
   }
 
   deleteBaixa(idBaixa: string) {

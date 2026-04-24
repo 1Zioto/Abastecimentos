@@ -28,11 +28,17 @@ import { catchError, forkJoin, of } from 'rxjs';
           <!-- Data e Hora -->
           <div class="field">
             <label>Data <span class="req">*</span></label>
-            <input type="date" formControlName="data" />
+            <div class="date-row">
+              <input #dataInput type="date" formControlName="data" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataInput)">📅</button>
+            </div>
           </div>
           <div class="field">
             <label>Data e Hora <span class="req">*</span></label>
-            <input type="datetime-local" formControlName="data_hora" />
+            <div class="date-row">
+              <input #dataHoraInput type="datetime-local" formControlName="data_hora" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataHoraInput)">📅</button>
+            </div>
           </div>
 
           <!-- Frentista -->
@@ -322,7 +328,7 @@ import { catchError, forkJoin, of } from 'rxjs';
     .page-header { margin-bottom: 24px; }
     .back-link { font-size: 12px; color: #38bdf8; text-decoration: none; display: block; margin-bottom: 6px; }
     .back-link:hover { text-decoration: underline; }
-    .page-header h1 { font-size: 24px; font-weight: 700; color: #f8fafc; margin: 0; }
+    .page-header h1 { font-size: 24px; font-weight: 700; color: #111827; margin: 0; }
 
     .form-card {
       background: #0d1427;
@@ -358,6 +364,20 @@ import { catchError, forkJoin, of } from 'rxjs';
     .field input:focus, .field select:focus { border-color: #0ea5e9; }
     .field input::placeholder { color: #334155; }
     .field select option { background: #0d1427; }
+    .date-row { display: flex; gap: 8px; align-items: center; }
+    .date-row input { flex: 1; min-width: 0; }
+    .btn-date {
+      height: 40px;
+      min-width: 42px;
+      padding: 0 10px;
+      background: #0a0f1e;
+      border: 1px solid #1e2d4a;
+      border-radius: 8px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn-date:hover { border-color: #38bdf8; color: #38bdf8; }
     .readonly-field { opacity: 0.7; cursor: not-allowed; }
     .readonly-field.highlight { color: #4ade80; font-weight: 600; border-color: #4ade8040; }
     .upload-hint { color: #94a3b8; font-size: 11px; }
@@ -974,5 +994,16 @@ export class AbastecimentoFormComponent implements OnInit {
 
   closeImagePreview() {
     this.previewImageUrl.set('');
+  }
+
+  openDatePicker(input: HTMLInputElement) {
+    try {
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+        return;
+      }
+    } catch {}
+    input.focus();
+    input.click();
   }
 }

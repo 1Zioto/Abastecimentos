@@ -4,6 +4,11 @@ import { RouterLink } from '@angular/router';
 import { ApiService } from '../../core/services/api.service';
 import { DashboardData } from '../../shared/models';
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
 @Component({
   selector: 'app-dashboard',
   standalone: true,
@@ -14,6 +19,16 @@ import { DashboardData } from '../../shared/models';
         <div>
           <h1>Dashboard</h1>
           <p>Visão geral dos últimos 12 meses</p>
+        </div>
+        <div class="dashboard-actions">
+          @if (canInstallApp()) {
+            <button type="button" class="install-app-btn" (click)="installApp()">
+              <span class="install-icon">⬇</span>
+              Instalar aplicativo
+            </button>
+          } @else if (isStandalone()) {
+            <span class="installed-badge">Aplicativo instalado</span>
+          }
         </div>
       </header>
 
@@ -256,6 +271,57 @@ import { DashboardData } from '../../shared/models';
       gap: 12px;
     }
 
+    .dashboard-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-height: 40px;
+    }
+
+    .install-app-btn {
+      border: 1px solid #FDE68A;
+      background: #FEF3C7;
+      color: #92400E;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      transition: transform 0.2s ease, background 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .install-app-btn:hover {
+      background: #FDE68A;
+      transform: translateY(-1px);
+    }
+
+    .install-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: #FFFFFF;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+
+    .installed-badge {
+      border: 1px solid #BBF7D0;
+      background: #DCFCE7;
+      color: #166534;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
     .dashboard-header h1 {
       margin: 0;
       font-size: 30px;
@@ -488,9 +554,9 @@ import { DashboardData } from '../../shared/models';
 
     .bar-value {
       position: absolute;
-      top: -20px;
+      top: -30px;
       left: 50%;
-      transform: translateX(-50%) rotate(-90deg);
+      transform: translateX(-50%) rotate(-90deg) translateX(50%);
       transform-origin: center;
       color: #111827;
       font-size: 12px;
@@ -705,6 +771,7 @@ import { DashboardData } from '../../shared/models';
     @media (max-width: 760px) {
       .dashboard-page { padding: 16px; }
       .dashboard-header { flex-direction: column; }
+      .dashboard-actions { width: 100%; justify-content: flex-start; }
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .header-filters { width: 100%; }
       .filter-select { flex: 1; min-width: 0; }
@@ -718,13 +785,41 @@ export class DashboardComponent implements OnInit {
   loading = signal(true);
   selectedMesRef = signal<string | null>(null);
   selectedStatus = signal<'Pendente' | 'Pago' | null>(null);
+  canInstallApp = signal(false);
+  isStandalone = signal(false);
+  private installPromptEvent: BeforeInstallPromptEvent | null = null;
 
   donutGradient = signal('conic-gradient(#CBD5F5 0% 100%)');
 
   readonly donutColors = ['#F59E0B', '#16A34A'];
 
   ngOnInit() {
+    this.setupInstallPrompt();
     this.load();
+  }
+
+  setupInstallPrompt() {
+    this.isStandalone.set(this.isRunningStandalone());
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      this.installPromptEvent = event as BeforeInstallPromptEvent;
+      this.canInstallApp.set(!this.isRunningStandalone());
+    });
+
+    window.addEventListener('appinstalled', () => {
+      this.installPromptEvent = null;
+      this.canInstallApp.set(false);
+      this.isStandalone.set(true);
+    });
+  }
+
+  async installApp() {
+    if (!this.installPromptEvent) return;
+    await this.installPromptEvent.prompt();
+    const choice = await this.installPromptEvent.userChoice;
+    this.installPromptEvent = null;
+    this.canInstallApp.set(choice.outcome !== 'accepted' && !this.isRunningStandalone());
+    this.isStandalone.set(this.isRunningStandalone());
   }
 
   load() {
@@ -789,7 +884,7 @@ export class DashboardComponent implements OnInit {
         )
       )
     );
-    return Math.max(2, Math.round(((value || 0) / max) * 100));
+    return Math.max(2, Math.round(((value || 0) / max) * 84));
   }
 
   barHeightValor(value: number): number {
@@ -813,7 +908,7 @@ export class DashboardComponent implements OnInit {
         )
       )
     );
-    return Math.max(2, Math.round(((value || 0) / max) * 100));
+    return Math.max(2, Math.round(((value || 0) / max) * 84));
   }
 
   toggleMesFilter(mesRef: string): void {
@@ -1112,6 +1207,10 @@ export class DashboardComponent implements OnInit {
     if (normalized === 'pendente') return 'Pendente';
     if (normalized === 'pago') return 'Pago';
     return null;
+  }
+
+  private isRunningStandalone(): boolean {
+    return window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
   }
 
   private createDonutArcPath(startDeg: number, endDeg: number, outerR: number, innerR: number): string {

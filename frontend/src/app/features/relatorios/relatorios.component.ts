@@ -173,7 +173,7 @@ import jsPDF from 'jspdf';
     * { box-sizing:border-box; }
     .page { padding:28px; font-family:'Inter',sans-serif; color:#e2e8f0; }
     .page-header { margin-bottom:20px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
     .page-header p { font-size:13px; color:#64748b; margin-top:4px; }
 
     .filters-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:18px; margin-bottom:16px; }

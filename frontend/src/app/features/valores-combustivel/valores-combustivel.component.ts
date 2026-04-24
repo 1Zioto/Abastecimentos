@@ -123,7 +123,7 @@ import { AuthService } from '../../core/services/auth.service';
     * { box-sizing:border-box; }
     .page { padding:28px; font-family:'Inter',sans-serif; color:#e2e8f0; }
     .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
     .page-header p { font-size:13px; color:#64748b; margin-top:4px; }
     .btn-primary { background:linear-gradient(135deg,#0ea5e9,#6366f1); border:none; border-radius:8px; padding:10px 20px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; }
     .info-banner { background:#fef9c310; border:1px solid #eab30840; color:#fbbf24; padding:12px 16px; border-radius:8px; font-size:12px; margin-bottom:16px; }

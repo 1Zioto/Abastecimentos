@@ -41,11 +41,17 @@ import jsPDF from 'jspdf';
           </div>
           <div class="filter-field">
             <label>Data Início</label>
-            <input type="date" [(ngModel)]="filters.data_inicio" (change)="load()" />
+            <div class="date-row">
+              <input #dataInicioInput type="date" [(ngModel)]="filters.data_inicio" (change)="load()" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataInicioInput)">📅</button>
+            </div>
           </div>
           <div class="filter-field">
             <label>Data Fim</label>
-            <input type="date" [(ngModel)]="filters.data_fim" (change)="load()" />
+            <div class="date-row">
+              <input #dataFimInput type="date" [(ngModel)]="filters.data_fim" (change)="load()" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataFimInput)">📅</button>
+            </div>
           </div>
           <div class="filter-field">
             <label>Status</label>
@@ -118,14 +124,20 @@ import jsPDF from 'jspdf';
                     </td>
                     <td>
                       @if (resolveImageUrl(a.foto_odometro); as fotoOdometroUrl) {
-                        <img class="thumb" [src]="fotoOdometroUrl" alt="Hodômetro" />
+                        <div class="thumb-wrap">
+                          <img class="thumb" [src]="fotoOdometroUrl" alt="Hodômetro" />
+                          <button type="button" class="thumb-view" title="Visualizar foto do hodômetro" (click)="openImagePreview(fotoOdometroUrl)">👁</button>
+                        </div>
                       } @else {
                         <span class="muted">Sem foto</span>
                       }
                     </td>
                     <td>
                       @if (resolveImageUrl(a.bomba); as bombaUrl) {
-                        <img class="thumb" [src]="bombaUrl" alt="Bomba" />
+                        <div class="thumb-wrap">
+                          <img class="thumb" [src]="bombaUrl" alt="Bomba" />
+                          <button type="button" class="thumb-view" title="Visualizar foto da bomba" (click)="openImagePreview(bombaUrl)">👁</button>
+                        </div>
                       } @else {
                         <span class="muted">Sem foto</span>
                       }
@@ -192,13 +204,22 @@ import jsPDF from 'jspdf';
         </div>
       }
     </div>
+
+      @if (previewImageUrl()) {
+        <div class="image-overlay" (click)="closeImagePreview()">
+          <div class="image-modal" (click)="$event.stopPropagation()">
+            <img [src]="previewImageUrl()" alt="Imagem ampliada" />
+            <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+          </div>
+        </div>
+      }
   `,
   styles: [`
     @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@700&family=Inter:wght@400;500;600&display=swap');
     * { box-sizing: border-box; }
     .page { padding: 28px; font-family: 'Inter', sans-serif; color: #e2e8f0; }
     .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
     .page-header p { font-size:12px; color:#64748b; margin-top:4px; }
 
     .btn-primary { background:linear-gradient(135deg,#0ea5e9,#6366f1); border:none; border-radius:8px; padding:10px 20px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all 0.2s; }
@@ -214,6 +235,10 @@ import jsPDF from 'jspdf';
     }
     .filter-field input:focus, .filter-field select:focus { border-color:#0ea5e9; }
     .filter-field select option { background:#0d1427; }
+    .date-row { display:flex; gap:8px; align-items:center; }
+    .date-row input { flex:1; min-width:0; }
+    .btn-date { height:34px; min-width:40px; padding:0 10px; background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; color:#94a3b8; cursor:pointer; font-size:14px; }
+    .btn-date:hover { border-color:#38bdf8; color:#38bdf8; }
     .btn-clear { background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer; }
     .btn-clear:hover { border-color:#94a3b8; color:#94a3b8; }
 
@@ -244,6 +269,7 @@ import jsPDF from 'jspdf';
     .badge-orange { background:#ffedd520; color:#fb923c; }
 
     .actions { display:flex; gap:6px; }
+    .thumb-wrap { position:relative; width:58px; height:58px; }
     .thumb {
       width: 58px;
       height: 58px;
@@ -252,6 +278,26 @@ import jsPDF from 'jspdf';
       border: 1px solid #1e2d4a;
       background: #0a0f1e;
     }
+    .thumb-view {
+      position:absolute;
+      right:4px;
+      bottom:4px;
+      width:26px;
+      height:26px;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,0.35);
+      background:rgba(2,6,23,0.74);
+      color:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      font-size:13px;
+      line-height:1;
+      box-shadow:0 4px 12px rgba(0,0,0,0.4);
+      backdrop-filter: blur(4px);
+    }
+    .thumb-view:hover { background:rgba(14,165,233,0.82); border-color:#7dd3fc; }
     .muted { color: #64748b; font-size: 11px; }
     .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; transition:background 0.2s; text-decoration:none; }
     .action-btn:hover { background:#1e2d4a; }
@@ -275,6 +321,42 @@ import jsPDF from 'jspdf';
     .btn-cancel { background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; }
     .btn-danger { background:#dc2626; border:none; color:#fff; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-weight:600; }
     .btn-danger:disabled { opacity:0.5; }
+    .image-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1100;
+      padding: 20px;
+    }
+    .image-modal {
+      max-width: min(92vw, 1100px);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+    }
+    .image-modal img {
+      width: auto;
+      max-width: 100%;
+      max-height: calc(90vh - 56px);
+      object-fit: contain;
+      border-radius: 12px;
+      border: 1px solid #1e2d4a;
+      background: #0a0f1e;
+    }
+    .btn-close-image {
+      background: #0a0f1e;
+      border: 1px solid #1e2d4a;
+      color: #e2e8f0;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
   `]
 })
 export class AbastecimentosListComponent implements OnInit {
@@ -287,6 +369,7 @@ export class AbastecimentosListComponent implements OnInit {
   loading = signal(true);
   deleting = signal(false);
   deleteTarget = signal<Abastecimento | null>(null);
+  previewImageUrl = signal('');
   pagination = signal({ current_page: 1, last_page: 1, per_page: 20, total: 0, from: 0, to: 0 });
 
   tiposCombustivel = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
@@ -329,6 +412,16 @@ export class AbastecimentosListComponent implements OnInit {
     return Array.from({ length: end - start + 1 }, (_, i) => start + i);
   }
 
+  openDatePicker(input: HTMLInputElement) {
+    try {
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+        return;
+      }
+    } catch {}
+    input.focus();
+  }
+
   getStatusClass(status?: string): string {
     if (status === 'Confirmado') return 'badge badge-blue';
     if (status === 'Pago') return 'badge badge-green';
@@ -354,6 +447,16 @@ export class AbastecimentosListComponent implements OnInit {
       return normalized;
     }
     return null;
+  }
+
+  openImagePreview(url?: string | null) {
+    const imageUrl = this.resolveImageUrl(url);
+    if (!imageUrl) return;
+    this.previewImageUrl.set(imageUrl);
+  }
+
+  closeImagePreview() {
+    this.previewImageUrl.set('');
   }
 
   printComprovante(a: Abastecimento) {

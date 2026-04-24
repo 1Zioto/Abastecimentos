@@ -37,11 +37,17 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
           <div class="filter-field">
             <label>Data Início</label>
-            <input type="date" [(ngModel)]="filtroDataInicio" (change)="load()" />
+            <div class="date-row">
+              <input #dataInicioInput type="date" [(ngModel)]="filtroDataInicio" (change)="load()" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataInicioInput)">📅</button>
+            </div>
           </div>
           <div class="filter-field">
             <label>Data Fim</label>
-            <input type="date" [(ngModel)]="filtroDataFim" (change)="load()" />
+            <div class="date-row">
+              <input #dataFimInput type="date" [(ngModel)]="filtroDataFim" (change)="load()" />
+              <button type="button" class="btn-date" (click)="openDatePicker(dataFimInput)">📅</button>
+            </div>
           </div>
         </div>
       </div>
@@ -54,7 +60,10 @@ import { AuthService } from '../../core/services/auth.service';
             <div class="form-row">
               <div class="field">
                 <label>Data *</label>
-                <input type="date" formControlName="data" />
+                <div class="date-row">
+                  <input #dataNotaInput type="date" formControlName="data" />
+                  <button type="button" class="btn-date" (click)="openDatePicker(dataNotaInput)">📅</button>
+                </div>
               </div>
               <div class="field">
                 <label>Número da NF</label>
@@ -210,7 +219,7 @@ import { AuthService } from '../../core/services/auth.service';
     * { box-sizing: border-box; }
     .page { padding: 28px; font-family: 'Inter', sans-serif; color: #e2e8f0; }
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-    .page-header h1 { font-size: 24px; font-weight: 700; color: #f8fafc; margin: 0; }
+    .page-header h1 { font-size: 24px; font-weight: 700; color: #111827; margin: 0; }
     .page-header p { font-size: 13px; color: #64748b; margin-top: 4px; }
     .btn-primary { background: linear-gradient(135deg, #0ea5e9, #6366f1); border: none; border-radius: 8px; padding: 10px 20px; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
     .btn-primary.sm { padding: 8px 16px; }
@@ -222,6 +231,10 @@ import { AuthService } from '../../core/services/auth.service';
     .filter-field input, .filter-field select { background: #0a0f1e; border: 1px solid #1e2d4a; border-radius: 7px; padding: 8px 10px; color: #e2e8f0; font-size: 12px; outline: none; }
     .filter-field input:focus, .filter-field select:focus { border-color: #0ea5e9; }
     .filter-field select option { background: #0d1427; }
+    .date-row { display: flex; gap: 8px; align-items: center; }
+    .date-row input { flex: 1; min-width: 0; }
+    .btn-date { height: 34px; min-width: 40px; padding: 0 10px; background: #0a0f1e; border: 1px solid #1e2d4a; border-radius: 7px; color: #94a3b8; cursor: pointer; font-size: 14px; }
+    .btn-date:hover { border-color: #38bdf8; color: #38bdf8; }
 
     .form-card { background: #0d1427; border: 1px solid #1e2d4a; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
     .form-card h3 { font-size: 14px; font-weight: 700; color: #f8fafc; margin: 0 0 14px; }
@@ -252,12 +265,12 @@ import { AuthService } from '../../core/services/auth.service';
     .table-wrap { overflow-x: auto; }
     .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .data-table thead th { padding: 10px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; border-bottom: 1px solid #1e2d4a; background: #080e1c; text-align: left; white-space: nowrap; }
-    .data-table tbody td { padding: 10px 12px; border-bottom: 1px solid #1e2d4a15; vertical-align: middle; }
+    .data-table tbody td { padding: 10px 12px; border-bottom: 1px solid #1e2d4a15; vertical-align: middle; color: #e2e8f0; }
     .data-table tbody tr:hover td { background: #1e2d4a15; }
     .text-right { text-align: right; }
     .val-green { color: #4ade80; font-weight: 600; }
-    .code-badge { background: #0a0f1e; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-size: 11px; }
-    .fuel-badge { background: #1e2d4a; color: #38bdf8; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 600; }
+    .code-badge { background: #0a0f1e; color: #cbd5e1; padding: 2px 7px; border-radius: 4px; font-size: 11px; }
+    .fuel-badge { background: #1e2d4a; color: #7dd3fc; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 600; }
     .link-btn { color: #38bdf8; font-size: 11px; text-decoration: none; background: transparent; border: none; cursor: pointer; padding: 0; }
     .link-btn:hover { text-decoration: underline; }
     .actions { display: flex; gap: 6px; }
@@ -313,7 +326,27 @@ export class EntradaNotasComponent implements OnInit {
       data_inicio: this.filtroDataInicio,
       data_fim: this.filtroDataFim,
       per_page: 100
-    }).subscribe(r => this.notas.set(r.data));
+    }).subscribe(r => this.notas.set((r.data ?? []).map(n => this.normalizeNota(n))));
+  }
+
+  private normalizeNota(n: EntradaNota): EntradaNota {
+    return {
+      ...n,
+      valor: this.toNumber(n.valor),
+      quantidade: this.toNumber(n.quantidade),
+      valor_litro: this.toNumber(n.valor_litro),
+    };
+  }
+
+  private toNumber(value: unknown): number | undefined {
+    if (value === null || value === undefined || value === '') return undefined;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    const raw = String(value).trim();
+    const normalized = raw.includes(',')
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw;
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) ? numeric : undefined;
   }
 
   calcValor() {
@@ -431,5 +464,16 @@ export class EntradaNotasComponent implements OnInit {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(Number.isFinite(amount) ? amount : 0);
+  }
+
+  openDatePicker(input: HTMLInputElement) {
+    try {
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+        return;
+      }
+    } catch {}
+    input.focus();
+    input.click();
   }
 }

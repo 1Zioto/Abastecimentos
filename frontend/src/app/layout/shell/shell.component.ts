@@ -87,7 +87,8 @@ interface NavItem {
       padding: 20px 16px;
       border-bottom: 1px solid #E5E7EB;
       min-height: 76px;
-      background: #F5C400;
+      background: #FFFFFF;
+      gap: 10px;
     }
 
     .logo {
@@ -95,6 +96,8 @@ interface NavItem {
       align-items: center;
       gap: 10px;
       overflow: hidden;
+      min-width: 0;
+      flex: 1;
     }
     .logo-icon {
       width: 40px;
@@ -110,11 +113,15 @@ interface NavItem {
     }
     .logo-text {
       font-family: 'Inter', sans-serif;
-      font-size: 36px;
+      font-size: 14px;
+      line-height: 1.1;
       font-weight: 700;
-      color: #1F2937;
+      color: #111827;
       letter-spacing: 0;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
     .sidebar-collapsed .logo-text { display: none; }
 
