@@ -424,9 +424,10 @@ interface BeforeInstallPromptEvent extends Event {
 
     .charts-grid {
       display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 16px;
-      margin-bottom: 18px;
+      grid-template-columns: minmax(0, 2.15fr) minmax(280px, 0.85fr);
+      gap: 18px;
+      margin-bottom: 20px;
+      align-items: stretch;
     }
 
     .panel {
@@ -434,8 +435,9 @@ interface BeforeInstallPromptEvent extends Event {
       border: 1px solid #E5E7EB;
       border-radius: 14px;
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
-      padding: 18px;
+      padding: 16px;
       transition: box-shadow 0.2s ease;
+      min-width: 0;
     }
 
     .panel:hover {
@@ -446,12 +448,14 @@ interface BeforeInstallPromptEvent extends Event {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
+      gap: 12px;
     }
 
     .panel-header h3 {
       margin: 0;
-      font-size: 23px;
+      font-size: 16px;
+      line-height: 1.25;
       font-weight: 600;
       color: #111827;
     }
@@ -475,20 +479,20 @@ interface BeforeInstallPromptEvent extends Event {
 
     .bar-chart-wrap {
       position: relative;
-      height: 270px;
+      height: 320px;
       border-radius: 12px;
       background: #F8FAFC;
       border: 1px solid #E5E7EB;
-      padding: 12px 10px 8px;
+      padding: 24px 12px 12px;
       overflow: hidden;
     }
 
     .bar-chart-grid {
       position: absolute;
-      inset: 12px 10px 26px;
+      inset: 24px 12px 38px;
       background-image: linear-gradient(to top, #E5E7EB 1px, transparent 1px);
       background-size: 100% 25%;
-      opacity: 0.7;
+      opacity: 0.65;
       pointer-events: none;
     }
 
@@ -498,7 +502,7 @@ interface BeforeInstallPromptEvent extends Event {
       height: 100%;
       display: grid;
       grid-template-columns: repeat(12, minmax(0, 1fr));
-      gap: 6px;
+      gap: 8px;
       align-items: end;
     }
 
@@ -507,11 +511,12 @@ interface BeforeInstallPromptEvent extends Event {
       flex-direction: column;
       align-items: center;
       justify-content: flex-end;
-      gap: 6px;
+      gap: 8px;
       min-width: 0;
       cursor: pointer;
       border-radius: 8px;
       transition: background 0.2s ease;
+      padding: 6px 2px 4px;
     }
 
     .bar-group:hover {
@@ -523,16 +528,16 @@ interface BeforeInstallPromptEvent extends Event {
     }
 
     .bars {
-      height: 220px;
+      height: 252px;
       width: 100%;
       display: flex;
       align-items: flex-end;
       justify-content: center;
-      gap: 4px;
+      gap: 5px;
     }
 
     .bar {
-      width: 42%;
+      width: min(42%, 18px);
       min-height: 2px;
       border-radius: 6px 6px 2px 2px;
       transition: transform 0.2s ease, opacity 0.2s ease;
@@ -554,21 +559,33 @@ interface BeforeInstallPromptEvent extends Event {
 
     .bar-value {
       position: absolute;
-      top: -30px;
+      top: -28px;
       left: 50%;
-      transform: translateX(-50%) rotate(-90deg) translateX(50%);
-      transform-origin: center;
-      color: #111827;
-      font-size: 12px;
+      transform: translateX(-50%) translateY(4px);
+      background: #111827;
+      color: #FFFFFF;
+      font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.2px;
+      letter-spacing: 0;
       white-space: nowrap;
       pointer-events: none;
-      text-shadow: none;
+      border-radius: 6px;
+      padding: 3px 6px;
+      opacity: 0;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+      transition: opacity 0.15s ease, transform 0.15s ease;
+      z-index: 2;
+    }
+
+    .bar:hover .bar-value,
+    .bar-group.active .bar-value {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
 
     .bar-label {
-      font-size: 13px;
+      font-size: 11px;
+      line-height: 1;
       color: #6B7280;
       white-space: nowrap;
       overflow: hidden;
@@ -578,11 +595,12 @@ interface BeforeInstallPromptEvent extends Event {
 
     .compare-legend {
       display: flex;
-      gap: 18px;
-      margin-top: 10px;
+      gap: 12px;
+      margin-top: 12px;
       color: #6B7280;
-      font-size: 15px;
+      font-size: 12px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     .compare-legend .legend-dot {
@@ -605,7 +623,7 @@ interface BeforeInstallPromptEvent extends Event {
     .donut-layout {
       display: flex;
       justify-content: center;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .active-filters { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
@@ -613,7 +631,7 @@ interface BeforeInstallPromptEvent extends Event {
     .btn-clear-filters { border:1px solid #E5E7EB; background:#FFFFFF; color:#374151; border-radius:8px; padding:4px 10px; font-size:11px; cursor:pointer; }
     .btn-clear-filters:hover { background:#F9FAFB; }
 
-    .donut-svg { width: 210px; height: 210px; }
+    .donut-svg { width: min(210px, 100%); height: auto; aspect-ratio: 1; }
     .donut-slice { cursor: pointer; transition: opacity 0.2s ease, transform 0.2s ease; }
     .donut-slice:hover { opacity: 0.9; }
     .donut-slice.selected { opacity: 1; stroke:#111827; stroke-width:2; }
@@ -623,7 +641,7 @@ interface BeforeInstallPromptEvent extends Event {
     .fuel-legend {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
     .chart-helper {
       color: #9CA3AF;
@@ -637,7 +655,7 @@ interface BeforeInstallPromptEvent extends Event {
       grid-template-columns: 14px 1fr auto;
       align-items: center;
       gap: 8px;
-      font-size: 15px;
+      font-size: 12px;
       color: #6B7280;
     }
     .legend-clickable { cursor:pointer; border-radius:8px; padding:4px 6px; transition: background 0.2s ease; }
@@ -657,6 +675,8 @@ interface BeforeInstallPromptEvent extends Event {
     .legend-value {
       color: #6B7280;
       font-weight: 600;
+      font-size: 11px;
+      white-space: nowrap;
     }
 
     .table-wrap { overflow: auto; }
@@ -766,6 +786,8 @@ interface BeforeInstallPromptEvent extends Event {
     @media (max-width: 1160px) {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .charts-grid { grid-template-columns: 1fr; }
+      .bar-chart-wrap { height: 300px; }
+      .bars { height: 234px; }
     }
 
     @media (max-width: 760px) {
@@ -775,6 +797,24 @@ interface BeforeInstallPromptEvent extends Event {
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .header-filters { width: 100%; }
       .filter-select { flex: 1; min-width: 0; }
+      .panel { padding: 14px; }
+      .panel-header { align-items: flex-start; }
+      .panel-header h3 { font-size: 14px; }
+      .bar-chart-wrap {
+        height: auto;
+        min-height: 280px;
+        overflow-x: auto;
+        padding: 22px 10px 12px;
+      }
+      .bar-chart-grid {
+        min-width: 680px;
+        inset: 22px 10px 38px;
+      }
+      .bar-groups {
+        min-width: 680px;
+      }
+      .bars { height: 218px; }
+      .compare-legend { font-size: 11px; gap: 8px; }
     }
   `]
 })
