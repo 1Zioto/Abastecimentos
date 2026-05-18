@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
+import { AuthService } from './auth.service';
 import {
   Abastecimento, BaixaAbastecimento, EntradaNota,
   ValorCombustivel, Proprietario, Veiculo, Motorista,
@@ -13,7 +14,7 @@ import {
 export class ApiService {
   private base = environment.apiUrl;
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient, private auth: AuthService) {}
 
   private url(path: string) { return `${this.base}/${path}`; }
 
@@ -25,23 +26,33 @@ export class ApiService {
     return p;
   }
 
+  private withGaragem(filters: Record<string, any> = {}): Record<string, any> {
+    return { local: this.auth.getGaragem(), ...filters };
+  }
+
   // Dashboard
   getDashboard(): Observable<DashboardData> {
-    return this.http.get<DashboardData>(this.url('dashboard'));
+    return this.http.get<DashboardData>(this.url('dashboard'), { params: this.toParams(this.withGaragem()) });
   }
 
   // Proprietários
   getProprietarios(filters: any = {}): Observable<PaginatedResponse<Proprietario>> {
-    return this.http.get<PaginatedResponse<Proprietario>>(this.url('proprietarios'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<Proprietario>>(this.url('proprietarios'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getProprietariosAll(): Observable<PaginatedResponse<Proprietario>> {
     return this.getProprietarios({ per_page: 500 });
   }
   createProprietario(data: Partial<Proprietario>): Observable<Proprietario> {
-    return this.http.post<Proprietario>(this.url('proprietarios'), data);
+    return this.http.post<Proprietario>(this.url('proprietarios'), { ...data, local: data.local || this.auth.getGaragem() });
   }
   updateProprietario(id: string, data: Partial<Proprietario>): Observable<Proprietario> {
     return this.http.put<Proprietario>(this.url(`proprietarios/${id}`), data);
+  }
+  bloquearProprietario(id: string, observacao: string): Observable<Proprietario> {
+    return this.http.post<Proprietario>(this.url(`proprietarios/${id}/bloquear`), { observacao });
+  }
+  desbloquearProprietario(id: string): Observable<Proprietario> {
+    return this.http.post<Proprietario>(this.url(`proprietarios/${id}/desbloquear`), {});
   }
   deleteProprietario(id: string): Observable<any> {
     return this.http.delete(this.url(`proprietarios/${id}`));
@@ -49,13 +60,13 @@ export class ApiService {
 
   // Veículos
   getVeiculos(filters: any = {}): Observable<PaginatedResponse<Veiculo>> {
-    return this.http.get<PaginatedResponse<Veiculo>>(this.url('veiculos'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<Veiculo>>(this.url('veiculos'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getVeiculosByProprietario(id: string): Observable<Veiculo[]> {
     return this.http.get<Veiculo[]>(this.url(`veiculos/proprietario/${id}`));
   }
   createVeiculo(data: Partial<Veiculo>): Observable<Veiculo> {
-    return this.http.post<Veiculo>(this.url('veiculos'), data);
+    return this.http.post<Veiculo>(this.url('veiculos'), { ...data, local: data.local || this.auth.getGaragem() });
   }
   updateVeiculo(id: string, data: Partial<Veiculo>): Observable<Veiculo> {
     return this.http.put<Veiculo>(this.url(`veiculos/${id}`), data);
@@ -66,13 +77,13 @@ export class ApiService {
 
   // Motoristas
   getMotoristas(filters: any = {}): Observable<PaginatedResponse<Motorista>> {
-    return this.http.get<PaginatedResponse<Motorista>>(this.url('motoristas'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<Motorista>>(this.url('motoristas'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getMotoristassByProprietario(id: string): Observable<Motorista[]> {
     return this.http.get<Motorista[]>(this.url(`motoristas/proprietario/${id}`));
   }
   createMotorista(data: Partial<Motorista>): Observable<Motorista> {
-    return this.http.post<Motorista>(this.url('motoristas'), data);
+    return this.http.post<Motorista>(this.url('motoristas'), { ...data, local: data.local || this.auth.getGaragem() });
   }
   updateMotorista(id: string, data: Partial<Motorista>): Observable<Motorista> {
     return this.http.put<Motorista>(this.url(`motoristas/${id}`), data);
@@ -83,13 +94,16 @@ export class ApiService {
 
   // Abastecimentos
   getAbastecimentos(filters: any = {}): Observable<PaginatedResponse<Abastecimento>> {
-    return this.http.get<PaginatedResponse<Abastecimento>>(this.url('abastecimentos'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<Abastecimento>>(this.url('abastecimentos'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getAbastecimento(id: string): Observable<Abastecimento> {
     return this.http.get<Abastecimento>(this.url(`abastecimentos/${id}`));
   }
   createAbastecimento(data: Partial<Abastecimento>): Observable<Abastecimento> {
-    return this.http.post<Abastecimento>(this.url('abastecimentos'), data);
+    return this.http.post<Abastecimento>(this.url('abastecimentos'), {
+      ...data,
+      local: data.local || this.auth.getGaragem(),
+    });
   }
   updateAbastecimento(id: string, data: Partial<Abastecimento>): Observable<Abastecimento> {
     return this.http.put<Abastecimento>(this.url(`abastecimentos/${id}`), data);
@@ -98,7 +112,7 @@ export class ApiService {
     return this.http.delete(this.url(`abastecimentos/${id}`));
   }
   getAbastecimentosPendenteBaixa(filters: any = {}): Observable<Abastecimento[]> {
-    return this.http.get<Abastecimento[]>(this.url('abastecimentos/filter/baixa-pendente'), { params: this.toParams(filters) });
+    return this.http.get<Abastecimento[]>(this.url('abastecimentos/filter/baixa-pendente'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getComprovantePdfUrl(id: string): string {
     return this.url(`abastecimentos/${id}/comprovante`);
@@ -112,7 +126,7 @@ export class ApiService {
 
   // Baixas
   getBaixas(filters: any = {}): Observable<PaginatedResponse<BaixaAbastecimento>> {
-    return this.http.get<PaginatedResponse<BaixaAbastecimento>>(this.url('baixas'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<BaixaAbastecimento>>(this.url('baixas'), { params: this.toParams(this.withGaragem(filters)) });
   }
   createBaixa(data: any): Observable<BaixaAbastecimento> {
     return this.http.post<BaixaAbastecimento>(this.url('baixas'), data);
@@ -157,7 +171,7 @@ export class ApiService {
 
   // Usuários
   getUsuarios(filters: any = {}): Observable<PaginatedResponse<Usuario>> {
-    return this.http.get<PaginatedResponse<Usuario>>(this.url('usuarios'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<Usuario>>(this.url('usuarios'), { params: this.toParams({ ...filters, _ts: Date.now() }) });
   }
   createUsuario(data: any): Observable<Usuario> {
     return this.http.post<Usuario>(this.url('usuarios'), data);
@@ -171,17 +185,17 @@ export class ApiService {
 
   // Relatórios
   getRelatorioProprietario(filters: any): Observable<any> {
-    return this.http.get(this.url('relatorios/proprietario'), { params: this.toParams(filters) });
+    return this.http.get(this.url('relatorios/proprietario'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getRelatorioProprietarioPdf(filters: any): Observable<HttpResponse<Blob>> {
     return this.http.get(this.url('relatorios/proprietario/pdf'), {
-      params: this.toParams(filters),
+      params: this.toParams(this.withGaragem(filters)),
       observe: 'response',
       responseType: 'blob',
     });
   }
   getRelatorioProprietarioPdfUrl(filters: any): string {
-    const p = new URLSearchParams(filters).toString();
+    const p = new URLSearchParams(this.withGaragem(filters)).toString();
     return `${this.url('relatorios/proprietario/pdf')}?${p}`;
   }
 

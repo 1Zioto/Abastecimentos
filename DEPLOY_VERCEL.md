@@ -145,6 +145,24 @@ Isso cria as tabelas e o usuário padrão:
 - **Login:** `admin`
 - **Senha:** `admin123`
 
+### 6.1 — Ativar coluna de sincronização incremental
+
+Para sincronização incremental (buscar/enviar apenas novos registros), execute também o script:
+
+`backend/database/sql/2026-04-26_add_sync_token_at.sql`
+
+Esse script adiciona a coluna `sync_token_at` (com índice) nas tabelas:
+- `proprietarios`
+- `veiculos`
+- `motoristas`
+- `abastecimentos`
+- `entrada_notas`
+- `valores_combustivel`
+- `baixa_abastecimento`
+- `usuarios`
+
+Depois de executar no Neon, faça redeploy do backend.
+
 ---
 
 ## ✅ Checklist Final

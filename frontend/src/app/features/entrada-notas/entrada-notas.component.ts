@@ -18,7 +18,9 @@ import { AuthService } from '../../core/services/auth.service';
           <h1>Entrada de Notas</h1>
           <p>Registre as notas fiscais de abastecimento</p>
         </div>
-        <button class="btn-primary" (click)="newItem()">+ Nova Nota</button>
+        @if (canCreate()) {
+          <button class="btn-primary" (click)="newItem()">+ Nova Nota</button>
+        }
       </div>
 
       <!-- Filtros -->
@@ -28,11 +30,9 @@ import { AuthService } from '../../core/services/auth.service';
             <label>Tipo</label>
             <select [(ngModel)]="filtroTipo" (change)="load()">
               <option value="">Todos</option>
-              <option value="Diesel">Diesel</option>
-              <option value="Gasolina">Gasolina</option>
-              <option value="Etanol">Etanol</option>
-              <option value="GNV">GNV</option>
-              <option value="Arla 32">Arla 32</option>
+              @for (t of tiposCombustivel(); track t) {
+                <option [value]="t">{{ t }}</option>
+              }
             </select>
           </div>
           <div class="filter-field">
@@ -53,7 +53,7 @@ import { AuthService } from '../../core/services/auth.service';
       </div>
 
       <!-- Formulário -->
-      @if (showForm()) {
+      @if (canShowForm()) {
         <div class="form-card">
           <h3>{{ editItem() ? 'Editar Nota' : 'Nova Nota Fiscal' }}</h3>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
@@ -73,13 +73,9 @@ import { AuthService } from '../../core/services/auth.service';
                 <label>Tipo</label>
                 <select formControlName="tipo">
                   <option value="">Selecione...</option>
-                <option value="OLEO DIESEL S10">OLEO DIESEL S10</option>
-                  <option value="Diesel Comum">Diesel Comum</option>
-                  <option value="Gasolina Comum">Gasolina Comum</option>
-                  <option value="Gasolina Aditivada">Gasolina Aditivada</option>
-                  <option value="Etanol">Etanol</option>
-                  <option value="GNV">GNV</option>
-                  <option value="Arla 32">Arla 32</option>
+                  @for (t of tiposCombustivel(); track t) {
+                    <option [value]="t">{{ t }}</option>
+                  }
                 </select>
               </div>
               <div class="field">
@@ -177,8 +173,12 @@ import { AuthService } from '../../core/services/auth.service';
                   </td>
                   <td>
                     <div class="actions">
-                      <button class="action-btn" (click)="edit(n)" title="Editar">✏️</button>
-                      <button class="action-btn" (click)="confirmDelete(n)" title="Excluir">🗑️</button>
+                      @if (isAdmin()) {
+                        <button class="action-btn" (click)="edit(n)" title="Editar">✏️</button>
+                        <button class="action-btn" (click)="confirmDelete(n)" title="Excluir">🗑️</button>
+                      } @else {
+                        <span style="color:#64748b;font-size:12px;">Somente leitura</span>
+                      }
                     </div>
                   </td>
                 </tr>
@@ -191,7 +191,7 @@ import { AuthService } from '../../core/services/auth.service';
         </div>
       </div>
 
-      @if (deleteTarget()) {
+      @if (deleteTarget() && isAdmin()) {
         <div class="modal-overlay" (click)="deleteTarget.set(null)">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Confirmar Exclusão</h3>
@@ -302,6 +302,8 @@ export class EntradaNotasComponent implements OnInit {
   saving = signal(false);
   uploadingFotoNota = signal(false);
   previewImageUrl = signal('');
+  private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
+  tiposCombustivel = signal<string[]>([this.defaultTipoCombustivel]);
 
   filtroTipo = '';
   filtroDataInicio = '';
@@ -310,7 +312,7 @@ export class EntradaNotasComponent implements OnInit {
   form = this.fb.group({
     data:               ['', Validators.required],
     numero_nota_fiscal: [''],
-    tipo:               ['OLEO DIESEL S10'],
+    tipo:               [this.defaultTipoCombustivel],
     quantidade:         [null as number | null],
     valor_litro:        [null as number | null],
     valor:              [null as number | null],
@@ -318,7 +320,34 @@ export class EntradaNotasComponent implements OnInit {
     foto_nota:          [''],
   });
 
-  ngOnInit() { this.load(); }
+  ngOnInit() {
+    this.loadTiposCombustivel();
+    this.load();
+  }
+  isAdmin() { return this.auth.isAdmin(); }
+  canCreate() { return this.auth.canCreateOperationalRecords(); }
+  canShowForm() { return this.showForm() && (this.isAdmin() || !this.editItem()); }
+
+  loadTiposCombustivel() {
+    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+      next: (r) => {
+        const tipos = Array.from(
+          new Set(
+            (r.data ?? [])
+              .map((v: any) => String(v?.tipo_combustivel ?? '').trim())
+              .filter(Boolean),
+          ),
+        );
+        const lista = tipos.length ? tipos : [this.defaultTipoCombustivel];
+        this.tiposCombustivel.set(lista);
+        const tipoAtual = String(this.form.getRawValue().tipo ?? '').trim();
+        if (!tipoAtual || !lista.includes(tipoAtual)) {
+          this.form.patchValue({ tipo: lista[0] });
+        }
+      },
+      error: () => this.tiposCombustivel.set([this.defaultTipoCombustivel]),
+    });
+  }
 
   load() {
     this.api.getEntradaNotas({
@@ -369,7 +398,7 @@ export class EntradaNotasComponent implements OnInit {
     this.editItem.set(null);
     this.form.reset({
       data: new Date().toISOString().slice(0, 10),
-      tipo: 'OLEO DIESEL S10',
+      tipo: this.tiposCombustivel()[0] ?? this.defaultTipoCombustivel,
       responsavel: this.auth.currentUser()?.nome ?? ''
     });
     this.showForm.set(true);
@@ -385,11 +414,15 @@ export class EntradaNotasComponent implements OnInit {
   cancelForm() {
     this.showForm.set(false);
     this.editItem.set(null);
-    this.form.reset({ tipo: 'OLEO DIESEL S10', responsavel: this.auth.currentUser()?.nome ?? '' });
+    this.form.reset({ tipo: this.tiposCombustivel()[0] ?? this.defaultTipoCombustivel, responsavel: this.auth.currentUser()?.nome ?? '' });
   }
 
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+    if (this.editItem() && !this.isAdmin()) {
+      this.toastr.error('Somente administradores podem editar notas');
+      return;
+    }
     this.saving.set(true);
     const data = {
       ...(this.form.value as any),

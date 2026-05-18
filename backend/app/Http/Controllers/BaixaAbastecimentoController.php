@@ -10,6 +10,25 @@ use Illuminate\Support\Str;
 
 class BaixaAbastecimentoController extends Controller
 {
+    private function filiaisPermitidas(): array
+    {
+        $user = auth()->user();
+        return method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
+    }
+
+    private function validarAcessoAbastecimento(string $idAbastecimento): void
+    {
+        $permitidas = $this->filiaisPermitidas();
+        $temAcesso = Abastecimento::query()
+            ->where('id_abastecimento', $idAbastecimento)
+            ->whereIn('local', $permitidas)
+            ->exists();
+
+        if (!$temAcesso) {
+            abort(403, 'Usuário sem acesso à filial deste abastecimento.');
+        }
+    }
+
     private function emptyToNull($value)
     {
         if ($value === null) return null;
@@ -62,9 +81,20 @@ class BaixaAbastecimentoController extends Controller
     public function index(Request $request)
     {
         $query = BaixaAbastecimento::with(['abastecimento.veiculo','abastecimento.proprietario']);
+        $permitidas = $this->filiaisPermitidas();
+        $query->whereHas('abastecimento', fn ($q) => $q->whereIn('local', $permitidas));
 
         if ($request->filled('id_abastecimento')) {
             $query->where('id_abastecimento', $request->id_abastecimento);
+        }
+        if ($request->filled('local')) {
+            $local = trim((string) $request->local);
+            $query->whereHas('abastecimento', function ($q) use ($request) {
+                $q->whereRaw('LOWER(local) = LOWER(?)', [$request->local]);
+            });
+            if (!in_array($local, $permitidas, true)) {
+                $query->whereRaw('1 = 0');
+            }
         }
 
         return new \Illuminate\Http\JsonResponse($query->orderByDesc('data_hora')->paginate($request->get('per_page', 20)));
@@ -97,6 +127,7 @@ class BaixaAbastecimentoController extends Controller
         $data['anexo'] = $this->emptyToNull($data['anexo'] ?? null);
         $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
         $data['tipo_despesa'] = $this->emptyToNull($data['tipo_despesa'] ?? null) ?? 'Combustível';
+        $this->validarAcessoAbastecimento($data['id_abastecimento']);
 
         DB::beginTransaction();
         try {
@@ -147,6 +178,7 @@ class BaixaAbastecimentoController extends Controller
 
         foreach ($data['ids'] as $idAbastecimento) {
             try {
+                $this->validarAcessoAbastecimento($idAbastecimento);
                 $this->upsertBaixa($idAbastecimento, $data);
                 Abastecimento::where('id_abastecimento', $idAbastecimento)
                     ->update($this->buildAbastecimentoBaixaUpdate($data));
@@ -172,12 +204,15 @@ class BaixaAbastecimentoController extends Controller
 
     public function show(string $id)
     {
-        return new \Illuminate\Http\JsonResponse(BaixaAbastecimento::with('abastecimento.veiculo')->findOrFail($id));
+        $baixa = BaixaAbastecimento::with('abastecimento.veiculo')->findOrFail($id);
+        $this->validarAcessoAbastecimento($baixa->id_abastecimento);
+        return new \Illuminate\Http\JsonResponse($baixa);
     }
 
     public function update(Request $request, string $id)
     {
         $baixa = BaixaAbastecimento::findOrFail($id);
+        $this->validarAcessoAbastecimento($baixa->id_abastecimento);
         $baixa->update($request->only(['forma_pagamento','data_pagamento','nota_entrada']));
         return new \Illuminate\Http\JsonResponse($baixa->fresh());
     }
@@ -185,6 +220,7 @@ class BaixaAbastecimentoController extends Controller
     public function destroy(string $id)
     {
         $baixa = BaixaAbastecimento::findOrFail($id);
+        $this->validarAcessoAbastecimento($baixa->id_abastecimento);
         // Reverter o abastecimento para não baixado
         Abastecimento::where('id_abastecimento', $baixa->id_abastecimento)->update([
             'baixa_abastecimento' => false,

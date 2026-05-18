@@ -26,6 +26,15 @@ class ValoresCombustivelController extends Controller
             'valor'            => 'required|numeric|min:0',
             'responsavel'      => 'nullable|string',
         ]);
+        $existing = ValoresCombustivel::query()
+            ->where('tipo_combustivel', $data['tipo_combustivel'])
+            ->where('valor', $data['valor'])
+            ->where('data', '>=', now()->subMinutes(10))
+            ->latest('data')
+            ->first();
+        if ($existing) {
+            return new \Illuminate\Http\JsonResponse($existing);
+        }
         $data['data'] = now();
         return new \Illuminate\Http\JsonResponse(ValoresCombustivel::create($data), 201);
     }

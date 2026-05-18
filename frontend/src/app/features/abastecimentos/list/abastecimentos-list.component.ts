@@ -20,7 +20,9 @@ import jsPDF from 'jspdf';
           <h1>Abastecimentos</h1>
           <p>{{ pagination().total }} registros encontrados</p>
         </div>
-        <a routerLink="/abastecimentos/novo" class="btn-primary">+ Novo Abastecimento</a>
+        @if (canCreate()) {
+          <a routerLink="/abastecimentos/novo" class="btn-primary">+ Novo Abastecimento</a>
+        }
       </div>
 
       <!-- Filtros -->
@@ -372,15 +374,38 @@ export class AbastecimentosListComponent implements OnInit {
   previewImageUrl = signal('');
   pagination = signal({ current_page: 1, last_page: 1, per_page: 20, total: 0, from: 0, to: 0 });
 
-  tiposCombustivel = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
+  tiposCombustivel: string[] = [this.defaultTipoCombustivel];
 
   filters: any = {
     id_proprietario: '', placa: '', data_inicio: '', data_fim: '', status: '', tipo_combustivel: '', page: 1
   };
 
   ngOnInit() {
+    this.loadTiposCombustivel();
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
     this.load();
+  }
+
+  loadTiposCombustivel() {
+    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+      next: (r) => {
+        const tipos = Array.from(
+          new Set(
+            (r.data ?? [])
+              .map((v: any) => String(v?.tipo_combustivel ?? '').trim())
+              .filter(Boolean),
+          ),
+        );
+        this.tiposCombustivel = tipos.length ? tipos : [this.defaultTipoCombustivel];
+        if (this.filters.tipo_combustivel && !this.tiposCombustivel.includes(this.filters.tipo_combustivel)) {
+          this.filters.tipo_combustivel = '';
+        }
+      },
+      error: () => {
+        this.tiposCombustivel = [this.defaultTipoCombustivel];
+      }
+    });
   }
 
   load() {
@@ -547,5 +572,9 @@ export class AbastecimentosListComponent implements OnInit {
 
   isAdmin(): boolean {
     return this.auth.isAdmin();
+  }
+
+  canCreate(): boolean {
+    return this.auth.canCreateOperationalRecords();
   }
 }

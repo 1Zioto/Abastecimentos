@@ -3,10 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class Abastecimento extends Model
 {
+    private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'abastecimentos';
     protected $primaryKey = 'id_abastecimento';
     public $incrementing = false;
@@ -45,6 +47,7 @@ class Abastecimento extends Model
         'recebedor',
         'observacao',
         'anexo',
+        'sync_token_at',
     ];
 
     protected $casts = [
@@ -61,6 +64,7 @@ class Abastecimento extends Model
         'baixa_abastecimento' => 'boolean',
         'data_baixa' => 'datetime',
         'created_at' => 'datetime',
+        'sync_token_at' => 'datetime',
     ];
 
     public $timestamps = false;
@@ -75,7 +79,30 @@ class Abastecimento extends Model
             if (empty($model->created_at)) {
                 $model->created_at = now();
             }
+            if (static::supportsSyncToken()) {
+                $model->sync_token_at = now();
+            }
         });
+        static::updating(function ($model) {
+            if (static::supportsSyncToken()) {
+                $model->sync_token_at = now();
+            }
+        });
+    }
+
+    private static function supportsSyncToken(): bool
+    {
+        if (static::$hasSyncTokenColumn !== null) {
+            return static::$hasSyncTokenColumn;
+        }
+
+        try {
+            static::$hasSyncTokenColumn = Schema::hasColumn((new static)->getTable(), 'sync_token_at');
+        } catch (\Throwable) {
+            static::$hasSyncTokenColumn = false;
+        }
+
+        return static::$hasSyncTokenColumn;
     }
 
     public function veiculo()

@@ -1,0 +1,32 @@
+{
+    "created_at": "2026-05-18T16:41:46+00:00",
+    "rows": [
+        {
+            "id_baixa": "dc309961",
+            "id_abastecimento": "270be059",
+            "data_hora": "2026-02-09 14:22:30",
+            "usuario": "augusto",
+            "forma_pagamento": "Pix",
+            "data_pagamento": "2026-02-09 14:22:30",
+            "nota_entrada": null
+        },
+        {
+            "id_baixa": "2f56078a",
+            "id_abastecimento": "270be059",
+            "data_hora": "2026-02-09 14:23:02",
+            "usuario": "augusto",
+            "forma_pagamento": "Pix",
+            "data_pagamento": "2026-02-09 14:23:02",
+            "nota_entrada": null
+        },
+        {
+            "id_baixa": "9ce2e708",
+            "id_abastecimento": "270be059",
+            "data_hora": "2026-02-09 14:26:50",
+            "usuario": "augusto",
+            "forma_pagamento": "Pix",
+            "data_pagamento": "2026-02-09 14:26:50",
+            "nota_entrada": null
+        }
+    ]
+}

@@ -11,6 +11,24 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class RelatorioController extends Controller
 {
+    private function aplicarFiltroFiliais($query, Request $request)
+    {
+        $user = auth()->user();
+        $permitidas = method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
+        $query->whereIn('local', $permitidas);
+
+        if ($request->filled('local')) {
+            $local = trim((string) $request->local);
+            if (!in_array($local, $permitidas, true)) {
+                $query->whereRaw('1 = 0');
+                return $query;
+            }
+            $query->whereRaw('LOWER(local) = LOWER(?)', [$local]);
+        }
+
+        return $query;
+    }
+
     private function pdfRuntimeOptions(): array
     {
         $tmpBase = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR);
@@ -34,6 +52,7 @@ class RelatorioController extends Controller
 
         $query = Abastecimento::with(['veiculo','motorista'])
             ->where('id_proprietario', $request->id_proprietario);
+        $this->aplicarFiltroFiliais($query, $request);
 
         if ($request->filled('data_inicio')) {
             $query->whereDate('data', '>=', $request->data_inicio);
@@ -78,6 +97,7 @@ class RelatorioController extends Controller
 
             $query = Abastecimento::with(['veiculo','motorista'])
                 ->where('id_proprietario', $request->id_proprietario);
+            $this->aplicarFiltroFiliais($query, $request);
 
             if ($request->filled('data_inicio')) $query->whereDate('data', '>=', $request->data_inicio);
             if ($request->filled('data_fim'))    $query->whereDate('data', '<=', $request->data_fim);

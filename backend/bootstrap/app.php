@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -19,6 +20,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
+            'admin' => \App\Http\Middleware\EnsureAdmin::class,
+            'admin_or_operador' => \App\Http\Middleware\EnsureAdminOrOperador::class,
         ]);
 
         // CORS
@@ -31,6 +34,24 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->render(function (\Illuminate\Auth\AuthenticationException $e, $request) {
             if ($request->expectsJson()) {
+                return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado.'], 401);
+            }
+        });
+
+        $exceptions->render(function (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e, $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return new \Illuminate\Http\JsonResponse(['message' => 'Token expirado.'], 401);
+            }
+        });
+
+        $exceptions->render(function (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e, $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return new \Illuminate\Http\JsonResponse(['message' => 'Token inválido.'], 401);
+            }
+        });
+
+        $exceptions->render(function (\Tymon\JWTAuth\Exceptions\JWTException $e, $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
                 return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado.'], 401);
             }
         });
@@ -53,6 +74,27 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(function (\Throwable $e, $request) {
             if ($request->expectsJson() || $request->is('api/*') || $request->path() === 'up') {
                 $status = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
+                $sensitive = ['password', 'senha', 'token', 'access_token', 'refresh_token'];
+                $input = $request->all();
+                array_walk_recursive($input, function (&$value, $key) use ($sensitive) {
+                    if (in_array(Str::lower((string) $key), $sensitive, true)) {
+                        $value = '***';
+                    }
+                });
+
+                $logPayload = [
+                    'status' => $status,
+                    'method' => $request->method(),
+                    'path' => '/'.$request->path(),
+                    'query' => $request->query(),
+                    'input' => $input,
+                    'message' => $e->getMessage(),
+                    'exception' => get_class($e),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace' => $status >= 500 ? $e->getTraceAsString() : null,
+                ];
+                error_log('[api-exception] '.json_encode($logPayload, JSON_UNESCAPED_UNICODE));
 
                 return new \Illuminate\Http\JsonResponse([
                     'message' => $status === 500 ? 'Erro interno do servidor.' : ($e->getMessage() ?: 'Erro na requisição.'),

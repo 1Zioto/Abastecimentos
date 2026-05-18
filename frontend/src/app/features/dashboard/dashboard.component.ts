@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { ApiService } from '../../core/services/api.service';
@@ -778,8 +778,12 @@ interface BeforeInstallPromptEvent extends Event {
     }
   `]
 })
-export class DashboardComponent implements OnInit {
+export class DashboardComponent implements OnInit, OnDestroy {
   private api = inject(ApiService);
+  private readonly onGaragemChanged = () => {
+    this.clearChartFilters();
+    this.load();
+  };
 
   data = signal<DashboardData | null>(null);
   loading = signal(true);
@@ -795,7 +799,12 @@ export class DashboardComponent implements OnInit {
 
   ngOnInit() {
     this.setupInstallPrompt();
+    window.addEventListener('garagem:changed', this.onGaragemChanged);
     this.load();
+  }
+
+  ngOnDestroy() {
+    window.removeEventListener('garagem:changed', this.onGaragemChanged);
   }
 
   setupInstallPrompt() {

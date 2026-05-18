@@ -1,41 +1,67 @@
-# APK — Abastecimento Vipe
+# Abastecimento Vipe - App Android (Flutter)
 
-Projeto Android criado para empacotar o sistema web como aplicativo Android usando `WebView`.
+Aplicativo Android offline-first para o sistema **Abastecimento Vipe**. Replica todas as funcionalidades da versao web (Angular) e sincroniza com o backend Laravel hospedado na Vercel (`https://backend-seven-gilt-97.vercel.app/api`).
 
-## O que ele abre
+## Modulos
 
-O app carrega a versão publicada:
+1. **Dashboard** - KPIs do mes e top proprietarios
+2. **Abastecimentos** - lista, filtros, formulario completo, baixa individual, cancelamento
+3. **Baixa em Lote** - pagamento de varios abastecimentos por proprietario
+4. **Entrada de Notas** - informa nota fiscal e data para multiplos registros
+5. **Relatorios** - por proprietario com geracao de PDF (via backend)
+6. **Precos de Combustivel** - historico + novo valor (imutavel apos cadastro)
+7. **Proprietarios** - CRUD com status (ativo/bloqueado/inativo)
+8. **Veiculos** - CRUD vinculado a proprietarios + odometro
+9. **Motoristas** - CRUD vinculado a proprietarios
+10. **Usuarios** - gestao de usuarios (admin apenas)
 
-`https://frontend-eight-smoky-75.vercel.app`
+## Regras de negocio embarcadas no cliente
 
-## Como gerar o APK
+- `valor_por_litro` e **imutavel** apos cadastrado (historico preservado)
+- `odometro` deve ser **crescente** por veiculo
+- Baixa em lote altera status `Confirmado` -> `Pago`
+- Exclusao de proprietario **cascateia** veiculos/motoristas/abastecimentos
+- Proprietario `bloqueado` bloqueia novos abastecimentos
+- Papeis: `admin`, `operador`, `visualizador` (visualizador so le)
 
-1. Instale o Android Studio.
-2. Abra a pasta `APK` pelo Android Studio.
-3. Aguarde o Gradle sincronizar.
-4. No menu, acesse:
+## Arquitetura
 
-   `Build > Build Bundle(s) / APK(s) > Build APK(s)`
+- `lib/core/api_client.dart` - cliente HTTP com JWT automatico
+- `lib/core/auth_store.dart` - persistencia do token (SharedPreferences)
+- `lib/core/local_db.dart` - SQLite (sqflite): cadastros em cache + fila de sincronizacao
+- `lib/core/sync_manager.dart` - sincronizacao bidirecional
+- `lib/screens/...` - telas por modulo (Material 3)
 
-5. O APK será gerado em:
+## Como compilar
 
-   `APK/app/build/outputs/apk/debug/app-debug.apk`
+Pre-requisitos:
+- Flutter SDK 3.19 ou superior (`flutter --version`)
+- Android SDK (via Android Studio) com API 35
+- JDK 17
 
-## Como gerar versão assinada
+Passos:
 
-Para instalar em celulares fora do modo debug ou publicar:
+```bash
+cd APK
+flutter pub get
+flutter build apk --release
+```
 
-1. Android Studio:
+APK gerado em `build/app/outputs/flutter-apk/app-release.apk`.
 
-   `Build > Generate Signed Bundle / APK`
+Para rodar em um dispositivo conectado:
 
-2. Selecione `APK`.
-3. Crie ou use uma chave `.jks`.
-4. Gere a versão `release`.
+```bash
+flutter run
+```
 
-## Observações
+## Login padrao
 
-- O app precisa de internet para funcionar.
-- Upload de imagens funciona pelo seletor de arquivos do Android.
-- O pacote Android é `com.vipe.abastecimento`.
-- O nome exibido é `Abastecimento Vipe`.
+```
+usuario: admin
+senha:   admin123
+```
+
+## Offline
+
+Ao abrir o app sem internet, o usuario ve os ultimos dados baixados e pode registrar abastecimentos. Novos registros ficam na fila de sincronizacao (`sync_queue`) e sao enviados ao clicar em **Sincronizar** ou ao proximo login online.

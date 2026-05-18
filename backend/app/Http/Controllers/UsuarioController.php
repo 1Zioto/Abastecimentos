@@ -23,11 +23,20 @@ class UsuarioController extends Controller
     {
         $data = $request->validate([
             'nome'     => 'required|string|max:255',
-            'login'    => 'required|string|unique:usuarios,login',
+            'login'    => 'required|string',
             'password' => 'required|string|min:6',
             'tipo'     => 'required|string|in:admin,operador,visualizador',
+            'filiais_acesso' => 'nullable|array|min:1',
+            'filiais_acesso.*' => 'string|in:Matriz,Viana',
         ]);
+        $existing = Usuario::query()
+            ->whereRaw('LOWER(login) = LOWER(?)', [trim((string) $data['login'])])
+            ->first();
+        if ($existing) {
+            return new \Illuminate\Http\JsonResponse($existing);
+        }
         $data['password'] = Hash::make($data['password']);
+        $data['filiais_acesso'] = Usuario::normalizarFiliais($data['filiais_acesso'] ?? null);
         return new \Illuminate\Http\JsonResponse(Usuario::create($data), 201);
     }
 
@@ -44,11 +53,16 @@ class UsuarioController extends Controller
             'login'    => 'sometimes|string|unique:usuarios,login,'.$id.',id_user',
             'password' => 'nullable|string|min:6',
             'tipo'     => 'sometimes|string|in:admin,operador,visualizador',
+            'filiais_acesso' => 'nullable|array|min:1',
+            'filiais_acesso.*' => 'string|in:Matriz,Viana',
         ]);
         if (!empty($data['password'])) {
             $data['password'] = Hash::make($data['password']);
         } else {
             unset($data['password']);
+        }
+        if (array_key_exists('filiais_acesso', $data)) {
+            $data['filiais_acesso'] = Usuario::normalizarFiliais($data['filiais_acesso']);
         }
         $usuario->update($data);
         return new \Illuminate\Http\JsonResponse($usuario->fresh());

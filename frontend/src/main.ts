@@ -4,14 +4,13 @@ import { AppComponent } from './app/app.component';
 import { appConfig } from './app/app.config';
 import { environment } from './environments/environment';
 
-const APP_BUILD_VERSION = '2026-04-24-02';
+const APP_BUILD_VERSION = '2026-05-18-10';
 
-async function forceRefreshPwaCachesIfNeeded() {
+async function disableWebServiceWorkerCache() {
   if (!('serviceWorker' in navigator)) return;
 
-  const key = 'ft_app_build_version';
-  const previous = localStorage.getItem(key);
-  if (previous === APP_BUILD_VERSION) return;
+  const reloadKey = `ft_sw_disabled_${APP_BUILD_VERSION}`;
+  const hadController = !!navigator.serviceWorker.controller;
 
   const regs = await navigator.serviceWorker.getRegistrations();
   await Promise.all(regs.map(reg => reg.unregister().catch(() => false)));
@@ -21,18 +20,16 @@ async function forceRefreshPwaCachesIfNeeded() {
     await Promise.all(cacheKeys.map(cacheKey => caches.delete(cacheKey).catch(() => false)));
   }
 
-  localStorage.setItem(key, APP_BUILD_VERSION);
+  if (hadController && sessionStorage.getItem(reloadKey) !== '1') {
+    sessionStorage.setItem(reloadKey, '1');
+    window.location.reload();
+  }
 }
 
 bootstrapApplication(AppComponent, appConfig)
   .then(async () => {
     if (environment.production && 'serviceWorker' in navigator) {
-      await forceRefreshPwaCachesIfNeeded();
-      window.addEventListener('load', () => {
-        navigator.serviceWorker
-          .register('/ngsw-worker.js', { updateViaCache: 'none' })
-          .catch(err => console.error('SW register error', err));
-      });
+      await disableWebServiceWorkerCache();
     }
   })
   .catch(err => console.error(err));

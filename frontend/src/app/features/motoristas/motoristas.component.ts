@@ -5,6 +5,7 @@ import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angu
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Motorista, Proprietario } from '../../shared/models';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-motoristas',
@@ -14,7 +15,9 @@ import { Motorista, Proprietario } from '../../shared/models';
     <div class="page">
       <div class="page-header">
         <div><h1>Motoristas</h1><p>{{ total() }} cadastrados</p></div>
-        <button class="btn-primary" (click)="newItem()">+ Novo Motorista</button>
+        @if (canCreate()) {
+          <button class="btn-primary" (click)="newItem()">+ Novo Motorista</button>
+        }
       </div>
       <div class="filters-row">
         <input type="text" [(ngModel)]="search" (input)="load()" placeholder="🔍 Nome ou documento..." class="search-input" />
@@ -26,7 +29,7 @@ import { Motorista, Proprietario } from '../../shared/models';
         </select>
       </div>
 
-      @if (showForm()) {
+      @if (canShowForm()) {
         <div class="form-card">
           <h3>{{ editItem() ? 'Editar' : 'Novo' }} Motorista</h3>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
@@ -83,8 +86,12 @@ import { Motorista, Proprietario } from '../../shared/models';
                 <td>{{ m.proprietario?.nome ?? '—' }}</td>
                 <td>
                   <div class="actions">
-                    <button class="action-btn" (click)="edit(m)">✏️</button>
-                    <button class="action-btn" (click)="confirmDelete(m)">🗑️</button>
+                    @if (isAdmin()) {
+                      <button class="action-btn" (click)="edit(m)">✏️</button>
+                      <button class="action-btn" (click)="confirmDelete(m)">🗑️</button>
+                    } @else {
+                      <span style="color:#64748b;font-size:12px;">Somente leitura</span>
+                    }
                   </div>
                 </td>
               </tr>
@@ -96,7 +103,7 @@ import { Motorista, Proprietario } from '../../shared/models';
         </table>
       </div>
 
-      @if (deleteTarget()) {
+      @if (deleteTarget() && isAdmin()) {
         <div class="modal-overlay" (click)="deleteTarget.set(null)">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Confirmar Exclusão</h3>
@@ -157,6 +164,7 @@ export class MotoristasComponent implements OnInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
+  private auth = inject(AuthService);
 
   items = signal<Motorista[]>([]);
   proprietarios = signal<Proprietario[]>([]);
@@ -174,6 +182,9 @@ export class MotoristasComponent implements OnInit {
     documento:        [''],
     celular:          [''],
   });
+  isAdmin() { return this.auth.isAdmin(); }
+  canCreate() { return this.auth.canCreateOperationalRecords(); }
+  canShowForm() { return this.showForm() && (this.isAdmin() || !this.editItem()); }
 
   ngOnInit() {
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
@@ -193,6 +204,10 @@ export class MotoristasComponent implements OnInit {
 
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+    if (this.editItem() && !this.isAdmin()) {
+      this.toastr.error('Somente administradores podem editar motoristas');
+      return;
+    }
     this.saving.set(true);
     const obs = this.editItem()
       ? this.api.updateMotorista(this.editItem()!.id_motorista, this.form.value as any)

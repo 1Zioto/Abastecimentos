@@ -25,19 +25,5 @@
         ]
       }
     }
-  ],
-  "dataGroups": [
-    {
-      "name": "api",
-      "urls": [
-        "https://backend-seven-gilt-97.vercel.app/api/**"
-      ],
-      "cacheConfig": {
-        "strategy": "performance",
-        "maxSize": 50,
-        "maxAge": "1h",
-        "timeout": "10s"
-      }
-    }
   ]
 }

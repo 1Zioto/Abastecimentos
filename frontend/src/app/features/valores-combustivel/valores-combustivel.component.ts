@@ -173,7 +173,7 @@ export class ValoresCombustivelComponent implements OnInit {
   deleteTarget = signal<ValorCombustivel | null>(null);
   saving = signal(false);
 
-  tipos = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  tipos = ['OLEO DIESEL S10', 'Arla 32'];
 
   form = this.fb.group({
     tipo_combustivel: ['OLEO DIESEL S10', Validators.required],

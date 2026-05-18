@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
+import { garagemGuard } from './core/guards/garagem.guard';
 
 export const routes: Routes = [
   {
@@ -8,9 +9,14 @@ export const routes: Routes = [
     loadComponent: () => import('./features/auth/login/login.component').then(m => m.LoginComponent)
   },
   {
+    path: 'garagem',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/auth/garagem/garagem.component').then(m => m.GaragemComponent)
+  },
+  {
     path: '',
     loadComponent: () => import('./layout/shell/shell.component').then(m => m.ShellComponent),
-    canActivate: [authGuard],
+    canActivate: [authGuard, garagemGuard],
     children: [
       { path: '', redirectTo: 'abastecimentos', pathMatch: 'full' },
       {
@@ -47,6 +53,7 @@ export const routes: Routes = [
       },
       {
         path: 'valores-combustivel',
+        canActivate: [adminGuard],
         loadComponent: () => import('./features/valores-combustivel/valores-combustivel.component').then(m => m.ValoresCombustivelComponent)
       },
       {

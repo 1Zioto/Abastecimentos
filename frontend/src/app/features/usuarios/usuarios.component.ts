@@ -35,7 +35,14 @@ import { Usuario } from '../../shared/models';
               </div>
               <div class="field">
                 <label>Senha {{ editItem() ? '(deixe em branco para manter)' : '' }} <span class="req">*</span></label>
-                <input type="password" formControlName="password" placeholder="••••••••" />
+                <input
+                  type="password"
+                  formControlName="password"
+                  placeholder="••••••••"
+                  autocomplete="new-password"
+                  [readonly]="editItem() && !passwordEditing()"
+                  (focus)="enablePasswordEditing()"
+                />
               </div>
               <div class="field">
                 <label>Tipo <span class="req">*</span></label>
@@ -44,6 +51,21 @@ import { Usuario } from '../../shared/models';
                   <option value="operador">Operador</option>
                   <option value="visualizador">Visualizador</option>
                 </select>
+              </div>
+            </div>
+            <div class="field branches-field">
+              <label>Filiais liberadas <span class="req">*</span></label>
+              <div class="branch-options">
+                @for (filial of filiaisDisponiveis; track filial) {
+                  <label class="branch-option">
+                    <input
+                      type="checkbox"
+                      [checked]="filiaisSelecionadas().includes(filial)"
+                      (change)="toggleFilial(filial, $any($event.target).checked)"
+                    />
+                    <span>{{ filial }}</span>
+                  </label>
+                }
               </div>
             </div>
             <div class="form-actions">
@@ -64,6 +86,7 @@ import { Usuario } from '../../shared/models';
                 <th>Nome</th>
                 <th>Login</th>
                 <th>Tipo</th>
+                <th>Filiais</th>
                 <th>Último Acesso</th>
                 <th>Ações</th>
               </tr>
@@ -74,6 +97,13 @@ import { Usuario } from '../../shared/models';
                   <td>{{ u.nome }}</td>
                   <td><code class="code-badge">{{ u.login }}</code></td>
                   <td><span class="tipo-badge tipo-{{ u.tipo }}">{{ u.tipo }}</span></td>
+                  <td>
+                    <div class="branch-tags">
+                      @for (filial of filiaisDoUsuario(u); track filial) {
+                        <span class="branch-tag">{{ filial }}</span>
+                      }
+                    </div>
+                  </td>
                   <td>{{ u.ultimo_acesso ? (u.ultimo_acesso | date:'dd/MM/yyyy HH:mm') : '—' }}</td>
                   <td>
                     <div class="actions">
@@ -84,7 +114,7 @@ import { Usuario } from '../../shared/models';
                 </tr>
               }
               @empty {
-                <tr><td colspan="5" class="empty-cell">Nenhum usuário</td></tr>
+                <tr><td colspan="6" class="empty-cell">Nenhum usuário</td></tr>
               }
             </tbody>
           </table>
@@ -123,6 +153,10 @@ import { Usuario } from '../../shared/models';
     .field input, .field select { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:8px 10px; color:#e2e8f0; font-size:12px; outline:none; }
     .field input:focus, .field select:focus { border-color:#0ea5e9; }
     .field select option { background:#0d1427; }
+    .branches-field { margin-bottom:14px; }
+    .branch-options { display:flex; flex-wrap:wrap; gap:10px; }
+    .branch-option { display:flex; align-items:center; gap:8px; min-height:36px; padding:8px 12px; border:1px solid #1e2d4a; border-radius:8px; background:#0a0f1e; color:#e2e8f0; font-size:13px; font-weight:600; cursor:pointer; text-transform:none; letter-spacing:0; }
+    .branch-option input { width:16px; height:16px; accent-color:#0ea5e9; }
     .form-actions { display:flex; gap:10px; justify-content:flex-end; }
     .btn-cancel { background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; }
     .table-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; overflow:hidden; }
@@ -136,6 +170,8 @@ import { Usuario } from '../../shared/models';
     .tipo-admin { background:#fee2e220; color:#f87171; }
     .tipo-operador { background:#dbeafe20; color:#60a5fa; }
     .tipo-visualizador { background:#dcfce720; color:#4ade80; }
+    .branch-tags { display:flex; flex-wrap:wrap; gap:6px; }
+    .branch-tag { background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }
     .actions { display:flex; gap:6px; }
     .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; }
     .action-btn:hover { background:#1e2d4a; }
@@ -158,6 +194,9 @@ export class UsuariosComponent implements OnInit {
   editItem = signal<Usuario | null>(null);
   deleteTarget = signal<Usuario | null>(null);
   saving = signal(false);
+  passwordEditing = signal(false);
+  filiaisDisponiveis = ['Matriz', 'Viana'];
+  filiaisSelecionadas = signal<string[]>([...this.filiaisDisponiveis]);
 
   form = this.fb.group({
     nome:     ['', Validators.required],
@@ -174,7 +213,9 @@ export class UsuariosComponent implements OnInit {
 
   newUser() {
     this.editItem.set(null);
+    this.passwordEditing.set(true);
     this.form.reset({ tipo: 'operador' });
+    this.filiaisSelecionadas.set([...this.filiaisDisponiveis]);
     this.form.get('password')?.setValidators(Validators.required);
     this.form.get('password')?.updateValueAndValidity();
     this.showForm.set(true);
@@ -182,18 +223,53 @@ export class UsuariosComponent implements OnInit {
 
   edit(u: Usuario) {
     this.editItem.set(u);
-    this.form.patchValue(u as any);
+    this.passwordEditing.set(false);
+    this.form.patchValue({ ...u, password: '' } as any);
+    this.form.get('password')?.markAsPristine();
+    this.filiaisSelecionadas.set(this.filiaisDoUsuario(u));
     this.form.get('password')?.clearValidators();
     this.form.get('password')?.updateValueAndValidity();
     this.showForm.set(true);
   }
 
-  cancelForm() { this.showForm.set(false); this.editItem.set(null); this.form.reset(); }
+  cancelForm() { this.showForm.set(false); this.editItem.set(null); this.passwordEditing.set(false); this.form.reset(); this.filiaisSelecionadas.set([...this.filiaisDisponiveis]); }
+
+  enablePasswordEditing() {
+    if (!this.editItem() || this.passwordEditing()) return;
+    this.passwordEditing.set(true);
+    this.form.patchValue({ password: '' });
+    this.form.get('password')?.markAsPristine();
+  }
+
+  filiaisDoUsuario(usuario: Usuario): string[] {
+    const filiais = Array.isArray(usuario.filiais_acesso) ? usuario.filiais_acesso : [];
+    const validas = filiais.filter(filial => this.filiaisDisponiveis.includes(filial));
+    return validas.length ? validas : [...this.filiaisDisponiveis];
+  }
+
+  toggleFilial(filial: string, checked: boolean) {
+    const atuais = this.filiaisSelecionadas();
+    if (checked) {
+      this.filiaisSelecionadas.set([...new Set([...atuais, filial])]);
+      return;
+    }
+    this.filiaisSelecionadas.set(atuais.filter(item => item !== filial));
+  }
 
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+    if (!this.filiaisSelecionadas().length) {
+      this.toastr.error('Selecione ao menos uma filial');
+      return;
+    }
     this.saving.set(true);
-    const data = this.form.value as any;
+    const data = { ...(this.form.value as any), filiais_acesso: this.filiaisSelecionadas() };
+    if (this.editItem()) {
+      const passwordControl = this.form.get('password');
+      if (!this.passwordEditing() || !passwordControl?.dirty || !String(data.password ?? '').trim()) {
+        delete data.password;
+      }
+    }
     const obs = this.editItem()
       ? this.api.updateUsuario(this.editItem()!.id_user, data)
       : this.api.createUsuario(data);

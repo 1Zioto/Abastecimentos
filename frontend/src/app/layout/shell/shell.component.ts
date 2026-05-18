@@ -1,6 +1,6 @@
 // src/app/layout/shell/shell.component.ts
 import { Component, signal, inject } from '@angular/core';
-import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../core/services/auth.service';
 
@@ -22,6 +22,11 @@ interface NavItem {
           <span class="logo-icon">⛽</span>
           <span>Abastecimento Vipe</span>
         </div>
+        <select class="branch-select mobile-branch" [value]="filialAtual()" (change)="trocarFilial($any($event.target).value)">
+          @for (filial of filiaisAcesso(); track filial) {
+            <option [value]="filial">{{ filial }}</option>
+          }
+        </select>
         <button class="logout-btn" (click)="auth.logout()" title="Sair">⏻</button>
       </header>
 
@@ -49,9 +54,10 @@ interface NavItem {
         <div class="sidebar-footer">
           <div class="user-info">
             <div class="user-avatar">{{ userInitial() }}</div>
-            <div class="user-details">
+          <div class="user-details">
               <span class="user-name">{{ auth.currentUser()?.nome }}</span>
               <span class="user-role">{{ auth.currentUser()?.tipo }}</span>
+              <button type="button" class="garage-switch" (click)="trocarGaragem()">{{ auth.getGaragem() }}</button>
             </div>
           </div>
           <button class="logout-btn" (click)="auth.logout()" title="Sair">⏻</button>
@@ -60,6 +66,20 @@ interface NavItem {
 
       <!-- Main content -->
       <main class="main-content">
+        <div class="content-topbar">
+          <div class="topbar-title">
+            <span class="topbar-label">Filial atual</span>
+            <strong>{{ filialAtual() }}</strong>
+          </div>
+          <label class="branch-control">
+            <span>Trocar filial</span>
+            <select class="branch-select" [value]="filialAtual()" (change)="trocarFilial($any($event.target).value)">
+              @for (filial of filiaisAcesso(); track filial) {
+                <option [value]="filial">{{ filial }}</option>
+              }
+            </select>
+          </label>
+        </div>
         <router-outlet />
       </main>
     </div>
@@ -214,6 +234,16 @@ interface NavItem {
     .user-details { overflow: hidden; }
     .user-name { display: block; font-size: 13px; font-weight: 700; color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .user-role { display: block; font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: 0.5px; }
+    .garage-switch {
+      margin-top: 4px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: #B45309;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
     .sidebar-collapsed .user-details { display: none; }
 
     .logout-btn {
@@ -233,6 +263,68 @@ interface NavItem {
       background: #F3F4F6;
       overflow-y: auto;
       overflow-x: hidden;
+    }
+
+    .content-topbar {
+      position: sticky;
+      top: 0;
+      z-index: 90;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 20px;
+      background: rgba(255, 255, 255, 0.96);
+      border-bottom: 1px solid #E5E7EB;
+      backdrop-filter: blur(10px);
+    }
+
+    .topbar-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .topbar-label,
+    .branch-control span {
+      color: #64748B;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .topbar-title strong {
+      color: #111827;
+      font-size: 18px;
+      line-height: 1.1;
+    }
+
+    .branch-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .branch-select {
+      min-width: 150px;
+      height: 38px;
+      border: 1px solid #D1D5DB;
+      border-radius: 8px;
+      background: #FFFFFF;
+      color: #111827;
+      padding: 0 34px 0 12px;
+      font-size: 13px;
+      font-weight: 700;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .branch-select:focus {
+      border-color: #2563EB;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
     }
 
     .mobile-topbar {
@@ -275,10 +367,26 @@ interface NavItem {
         font-size: 15px;
       }
 
+      .mobile-brand span:last-child {
+        max-width: 140px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
       .mobile-brand .logo-icon {
         width: 36px;
         height: 36px;
         font-size: 18px;
+      }
+
+      .mobile-branch {
+        min-width: 118px;
+        max-width: 132px;
+        height: 36px;
+        padding-left: 10px;
+        padding-right: 24px;
+        font-size: 12px;
       }
 
       .sidebar {
@@ -337,11 +445,16 @@ interface NavItem {
         padding-top: 64px;
         padding-bottom: 76px;
       }
+
+      .content-topbar {
+        display: none;
+      }
     }
   `]
 })
 export class ShellComponent {
   auth = inject(AuthService);
+  private router = inject(Router);
   sidebarCollapsed = signal(false);
 
   navItems: NavItem[] = [
@@ -350,7 +463,7 @@ export class ShellComponent {
     { label: 'Baixa',            icon: '✅', route: '/baixa', adminOnly: true },
     { label: 'Entrada de Notas', icon: '🧾', route: '/entrada-notas' },
     { label: 'Relatórios',       icon: '📈', route: '/relatorios', adminOnly: true },
-    { label: 'Combustível',      icon: '💲', route: '/valores-combustivel' },
+    { label: 'Combustível',      icon: '💲', route: '/valores-combustivel', adminOnly: true },
     { label: 'Proprietários',    icon: '🏢', route: '/proprietarios' },
     { label: 'Veículos',         icon: '🚗', route: '/veiculos' },
     { label: 'Motoristas',       icon: '👤', route: '/motoristas' },
@@ -367,5 +480,30 @@ export class ShellComponent {
 
   toggleSidebar() {
     this.sidebarCollapsed.update(v => !v);
+  }
+
+  filiaisAcesso(): string[] {
+    return this.auth.getFiliaisAcesso();
+  }
+
+  filialAtual(): string {
+    const atual = this.auth.getGaragem();
+    if (this.auth.canAccessGaragem(atual)) {
+      return atual!;
+    }
+    return this.filiaisAcesso()[0] ?? 'Matriz';
+  }
+
+  trocarFilial(filial: string) {
+    if (!this.auth.canAccessGaragem(filial) || filial === this.auth.getGaragem()) return;
+    this.auth.setGaragem(filial);
+    const destino = this.router.url.split('?')[0] || '/dashboard';
+    this.router.navigateByUrl('/dashboard', { skipLocationChange: true }).then(() => {
+      this.router.navigateByUrl(destino);
+    });
+  }
+
+  trocarGaragem() {
+    this.router.navigate(['/garagem']);
   }
 }

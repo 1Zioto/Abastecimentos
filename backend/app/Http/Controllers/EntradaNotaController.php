@@ -29,6 +29,16 @@ class EntradaNotaController extends Controller
             'tipo'               => 'nullable|string',
         ]);
         $data['responsavel'] = auth()->user()?->nome ?? ($data['responsavel'] ?? null);
+        if (!empty($data['numero_nota_fiscal'])) {
+            $existing = EntradaNota::query()
+                ->where('numero_nota_fiscal', $data['numero_nota_fiscal'])
+                ->whereDate('data', $data['data'])
+                ->when($data['tipo'] ?? null, fn ($q, $tipo) => $q->where('tipo', $tipo))
+                ->first();
+            if ($existing) {
+                return new \Illuminate\Http\JsonResponse($existing);
+            }
+        }
         return new \Illuminate\Http\JsonResponse(EntradaNota::create($data), 201);
     }
 

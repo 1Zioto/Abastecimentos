@@ -15,6 +15,38 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class AbastecimentoController extends Controller
 {
+    private function filiaisPermitidas(): array
+    {
+        $user = auth()->user();
+        return method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
+    }
+
+    private function aplicarFiltroFiliais($query, Request $request)
+    {
+        $permitidas = $this->filiaisPermitidas();
+        $query->whereIn('local', $permitidas);
+
+        if ($request->filled('local')) {
+            $local = trim((string) $request->local);
+            if (!in_array($local, $permitidas, true)) {
+                $query->whereRaw('1 = 0');
+                return $query;
+            }
+            $query->whereRaw('LOWER(local) = LOWER(?)', [$local]);
+        }
+
+        return $query;
+    }
+
+    private function validarAcessoFilial(string $local): void
+    {
+        if (!in_array($local, $this->filiaisPermitidas(), true)) {
+            throw ValidationException::withMessages([
+                'local' => 'Usuário sem acesso a esta filial.',
+            ]);
+        }
+    }
+
     private function normalizarStatusBaixa(array &$data, ?Abastecimento $original = null): void
     {
         if (!array_key_exists('status', $data)) {
@@ -153,6 +185,7 @@ class AbastecimentoController extends Controller
     public function index(Request $request)
     {
         $query = Abastecimento::with(['veiculo', 'motorista', 'proprietario']);
+        $this->aplicarFiltroFiliais($query, $request);
 
         if ($request->filled('id_proprietario')) {
             $query->where('id_proprietario', $request->id_proprietario);
@@ -190,6 +223,7 @@ class AbastecimentoController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
+            'id_abastecimento'  => 'nullable|string|max:80',
             'data'              => 'required|date',
             'data_hora'         => 'required|date',
             'frentista'         => 'nullable|string',
@@ -207,7 +241,16 @@ class AbastecimentoController extends Controller
             'status'            => 'nullable|string',
         ]);
 
+        if (!empty($data['id_abastecimento'])) {
+            $existing = Abastecimento::with(['veiculo', 'motorista', 'proprietario'])
+                ->find($data['id_abastecimento']);
+            if ($existing) {
+                return new \Illuminate\Http\JsonResponse($existing);
+            }
+        }
+
         $data['local'] = trim((string) ($data['local'] ?? '')) ?: 'Garagem';
+        $this->validarAcessoFilial($data['local']);
         $data['status'] = trim((string) ($data['status'] ?? '')) ?: 'Pendente';
 
         $proprietario = Proprietario::query()
@@ -270,6 +313,7 @@ class AbastecimentoController extends Controller
             ]);
         }
 
+        $this->aplicarFiltroFiliais($abastecimentoQuery, $request);
         $abastecimento = $abastecimentoQuery->findOrFail($id);
         return new \Illuminate\Http\JsonResponse($abastecimento);
     }
@@ -282,6 +326,7 @@ class AbastecimentoController extends Controller
         }
 
         $abastecimento = Abastecimento::findOrFail($id);
+        $this->validarAcessoFilial((string) $abastecimento->local);
 
         $data = $request->validate([
             'data'              => 'sometimes|date',
@@ -312,6 +357,10 @@ class AbastecimentoController extends Controller
 
         // Remover campos protegidos caso venham no request
         unset($data['valor_por_litro']);
+        if (array_key_exists('local', $data)) {
+            $data['local'] = trim((string) ($data['local'] ?? '')) ?: $abastecimento->local;
+            $this->validarAcessoFilial($data['local']);
+        }
         $this->normalizarStatusBaixa($data, $abastecimento);
 
         $dataParaValidacaoOdometro = [
@@ -332,6 +381,7 @@ class AbastecimentoController extends Controller
         }
 
         $abastecimento = Abastecimento::findOrFail($id);
+        $this->validarAcessoFilial((string) $abastecimento->local);
         // Remover baixas vinculadas primeiro
         $abastecimento->baixas()->delete();
         $abastecimento->delete();
@@ -361,15 +411,20 @@ class AbastecimentoController extends Controller
                 'quantidade_litros',
                 'valor_total',
                 'baixa_abastecimento',
+                'local',
             ])
             ->with([
                 'veiculo:id_veiculo,placa,modelo',
             ])
-            ->where('baixa_abastecimento', false)
+            ->where(function ($q) {
+                $q->where('baixa_abastecimento', false)
+                    ->orWhereNull('baixa_abastecimento');
+            })
             ->where(function ($q) {
                 $q->whereNull('status')
                     ->orWhere('status', '!=', 'Pago');
             });
+        $this->aplicarFiltroFiliais($query, $request);
 
         if ($request->filled('id_proprietario')) {
             $query->where('id_proprietario', $request->id_proprietario);
@@ -396,6 +451,7 @@ class AbastecimentoController extends Controller
         try {
             $abastecimento = Abastecimento::with(['veiculo', 'motorista', 'proprietario'])
                 ->findOrFail($id);
+            $this->validarAcessoFilial((string) $abastecimento->local);
 
             $diagnostics = $this->buildComprovanteDiagnostics($abastecimento);
             Log::info('Comprovante PDF - início', [
@@ -451,6 +507,7 @@ class AbastecimentoController extends Controller
     {
         $abastecimento = Abastecimento::with(['veiculo', 'motorista', 'proprietario'])
             ->findOrFail($id);
+        $this->validarAcessoFilial((string) $abastecimento->local);
 
         $diagnostics = $this->buildComprovanteDiagnostics($abastecimento);
         $renderStatus = ['view_rendered' => false, 'error' => null];

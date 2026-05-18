@@ -5,6 +5,7 @@ import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angu
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Proprietario } from '../../shared/models';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-proprietarios',
@@ -14,12 +15,14 @@ import { Proprietario } from '../../shared/models';
     <div class="page">
       <div class="page-header">
         <div><h1>Proprietários</h1><p>{{ total() }} cadastrados</p></div>
-        <button class="btn-primary" (click)="newItem()">+ Novo Proprietário</button>
+        @if (canCreate()) {
+          <button class="btn-primary" (click)="newItem()">+ Novo Proprietário</button>
+        }
       </div>
       <div class="search-bar">
         <input type="text" [(ngModel)]="search" (input)="load()" placeholder="🔍 Buscar por nome..." />
       </div>
-      @if (showForm()) {
+      @if (canShowForm()) {
         <div class="form-card">
           <h3>{{ editItem() ? 'Editar' : 'Novo' }} Proprietário</h3>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
@@ -56,11 +59,15 @@ import { Proprietario } from '../../shared/models';
                 <td class="obs-cell">{{ p.observacao ?? '—' }}</td>
                 <td>{{ p.data_registro | date:'dd/MM/yyyy' }}</td>
                 <td><div class="actions">
-                  <button class="action-btn" (click)="edit(p)">✏️</button>
-                  <button class="action-btn" [title]="p.status === 'Bloqueado' ? 'Desbloquear' : 'Bloquear'" (click)="toggleBloqueio(p)">
-                    {{ p.status === 'Bloqueado' ? '🔓' : '🔒' }}
-                  </button>
-                  <button class="action-btn" (click)="confirmDelete(p)">🗑️</button>
+                  @if (isAdmin()) {
+                    <button class="action-btn" (click)="edit(p)">✏️</button>
+                    <button class="action-btn" [title]="p.status === 'Bloqueado' ? 'Desbloquear' : 'Bloquear'" (click)="toggleBloqueio(p)">
+                      {{ p.status === 'Bloqueado' ? '🔓' : '🔒' }}
+                    </button>
+                    <button class="action-btn" (click)="confirmDelete(p)">🗑️</button>
+                  } @else {
+                    <span style="color:#64748b;font-size:12px;">Somente leitura</span>
+                  }
                 </div></td>
               </tr>
             }
@@ -68,7 +75,7 @@ import { Proprietario } from '../../shared/models';
           </tbody>
         </table>
       </div>
-      @if (deleteTarget()) {
+      @if (deleteTarget() && isAdmin()) {
         <div class="modal-overlay" (click)="deleteTarget.set(null)">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Confirmar Exclusão</h3>
@@ -128,11 +135,14 @@ import { Proprietario } from '../../shared/models';
   `]
 })
 export class ProprietariosComponent implements OnInit {
-  private api = inject(ApiService); private toastr = inject(ToastrService); private fb = inject(FormBuilder);
+  private api = inject(ApiService); private toastr = inject(ToastrService); private fb = inject(FormBuilder); private auth = inject(AuthService);
   items = signal<Proprietario[]>([]); total = signal(0);
   showForm = signal(false); editItem = signal<Proprietario | null>(null); deleteTarget = signal<Proprietario | null>(null); saving = signal(false);
   search = '';
   form = this.fb.group({ nome:['',Validators.required],status:['Ativo'],responsavel:[''],celular:[''],observacao:[''] });
+  isAdmin() { return this.auth.isAdmin(); }
+  canCreate() { return this.auth.canCreateOperationalRecords(); }
+  canShowForm() { return this.showForm() && (this.isAdmin() || !this.editItem()); }
   ngOnInit() { this.load(); }
   load() { this.api.getProprietarios({search:this.search,per_page:100}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
   newItem() { this.editItem.set(null);this.form.reset({status:'Ativo'});this.showForm.set(true); }
@@ -140,6 +150,10 @@ export class ProprietariosComponent implements OnInit {
   cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset(); }
   onSubmit() {
     if(this.form.invalid){this.form.markAllAsTouched();return;}
+    if (this.editItem() && !this.isAdmin()) {
+      this.toastr.error('Somente administradores podem editar proprietários');
+      return;
+    }
     this.saving.set(true);
     const obs = this.editItem() ? this.api.updateProprietario(this.editItem()!.id_proprietario,this.form.value as any) : this.api.createProprietario(this.form.value as any);
     obs.subscribe({next:()=>{this.toastr.success('Salvo');this.cancelForm();this.load();this.saving.set(false);},error:()=>{this.toastr.error('Erro');this.saving.set(false);}});
@@ -155,7 +169,7 @@ export class ProprietariosComponent implements OnInit {
     if (p.status === 'Bloqueado') {
       const confirmar = confirm(`Desbloquear ${p.nome}?`);
       if (!confirmar) return;
-      this.api.updateProprietario(p.id_proprietario, { status: 'Ativo' }).subscribe({
+      this.api.desbloquearProprietario(p.id_proprietario).subscribe({
         next: () => { this.toastr.success('Proprietário desbloqueado'); this.load(); },
         error: err => this.toastr.error(err.error?.message ?? 'Erro ao desbloquear')
       });
@@ -164,7 +178,7 @@ export class ProprietariosComponent implements OnInit {
 
     const observacao = prompt(`Informe o motivo para bloquear ${p.nome}:`, p.observacao ?? '');
     if (observacao === null) return;
-    this.api.updateProprietario(p.id_proprietario, { status: 'Bloqueado', observacao: observacao.trim() }).subscribe({
+    this.api.bloquearProprietario(p.id_proprietario, observacao.trim()).subscribe({
       next: () => { this.toastr.success('Proprietário bloqueado'); this.load(); },
       error: err => this.toastr.error(err.error?.message ?? 'Erro ao bloquear')
     });

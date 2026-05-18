@@ -113,8 +113,9 @@ import { catchError, forkJoin, of } from 'rxjs';
           <div class="field">
             <label>Local</label>
             <select formControlName="local">
-              <option value="Garagem">Garagem</option>
-              <option value="Garagem Viana">Garagem Viana</option>
+              @for (garagem of garagens; track garagem) {
+                <option [value]="garagem">{{ garagem }}</option>
+              }
             </select>
           </div>
 
@@ -601,7 +602,11 @@ export class AbastecimentoFormComponent implements OnInit {
       .slice(0, 30);
   });
 
-  tiposCombustivel = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
+  private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
+  tiposCombustivel: string[] = [this.defaultTipoCombustivel];
+  get garagens() {
+    return this.auth.getFiliaisAcesso();
+  }
 
   novoProprietario: Partial<Proprietario> = {
     nome: '',
@@ -615,7 +620,7 @@ export class AbastecimentoFormComponent implements OnInit {
     marca: '',
     modelo: '',
     ano: '',
-    tipo_combustivel: 'OLEO DIESEL S10',
+    tipo_combustivel: this.defaultTipoCombustivel,
     numero_chassi: ''
   };
 
@@ -628,8 +633,8 @@ export class AbastecimentoFormComponent implements OnInit {
     id_motorista:      [''],
     nome_motorista:    [''],
     nome_proprietario: [''],
-    local:             ['Garagem'],
-    tipo_combustivel:  ['OLEO DIESEL S10', Validators.required],
+    local:             [this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz'],
+    tipo_combustivel:  [this.defaultTipoCombustivel, Validators.required],
     valor_por_litro:   [{ value: 0, disabled: true }],
     quantidade_litros: [null as number | null, [Validators.required, Validators.min(0.01)]],
     valor_total:       [{ value: 0, disabled: true }],
@@ -640,6 +645,13 @@ export class AbastecimentoFormComponent implements OnInit {
   });
 
   ngOnInit() {
+    if (!this.id && !this.auth.canCreateOperationalRecords()) {
+      this.toastr.error('Perfil somente visualização: sem permissão para criar abastecimentos');
+      this.router.navigate(['/abastecimentos']);
+      return;
+    }
+
+    this.loadTiposCombustivel();
     this.loadProprietarios();
     const usuarioLogado = this.auth.currentUser()?.nome ?? '';
     this.form.patchValue({ frentista: usuarioLogado });
@@ -657,8 +669,8 @@ export class AbastecimentoFormComponent implements OnInit {
       this.form.patchValue({
         data: local.toISOString().slice(0, 10),
         data_hora: local.toISOString().slice(0, 16),
-        local: 'Garagem',
-        tipo_combustivel: 'OLEO DIESEL S10',
+        local: this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz',
+        tipo_combustivel: this.defaultTipoCombustivel,
         status: 'Pendente',
       });
       this.onCombustivelChange();
@@ -669,6 +681,34 @@ export class AbastecimentoFormComponent implements OnInit {
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
   }
 
+  loadTiposCombustivel() {
+    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+      next: (r) => {
+        const tipos = Array.from(
+          new Set(
+            (r.data ?? [])
+              .map((v: any) => String(v?.tipo_combustivel ?? '').trim())
+              .filter(Boolean),
+          ),
+        );
+        this.tiposCombustivel = tipos.length ? tipos : [this.defaultTipoCombustivel];
+
+        const tipoAtual = String(this.form.getRawValue().tipo_combustivel ?? '').trim();
+        if (!tipoAtual || !this.tiposCombustivel.includes(tipoAtual)) {
+          this.form.patchValue({ tipo_combustivel: this.tiposCombustivel[0] });
+          this.onCombustivelChange();
+        }
+
+        if (!this.novoVeiculo.tipo_combustivel || !this.tiposCombustivel.includes(String(this.novoVeiculo.tipo_combustivel))) {
+          this.novoVeiculo.tipo_combustivel = this.tiposCombustivel[0];
+        }
+      },
+      error: () => {
+        this.tiposCombustivel = [this.defaultTipoCombustivel];
+      },
+    });
+  }
+
   loadAbastecimento(id: string) {
     this.api.getAbastecimento(id).subscribe({
       next: (a) => {
@@ -676,7 +716,7 @@ export class AbastecimentoFormComponent implements OnInit {
           ...a,
           data: a.data?.slice(0, 10),
           data_hora: a.data_hora?.slice(0, 16),
-          local: a.local || 'Garagem',
+          local: a.local || this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz',
           status: a.status || 'Pendente',
           valor_por_litro: a.valor_por_litro,
           valor_total: a.valor_total,
@@ -784,6 +824,10 @@ export class AbastecimentoFormComponent implements OnInit {
 
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+    if (!this.isEdit() && !this.auth.canCreateOperationalRecords()) {
+      this.toastr.error('Perfil somente visualização: sem permissão para criar abastecimentos');
+      return;
+    }
 
     const odometroInformado = this.form.getRawValue().odometro;
     const ultimoOdometro = this.ultimoOdometroReferencia();
@@ -902,7 +946,14 @@ export class AbastecimentoFormComponent implements OnInit {
       this.toastr.warning('Selecione um proprietário primeiro');
       return;
     }
-    this.novoVeiculo = { placa: '', marca: '', modelo: '', ano: '', tipo_combustivel: 'OLEO DIESEL S10', numero_chassi: '' };
+    this.novoVeiculo = {
+      placa: '',
+      marca: '',
+      modelo: '',
+      ano: '',
+      tipo_combustivel: this.tiposCombustivel[0] ?? this.defaultTipoCombustivel,
+      numero_chassi: ''
+    };
     this.novoVeiculoModal.set(true);
   }
 

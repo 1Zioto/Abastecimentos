@@ -8,6 +8,7 @@ export interface Proprietario {
   celular?: string;
   observacao?: string;
   data_registro?: string;
+  local?: string;
 }
 
 export interface Veiculo {
@@ -23,6 +24,7 @@ export interface Veiculo {
   renavam?: string;
   cor?: string;
   foto?: string;
+  local?: string;
   proprietario?: Proprietario;
 }
 
@@ -32,6 +34,7 @@ export interface Motorista {
   id_proprietario: string;
   documento?: string;
   celular?: string;
+  local?: string;
   proprietario?: Proprietario;
 }
 
@@ -105,6 +108,7 @@ export interface Usuario {
   nome: string;
   login: string;
   tipo: 'admin' | 'operador' | 'visualizador';
+  filiais_acesso?: string[];
   ultimo_acesso?: string;
 }
 
@@ -113,6 +117,7 @@ export interface AuthUser {
   nome: string;
   login: string;
   tipo: string;
+  filiais_acesso?: string[];
 }
 
 export interface LoginResponse {

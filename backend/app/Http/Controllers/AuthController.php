@@ -17,27 +17,31 @@ class AuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $usuario = Usuario::where('login', $request->login)->first();
+        $login = trim((string) $request->login);
 
-        if (!$usuario && $request->login === 'admin') {
+        $usuario = Usuario::whereRaw('LOWER(login) = LOWER(?)', [$login])->first();
+
+        if (!$usuario && strtolower($login) === 'admin') {
             $usuario = Usuario::create([
                 'nome' => 'Administrador',
                 'login' => 'admin',
                 'password' => Hash::make('admin123'),
                 'tipo' => 'admin',
+                'filiais_acesso' => Usuario::filiaisPadrao(),
                 'ultimo_acesso' => null,
             ]);
         }
 
-        $senhaCorreta = $usuario
-            && (Hash::check($request->password, $usuario->password)
-                || hash_equals((string) $usuario->password, (string) $request->password));
+        $senhaCorreta = $usuario && $this->passwordMatches(
+            (string) $request->password,
+            (string) $usuario->password
+        );
 
         if (!$senhaCorreta) {
             return new \Illuminate\Http\JsonResponse(['message' => 'Credenciais inválidas'], 401);
         }
 
-        if (!Hash::check($request->password, $usuario->password)) {
+        if ($this->isPlainTextPassword((string) $usuario->password)) {
             $usuario->password = Hash::make($request->password);
             $usuario->save();
         }
@@ -59,6 +63,7 @@ class AuthController extends Controller
                 'nome' => $usuario->nome,
                 'login' => $usuario->login,
                 'tipo' => $usuario->tipo,
+                'filiais_acesso' => $usuario->filiaisAcesso(),
             ]
         ]);
     }
@@ -84,16 +89,43 @@ class AuthController extends Controller
             'nome' => $user->nome,
             'login' => $user->login,
             'tipo' => $user->tipo,
+            'filiais_acesso' => $user->filiaisAcesso(),
         ]);
     }
 
     public function refresh()
     {
         try {
-            $newToken = JWTAuth::refresh(JWTAuth::getToken());
-            return new \Illuminate\Http\JsonResponse(['token' => $newToken]);
-        } catch (JWTException $e) {
+            $currentToken = JWTAuth::getToken();
+            if (!$currentToken) {
+                return new \Illuminate\Http\JsonResponse(['message' => 'Token ausente'], 401);
+            }
+
+            $newToken = JWTAuth::refresh($currentToken);
+            return new \Illuminate\Http\JsonResponse([
+                'token' => $newToken,
+                'token_type' => 'bearer',
+                'expires_in' => config('jwt.ttl') * 60,
+            ]);
+        } catch (\Throwable $e) {
             return new \Illuminate\Http\JsonResponse(['message' => 'Token inválido'], 401);
         }
+    }
+
+    private function passwordMatches(string $password, string $storedPassword): bool
+    {
+        if (!$this->isPlainTextPassword($storedPassword)) {
+            try {
+                return Hash::check($password, $storedPassword);
+            } catch (\RuntimeException $e) {
+            }
+        }
+
+        return hash_equals($storedPassword, $password);
+    }
+
+    private function isPlainTextPassword(string $storedPassword): bool
+    {
+        return password_get_info($storedPassword)['algo'] === 0;
     }
 }

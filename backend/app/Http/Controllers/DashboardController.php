@@ -9,32 +9,55 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
+    private function applyLocal($query, ?string $local)
+    {
+        $user = auth()->user();
+        $permitidas = method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
+        $query->whereIn('local', $permitidas);
+
+        $local = trim((string) $local);
+        if ($local !== '') {
+            if (!in_array($local, $permitidas, true)) {
+                $query->whereRaw('1 = 0');
+                return $query;
+            }
+            $query->whereRaw('LOWER(local) = LOWER(?)', [$local]);
+        }
+
+        return $query;
+    }
+
     public function index(Request $request)
     {
         $inicio12Meses = now()->startOfMonth()->subMonths(11);
         $fim12Meses = now()->endOfMonth();
+        $local = $request->query('local');
 
-        $totalAbastecimentos = Abastecimento::count();
-        $totalLitros = (float) Abastecimento::whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])->sum('quantidade_litros');
-        $valorTotalVendido = (float) Abastecimento::whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])->sum('valor_total');
-        $valorTotalPendente = (float) Abastecimento::query()
+        $totalAbastecimentos = (int) $this->applyLocal(Abastecimento::query(), $local)->count();
+        $totalLitros = (float) $this->applyLocal(Abastecimento::query(), $local)
+            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
+            ->sum('quantidade_litros');
+        $valorTotalVendido = (float) $this->applyLocal(Abastecimento::query(), $local)
+            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
+            ->sum('valor_total');
+        $valorTotalPendente = (float) $this->applyLocal(Abastecimento::query(), $local)
             ->whereRaw("LOWER(COALESCE(status, '')) = 'pendente'")
             ->sum('valor_total');
-        $valorTotalRecebido = (float) Abastecimento::query()
+        $valorTotalRecebido = (float) $this->applyLocal(Abastecimento::query(), $local)
             ->whereRaw("LOWER(COALESCE(status, '')) = 'pago'")
             ->sum('valor_total');
-        $totalPendenteBaixa = (int) Abastecimento::query()
+        $totalPendenteBaixa = (int) $this->applyLocal(Abastecimento::query(), $local)
             ->whereRaw("LOWER(COALESCE(status, '')) = 'pendente'")
             ->count();
 
-        $vendidoPorMes = Abastecimento::query()
+        $vendidoPorMes = $this->applyLocal(Abastecimento::query(), $local)
             ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade_litros), 0) as vendido_litros, COALESCE(SUM(valor_total), 0) as vendido_valor")
             ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
             ->groupBy('ym')
             ->get()
             ->keyBy('ym');
 
-        $vendidoPagoPorMes = Abastecimento::query()
+        $vendidoPagoPorMes = $this->applyLocal(Abastecimento::query(), $local)
             ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade_litros), 0) as vendido_litros_pago, COALESCE(SUM(valor_total), 0) as vendido_valor_pago")
             ->whereRaw("LOWER(COALESCE(status, '')) = 'pago'")
             ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
@@ -42,7 +65,7 @@ class DashboardController extends Controller
             ->get()
             ->keyBy('ym');
 
-        $vendidoPendentePorMes = Abastecimento::query()
+        $vendidoPendentePorMes = $this->applyLocal(Abastecimento::query(), $local)
             ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade_litros), 0) as vendido_litros_pendente, COALESCE(SUM(valor_total), 0) as vendido_valor_pendente")
             ->whereRaw("LOWER(COALESCE(status, '')) = 'pendente'")
             ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
@@ -79,7 +102,7 @@ class DashboardController extends Controller
             ]);
         }
 
-        $statusGeral = Abastecimento::query()
+        $statusGeral = $this->applyLocal(Abastecimento::query(), $local)
             ->selectRaw("
                 CASE
                     WHEN LOWER(COALESCE(status, '')) = 'pago' THEN 'Pago'
@@ -107,7 +130,8 @@ class DashboardController extends Controller
             ],
         ];
 
-        $topProprietarios = Abastecimento::selectRaw("id_proprietario, nome_proprietario, COUNT(*) as total, SUM(valor_total) as valor")
+        $topProprietarios = $this->applyLocal(Abastecimento::query(), $local)
+            ->selectRaw("id_proprietario, nome_proprietario, COUNT(*) as total, SUM(valor_total) as valor")
             ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
             ->groupBy('id_proprietario','nome_proprietario')
             ->orderByDesc('valor')

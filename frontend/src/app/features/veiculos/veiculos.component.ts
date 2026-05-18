@@ -5,6 +5,7 @@ import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angu
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Veiculo, Proprietario } from '../../shared/models';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-veiculos', standalone: true, imports: [CommonModule, FormsModule, ReactiveFormsModule],
@@ -12,7 +13,9 @@ import { Veiculo, Proprietario } from '../../shared/models';
     <div class="page">
       <div class="page-header">
         <div><h1>Veículos</h1><p>{{ total() }} cadastrados</p></div>
-        <button class="btn-primary" (click)="newItem()">+ Novo Veículo</button>
+        @if (canCreate()) {
+          <button class="btn-primary" (click)="newItem()">+ Novo Veículo</button>
+        }
       </div>
       <div class="filters-row">
         <input type="text" [(ngModel)]="search" (input)="load()" placeholder="🔍 Placa ou modelo..." class="search-input" />
@@ -23,7 +26,7 @@ import { Veiculo, Proprietario } from '../../shared/models';
           }
         </select>
       </div>
-      @if (showForm()) {
+      @if (canShowForm()) {
         <div class="form-card">
           <h3>{{ editItem() ? 'Editar' : 'Novo' }} Veículo</h3>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
@@ -69,8 +72,12 @@ import { Veiculo, Proprietario } from '../../shared/models';
                 <td>{{ v.tipo_combustivel ?? '—' }}</td>
                 <td>{{ v.odometro ? (v.odometro | number) + ' km' : '—' }}</td>
                 <td><div class="actions">
-                  <button class="action-btn" (click)="edit(v)">✏️</button>
-                  <button class="action-btn" (click)="confirmDelete(v)">🗑️</button>
+                  @if (isAdmin()) {
+                    <button class="action-btn" (click)="edit(v)">✏️</button>
+                    <button class="action-btn" (click)="confirmDelete(v)">🗑️</button>
+                  } @else {
+                    <span style="color:#64748b;font-size:12px;">Somente leitura</span>
+                  }
                 </div></td>
               </tr>
             }
@@ -78,7 +85,7 @@ import { Veiculo, Proprietario } from '../../shared/models';
           </tbody>
         </table>
       </div>
-      @if (deleteTarget()) {
+      @if (deleteTarget() && isAdmin()) {
         <div class="modal-overlay" (click)="deleteTarget.set(null)">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Confirmar Exclusão</h3><p>Excluir veículo <strong>{{ deleteTarget()?.placa }}</strong>?</p>
@@ -133,19 +140,52 @@ import { Veiculo, Proprietario } from '../../shared/models';
   `]
 })
 export class VeiculosComponent implements OnInit {
-  private api = inject(ApiService); private toastr = inject(ToastrService); private fb = inject(FormBuilder);
+  private api = inject(ApiService); private toastr = inject(ToastrService); private fb = inject(FormBuilder); private auth = inject(AuthService);
   items = signal<Veiculo[]>([]); proprietarios = signal<Proprietario[]>([]); total = signal(0);
   showForm = signal(false); editItem = signal<Veiculo | null>(null); deleteTarget = signal<Veiculo | null>(null); saving = signal(false);
   search = ''; filtroProprietario = '';
-  tipos = ['OLEO DIESEL S10','Diesel Comum','Gasolina Comum','Gasolina Aditivada','Etanol','GNV','Arla 32'];
-  form = this.fb.group({ placa:['',Validators.required],id_proprietario:['',Validators.required],marca:[''],modelo:[''],ano:[''],cor:[''],tipo_combustivel:['OLEO DIESEL S10'],renavam:[''],numero_chassi:[''],odometro:[null] });
-  ngOnInit() { this.api.getProprietariosAll().subscribe(r=>this.proprietarios.set(r.data)); this.load(); }
+  private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
+  tipos: string[] = [this.defaultTipoCombustivel];
+  form = this.fb.group({ placa:['',Validators.required],id_proprietario:['',Validators.required],marca:[''],modelo:[''],ano:[''],cor:[''],tipo_combustivel:[this.defaultTipoCombustivel],renavam:[''],numero_chassi:[''],odometro:[null] });
+  isAdmin() { return this.auth.isAdmin(); }
+  canCreate() { return this.auth.canCreateOperationalRecords(); }
+  canShowForm() { return this.showForm() && (this.isAdmin() || !this.editItem()); }
+  ngOnInit() {
+    this.loadTiposCombustivel();
+    this.api.getProprietariosAll().subscribe(r=>this.proprietarios.set(r.data));
+    this.load();
+  }
+  loadTiposCombustivel() {
+    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+      next: (r) => {
+        const tipos = Array.from(
+          new Set(
+            (r.data ?? [])
+              .map((v: any) => String(v?.tipo_combustivel ?? '').trim())
+              .filter(Boolean),
+          ),
+        );
+        this.tipos = tipos.length ? tipos : [this.defaultTipoCombustivel];
+        const tipoAtual = String(this.form.getRawValue().tipo_combustivel ?? '').trim();
+        if (!tipoAtual || !this.tipos.includes(tipoAtual)) {
+          this.form.patchValue({ tipo_combustivel: this.tipos[0] });
+        }
+      },
+      error: () => {
+        this.tipos = [this.defaultTipoCombustivel];
+      }
+    });
+  }
   load() { this.api.getVeiculos({search:this.search,id_proprietario:this.filtroProprietario,per_page:100}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
-  newItem() { this.editItem.set(null);this.form.reset({ tipo_combustivel: 'OLEO DIESEL S10' });this.showForm.set(true); }
+  newItem() { this.editItem.set(null);this.form.reset({ tipo_combustivel: this.tipos[0] ?? this.defaultTipoCombustivel });this.showForm.set(true); }
   edit(v:Veiculo) { this.editItem.set(v);this.form.patchValue(v as any);this.showForm.set(true); }
-  cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset({ tipo_combustivel: 'OLEO DIESEL S10' }); }
+  cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset({ tipo_combustivel: this.tipos[0] ?? this.defaultTipoCombustivel }); }
   onSubmit() {
     if(this.form.invalid){this.form.markAllAsTouched();return;}
+    if (this.editItem() && !this.isAdmin()) {
+      this.toastr.error('Somente administradores podem editar veículos');
+      return;
+    }
     this.saving.set(true);
     const obs = this.editItem() ? this.api.updateVeiculo(this.editItem()!.id_veiculo,this.form.value as any) : this.api.createVeiculo(this.form.value as any);
     obs.subscribe({next:()=>{this.toastr.success('Salvo');this.cancelForm();this.load();this.saving.set(false);},error:()=>{this.toastr.error('Erro');this.saving.set(false);}});

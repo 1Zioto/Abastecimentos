@@ -209,8 +209,14 @@ export class LoginComponent {
     const { login, password } = this.form.value;
     this.auth.login(login!, password!).subscribe({
       next: () => {
-          this.toastr.success('Bem-vindo ao Abastecimento Vipe!');
-        this.router.navigate(['/dashboard']);
+        this.toastr.success('Bem-vindo ao Abastecimento Vipe!');
+        const filiais = this.auth.getFiliaisAcesso();
+        if (filiais.length === 1) {
+          this.auth.setGaragem(filiais[0]);
+          this.router.navigate(['/dashboard']);
+          return;
+        }
+        this.router.navigate(['/garagem']);
       },
       error: (err) => {
         this.errorMsg.set(err.error?.message ?? 'Credenciais inválidas');
