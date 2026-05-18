@@ -73,7 +73,7 @@ class DashboardController extends Controller
             ->get()
             ->keyBy('ym');
 
-        $compradoPorMes = EntradaNota::query()
+        $compradoPorMes = $this->applyLocal(EntradaNota::query(), $local)
             ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade), 0) as comprado_litros, COALESCE(SUM(valor), 0) as comprado_valor")
             ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
             ->groupBy('ym')

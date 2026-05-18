@@ -140,10 +140,10 @@ export class ApiService {
 
   // Entrada de Notas
   getEntradaNotas(filters: any = {}): Observable<PaginatedResponse<EntradaNota>> {
-    return this.http.get<PaginatedResponse<EntradaNota>>(this.url('entrada-notas'), { params: this.toParams(filters) });
+    return this.http.get<PaginatedResponse<EntradaNota>>(this.url('entrada-notas'), { params: this.toParams(this.withGaragem(filters)) });
   }
   createEntradaNota(data: Partial<EntradaNota>): Observable<EntradaNota> {
-    return this.http.post<EntradaNota>(this.url('entrada-notas'), data);
+    return this.http.post<EntradaNota>(this.url('entrada-notas'), { ...data, local: data.local || this.auth.getGaragem() });
   }
   updateEntradaNota(id: string, data: Partial<EntradaNota>): Observable<EntradaNota> {
     return this.http.put<EntradaNota>(this.url(`entrada-notas/${id}`), data);

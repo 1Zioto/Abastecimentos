@@ -1,5 +1,5 @@
 // src/app/features/entrada-notas/entrada-notas.component.ts
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
@@ -289,7 +289,7 @@ import { AuthService } from '../../core/services/auth.service';
     .btn-close-image { background: #0a0f1e; border: 1px solid #1e2d4a; color: #e2e8f0; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; }
   `]
 })
-export class EntradaNotasComponent implements OnInit {
+export class EntradaNotasComponent implements OnInit, OnDestroy {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
@@ -303,6 +303,7 @@ export class EntradaNotasComponent implements OnInit {
   uploadingFotoNota = signal(false);
   previewImageUrl = signal('');
   private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
+  private readonly onGaragemChanged = () => this.load();
   tiposCombustivel = signal<string[]>([this.defaultTipoCombustivel]);
 
   filtroTipo = '';
@@ -323,6 +324,11 @@ export class EntradaNotasComponent implements OnInit {
   ngOnInit() {
     this.loadTiposCombustivel();
     this.load();
+    window.addEventListener('garagem:changed', this.onGaragemChanged);
+  }
+
+  ngOnDestroy() {
+    window.removeEventListener('garagem:changed', this.onGaragemChanged);
   }
   isAdmin() { return this.auth.isAdmin(); }
   canCreate() { return this.auth.canCreateOperationalRecords(); }

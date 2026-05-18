@@ -93,6 +93,7 @@ export interface EntradaNota {
   responsavel?: string;
   foto_nota?: string;
   tipo?: string;
+  local?: string;
 }
 
 export interface ValorCombustivel {
