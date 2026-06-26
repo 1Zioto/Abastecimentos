@@ -1,5 +1,5 @@
 // src/app/features/valores-combustivel/valores-combustivel.component.ts
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
@@ -35,9 +35,17 @@ import { AuthService } from '../../core/services/auth.service';
       <!-- Form -->
       @if (showForm() && isAdmin()) {
         <div class="form-card">
-          <h3>{{ editItem() ? 'Editar Preço' : 'Novo Preço' }}</h3>
+          <h3>Novo Preço</h3>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
             <div class="form-row">
+              <div class="field">
+                <label>Filial <span class="req">*</span></label>
+                <select formControlName="local">
+                  @for (filial of filiaisDisponiveis; track filial) {
+                    <option [value]="filial">{{ filial }}</option>
+                  }
+                </select>
+              </div>
               <div class="field">
                 <label>Tipo de Combustível <span class="req">*</span></label>
                 <select formControlName="tipo_combustivel">
@@ -49,11 +57,8 @@ import { AuthService } from '../../core/services/auth.service';
                 <label>Valor (R$/L) <span class="req">*</span></label>
                 <input type="number" formControlName="valor" placeholder="0.000" step="0.001" />
               </div>
-              <div class="field">
-                <label>Responsável</label>
-                <input type="text" formControlName="responsavel" placeholder="Nome do responsável" />
-              </div>
             </div>
+            <p class="form-note">O responsável será registrado automaticamente como o usuário logado.</p>
             <div class="form-actions">
               <button type="button" class="btn-cancel" (click)="cancelForm()">Cancelar</button>
               <button type="submit" class="btn-primary" [disabled]="saving()">
@@ -70,30 +75,21 @@ import { AuthService } from '../../core/services/auth.service';
           <table class="data-table">
             <thead>
               <tr>
+                <th>Filial</th>
                 <th>Combustível</th>
                 <th class="text-right">Valor (R$/L)</th>
                 <th>Data/Hora</th>
                 <th>Responsável</th>
-                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
               @for (v of valores(); track v.id_valor) {
                 <tr>
+                  <td><span class="branch-badge">{{ v.local || 'Matriz' }}</span></td>
                   <td><span class="fuel-badge">{{ v.tipo_combustivel }}</span></td>
                   <td class="text-right val-green">R$ {{ v.valor | number:'1.3-3' }}</td>
                   <td>{{ v.data | date:'dd/MM/yyyy HH:mm' }}</td>
                   <td>{{ v.responsavel ?? '—' }}</td>
-                  <td>
-                    @if (isAdmin()) {
-                      <div class="actions">
-                        <button class="action-btn" (click)="edit(v)">✏️</button>
-                        <button class="action-btn" (click)="confirmDelete(v)">🗑️</button>
-                      </div>
-                    } @else {
-                      <span class="muted">Somente leitura</span>
-                    }
-                  </td>
                 </tr>
               }
               @empty {
@@ -103,19 +99,6 @@ import { AuthService } from '../../core/services/auth.service';
           </table>
         </div>
       </div>
-
-      @if (deleteTarget() && isAdmin()) {
-        <div class="modal-overlay" (click)="deleteTarget.set(null)">
-          <div class="modal" (click)="$event.stopPropagation()">
-            <h3>Confirmar Exclusão</h3>
-            <p>Excluir preço do combustível <strong>{{ deleteTarget()?.tipo_combustivel }}</strong>?</p>
-            <div class="modal-actions">
-              <button class="btn-cancel" (click)="deleteTarget.set(null)">Cancelar</button>
-              <button class="btn-danger" (click)="executeDelete()">Excluir</button>
-            </div>
-          </div>
-        </div>
-      }
     </div>
   `,
   styles: [`
@@ -137,6 +120,7 @@ import { AuthService } from '../../core/services/auth.service';
     .field input, .field select { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:8px 10px; color:#e2e8f0; font-size:12px; outline:none; }
     .field input:focus, .field select:focus { border-color:#0ea5e9; }
     .field select option { background:#0d1427; }
+    .form-note { color:#94a3b8; font-size:12px; margin:0 0 14px; }
     .form-actions { display:flex; gap:10px; justify-content:flex-end; }
     .btn-cancel { background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; }
     .table-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; overflow:hidden; }
@@ -147,6 +131,7 @@ import { AuthService } from '../../core/services/auth.service';
     .data-table tbody tr:hover td { background:#1e2d4a15; }
     .text-right { text-align:right; }
     .fuel-badge { background:#1e2d4a; color:#38bdf8; padding:3px 10px; border-radius:5px; font-size:12px; font-weight:600; }
+    .branch-badge { background:#ecfeff; color:#0369a1; padding:3px 10px; border-radius:5px; font-size:12px; font-weight:700; border:1px solid #bae6fd; }
     .val-green { color:#4ade80; font-weight:700; font-size:14px; }
     .actions { display:flex; gap:6px; }
     .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; }
@@ -161,7 +146,7 @@ import { AuthService } from '../../core/services/auth.service';
     .btn-danger { background:#dc2626; border:none; color:#fff; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-weight:600; }
   `]
 })
-export class ValoresCombustivelComponent implements OnInit {
+export class ValoresCombustivelComponent implements OnInit, OnDestroy {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
@@ -169,39 +154,47 @@ export class ValoresCombustivelComponent implements OnInit {
 
   valores = signal<ValorCombustivel[]>([]);
   showForm = signal(false);
-  editItem = signal<ValorCombustivel | null>(null);
-  deleteTarget = signal<ValorCombustivel | null>(null);
   saving = signal(false);
 
   tipos = ['OLEO DIESEL S10', 'Arla 32'];
+  filiaisDisponiveis = ['Matriz', 'Viana'];
 
   form = this.fb.group({
+    local: [this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz', Validators.required],
     tipo_combustivel: ['OLEO DIESEL S10', Validators.required],
     valor: [null as number | null, [Validators.required, Validators.min(0.001)]],
-    responsavel: [''],
   });
 
-  ngOnInit() { this.load(); }
+  private onGaragemChanged = () => {
+    const local = this.localSelecionado();
+    this.form.patchValue({ local });
+    this.load();
+  };
+
+  ngOnInit() {
+    window.addEventListener('garagem:changed', this.onGaragemChanged);
+    this.load();
+  }
+
+  ngOnDestroy() {
+    window.removeEventListener('garagem:changed', this.onGaragemChanged);
+  }
 
   isAdmin(): boolean {
     return this.auth.isAdmin();
   }
 
   load() {
-    this.api.getValoresCombustivel({ per_page: 100 }).subscribe(r => this.valores.set(r.data));
-  }
-
-  edit(v: ValorCombustivel) {
-    if (!this.isAdmin()) return;
-    this.editItem.set(v);
-    this.form.patchValue(v as any);
-    this.showForm.set(true);
+    this.api.getValoresCombustivel({ per_page: 100, local: this.localSelecionado() }).subscribe(r => this.valores.set(r.data));
   }
 
   cancelForm() {
     this.showForm.set(false);
-    this.editItem.set(null);
-    this.form.reset({ tipo_combustivel: 'OLEO DIESEL S10' });
+    this.form.reset({ local: this.localSelecionado(), tipo_combustivel: 'OLEO DIESEL S10' });
+  }
+
+  private localSelecionado(): string {
+    return this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz';
   }
 
   onSubmit() {
@@ -212,28 +205,10 @@ export class ValoresCombustivelComponent implements OnInit {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
     this.saving.set(true);
     const data = this.form.value as any;
-    const obs = this.editItem()
-      ? this.api.updateValorCombustivel(this.editItem()!.id_valor, data)
-      : this.api.createValorCombustivel(data);
+    const obs = this.api.createValorCombustivel(data);
     obs.subscribe({
       next: () => { this.toastr.success('Salvo com sucesso'); this.cancelForm(); this.load(); this.saving.set(false); },
       error: () => { this.toastr.error('Erro ao salvar'); this.saving.set(false); }
-    });
-  }
-
-  confirmDelete(v: ValorCombustivel) {
-    if (!this.isAdmin()) return;
-    this.deleteTarget.set(v);
-  }
-
-  executeDelete() {
-    if (!this.isAdmin()) {
-      this.toastr.error('Somente administradores podem alterar combustível');
-      return;
-    }
-    this.api.deleteValorCombustivel(this.deleteTarget()!.id_valor).subscribe({
-      next: () => { this.toastr.success('Excluído'); this.deleteTarget.set(null); this.load(); },
-      error: () => this.toastr.error('Erro ao excluir')
     });
   }
 }

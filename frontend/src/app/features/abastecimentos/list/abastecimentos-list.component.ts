@@ -1,5 +1,5 @@
 // src/app/features/abastecimentos/list/abastecimentos-list.component.ts
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -7,7 +7,19 @@ import { ApiService } from '../../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Abastecimento, Proprietario } from '../../../shared/models';
 import { AuthService } from '../../../core/services/auth.service';
-import jsPDF from 'jspdf';
+
+type AbastecimentoSortField =
+  | 'data_hora'
+  | 'placa'
+  | 'proprietario'
+  | 'motorista'
+  | 'tipo_combustivel'
+  | 'quantidade_litros'
+  | 'valor_por_litro'
+  | 'valor_total'
+  | 'verificado_por'
+  | 'baixa';
+type SortDirection = 'asc' | 'desc';
 
 @Component({
   selector: 'app-abastecimentos-list',
@@ -30,12 +42,29 @@ import jsPDF from 'jspdf';
         <div class="filters-grid">
           <div class="filter-field">
             <label>Proprietário</label>
-            <select [(ngModel)]="filters.id_proprietario" (change)="load()">
-              <option value="">Todos</option>
-              @for (p of proprietarios(); track p.id_proprietario) {
-                <option [value]="p.id_proprietario">{{ p.nome }}</option>
+            <div class="autocomplete-field">
+              <input
+                type="text"
+                [value]="proprietarioBusca()"
+                placeholder="Digite o proprietário..."
+                (input)="onProprietarioBuscaChange($event)"
+                (focus)="showProprietariosDropdown.set(true)"
+                (blur)="closeProprietariosDropdown()"
+              />
+              @if (proprietarioBusca()) {
+                <button type="button" class="btn-clear-field" (mousedown)="clearProprietario()">×</button>
               }
-            </select>
+              @if (showProprietariosDropdown() && filteredProprietarios().length > 0) {
+                <div class="autocomplete-list">
+                  <button type="button" class="autocomplete-item" (mousedown)="selectProprietario(null)">Todos</button>
+                  @for (p of filteredProprietarios(); track p.id_proprietario) {
+                    <button type="button" class="autocomplete-item" (mousedown)="selectProprietario(p)">
+                      {{ p.nome }}
+                    </button>
+                  }
+                </div>
+              }
+            </div>
           </div>
           <div class="filter-field">
             <label>Placa</label>
@@ -54,16 +83,6 @@ import jsPDF from 'jspdf';
               <input #dataFimInput type="date" [(ngModel)]="filters.data_fim" (change)="load()" />
               <button type="button" class="btn-date" (click)="openDatePicker(dataFimInput)">📅</button>
             </div>
-          </div>
-          <div class="filter-field">
-            <label>Status</label>
-            <select [(ngModel)]="filters.status" (change)="load()">
-              <option value="">Todos</option>
-              <option value="Confirmado">Confirmado</option>
-              <option value="Pendente">Pendente</option>
-              <option value="Pago">Pago</option>
-              <option value="Cancelado">Cancelado</option>
-            </select>
           </div>
           <div class="filter-field">
             <label>Combustível</label>
@@ -87,16 +106,56 @@ import jsPDF from 'jspdf';
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Data/Hora</th>
-                  <th>Placa</th>
-                  <th>Proprietário</th>
-                  <th>Motorista</th>
-                  <th>Combustível</th>
-                  <th class="text-right">Qtd (L)</th>
-                  <th class="text-right">R$/L</th>
-                  <th class="text-right">Total</th>
-                  <th>Status</th>
-                  <th>Baixa</th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('data_hora')" (click)="sortBy('data_hora')">
+                      Data/Hora <span class="sort-icon">{{ sortIcon('data_hora') }}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('placa')" (click)="sortBy('placa')">
+                      Placa <span class="sort-icon">{{ sortIcon('placa') }}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('proprietario')" (click)="sortBy('proprietario')">
+                      Proprietário <span class="sort-icon">{{ sortIcon('proprietario') }}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('motorista')" (click)="sortBy('motorista')">
+                      Motorista <span class="sort-icon">{{ sortIcon('motorista') }}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('tipo_combustivel')" (click)="sortBy('tipo_combustivel')">
+                      Combustível <span class="sort-icon">{{ sortIcon('tipo_combustivel') }}</span>
+                    </button>
+                  </th>
+                  <th class="text-right">
+                    <button type="button" class="sort-head sort-right" [class.active]="isSorted('quantidade_litros')" (click)="sortBy('quantidade_litros')">
+                      Qtd (L) <span class="sort-icon">{{ sortIcon('quantidade_litros') }}</span>
+                    </button>
+                  </th>
+                  <th class="text-right">
+                    <button type="button" class="sort-head sort-right" [class.active]="isSorted('valor_por_litro')" (click)="sortBy('valor_por_litro')">
+                      R$/L <span class="sort-icon">{{ sortIcon('valor_por_litro') }}</span>
+                    </button>
+                  </th>
+                  <th class="text-right">
+                    <button type="button" class="sort-head sort-right" [class.active]="isSorted('valor_total')" (click)="sortBy('valor_total')">
+                      Total <span class="sort-icon">{{ sortIcon('valor_total') }}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('verificado_por')" (click)="sortBy('verificado_por')">
+                      Verificado por <span class="sort-icon">{{ sortIcon('verificado_por') }}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button type="button" class="sort-head" [class.active]="isSorted('baixa')" (click)="sortBy('baixa')">
+                      Baixa <span class="sort-icon">{{ sortIcon('baixa') }}</span>
+                    </button>
+                  </th>
                   <th>Hodômetro</th>
                   <th>Bomba</th>
                   <th>Ações</th>
@@ -104,20 +163,29 @@ import jsPDF from 'jspdf';
               </thead>
               <tbody>
                 @for (a of abastecimentos(); track a.id_abastecimento) {
-                  <tr>
+                  <tr class="clickable-row" [class.row-inconsistent]="getDisplayStatus(a) === 'Inconsistente'" (click)="openDetails(a)">
                     <td class="dt-cell">
                       <span class="dt-date">{{ a.data | date:'dd/MM/yyyy' }}</span>
                       <span class="dt-time">{{ a.data_hora | date:'HH:mm' }}</span>
                     </td>
                     <td><span class="placa-badge">{{ a.veiculo?.placa ?? '—' }}</span></td>
-                    <td>{{ a.nome_proprietario ?? '—' }}</td>
-                    <td>{{ a.nome_motorista ?? '—' }}</td>
+                    <td>{{ a.nome_proprietario || a.proprietario?.nome || '—' }}</td>
+                    <td>{{ a.nome_motorista || a.motorista?.nome || '—' }}</td>
                     <td>{{ a.tipo_combustivel }}</td>
                     <td class="text-right">{{ a.quantidade_litros | number:'1.2-2' }}</td>
                     <td class="text-right">{{ a.valor_por_litro | number:'1.3-3' }}</td>
                     <td class="text-right val-green">{{ a.valor_total | currency:'BRL':'symbol':'1.2-2' }}</td>
                     <td>
-                      <span class="badge" [class]="getStatusClass(getDisplayStatus(a))">{{ getDisplayStatus(a) }}</span>
+                      @if (a.imagem_verificada_por) {
+                        <span class="verified-by">
+                          <strong>{{ a.imagem_verificada_por }}</strong>
+                          @if (a.imagem_verificada_em) {
+                            <small>{{ a.imagem_verificada_em | date:'dd/MM HH:mm' }}</small>
+                          }
+                        </span>
+                      } @else {
+                        <span class="muted">—</span>
+                      }
                     </td>
                     <td>
                       <span class="badge" [class]="a.baixa_abastecimento ? 'badge-green' : 'badge-orange'">
@@ -128,7 +196,7 @@ import jsPDF from 'jspdf';
                       @if (resolveImageUrl(a.foto_odometro); as fotoOdometroUrl) {
                         <div class="thumb-wrap">
                           <img class="thumb" [src]="fotoOdometroUrl" alt="Hodômetro" />
-                          <button type="button" class="thumb-view" title="Visualizar foto do hodômetro" (click)="openImagePreview(fotoOdometroUrl)">👁</button>
+                          <button type="button" class="thumb-view" title="Visualizar foto do hodômetro" (click)="openImagePreview(fotoOdometroUrl, $event)">👁</button>
                         </div>
                       } @else {
                         <span class="muted">Sem foto</span>
@@ -138,7 +206,7 @@ import jsPDF from 'jspdf';
                       @if (resolveImageUrl(a.bomba); as bombaUrl) {
                         <div class="thumb-wrap">
                           <img class="thumb" [src]="bombaUrl" alt="Bomba" />
-                          <button type="button" class="thumb-view" title="Visualizar foto da bomba" (click)="openImagePreview(bombaUrl)">👁</button>
+                          <button type="button" class="thumb-view" title="Visualizar foto da bomba" (click)="openImagePreview(bombaUrl, $event)">👁</button>
                         </div>
                       } @else {
                         <span class="muted">Sem foto</span>
@@ -148,13 +216,17 @@ import jsPDF from 'jspdf';
                       <div class="actions">
                         @if (isAdmin()) {
                           <a [routerLink]="['/abastecimentos', a.id_abastecimento, 'editar']"
-                             class="action-btn edit" title="Editar">✏️</a>
+                             class="action-btn edit" title="Editar" (click)="$event.stopPropagation()">✏️</a>
                         }
                         <button class="action-btn print" title="Comprovante"
-                                (click)="printComprovante(a)">🖨️</button>
+                                (click)="printComprovante(a, $event)">🖨️</button>
+                        @if (canResolveInconsistency() && isInconsistent(a)) {
+                          <button class="action-btn verify" title="Marcar consistente"
+                                  (click)="verificarInconsistencia(a, $event)">OK</button>
+                        }
                         @if (isAdmin()) {
                           <button class="action-btn del" title="Excluir"
-                                  (click)="confirmDelete(a)">🗑️</button>
+                                  (click)="confirmDelete(a, $event)">🗑️</button>
                         }
                       </div>
                     </td>
@@ -205,6 +277,72 @@ import jsPDF from 'jspdf';
           </div>
         </div>
       }
+
+      @if (detailTarget(); as detail) {
+        <div class="modal-overlay" (click)="closeDetails()">
+          <div class="details-modal" (click)="$event.stopPropagation()">
+            <div class="details-header">
+              <div>
+                <h3>{{ detail.veiculo?.placa ?? 'Abastecimento' }}</h3>
+                <p>{{ detail.data_hora | date:'dd/MM/yyyy HH:mm' }}</p>
+              </div>
+              <button type="button" class="btn-icon-close" (click)="closeDetails()">×</button>
+            </div>
+
+            <div class="details-grid">
+              <div><span>Proprietário</span><strong>{{ detail.nome_proprietario || detail.proprietario?.nome || '—' }}</strong></div>
+              <div><span>Motorista</span><strong>{{ detail.nome_motorista || detail.motorista?.nome || '—' }}</strong></div>
+              <div><span>Combustível</span><strong>{{ detail.tipo_combustivel || '—' }}</strong></div>
+              <div>
+                <span>Verificado por</span>
+                <strong>{{ detail.imagem_verificada_por || '—' }}</strong>
+                @if (detail.imagem_verificada_em) {
+                  <small class="detail-helper">{{ detail.imagem_verificada_em | date:'dd/MM/yyyy HH:mm' }}</small>
+                }
+              </div>
+              <div><span>Quantidade</span><strong>{{ detail.quantidade_litros | number:'1.2-2' }} L</strong></div>
+              <div><span>Valor por litro</span><strong>{{ detail.valor_por_litro | number:'1.3-3' }}</strong></div>
+              <div><span>Valor total</span><strong class="val-green">{{ detail.valor_total | currency:'BRL':'symbol':'1.2-2' }}</strong></div>
+              <div><span>Hodômetro</span><strong>{{ detail.odometro || '—' }}</strong></div>
+              <div><span>Local</span><strong>{{ detail.local || '—' }}</strong></div>
+              <div><span>Baixa</span><strong>{{ detail.baixa_abastecimento ? 'Baixado' : 'Pendente' }}</strong></div>
+            </div>
+
+            @if (detail.observacao) {
+              <div class="details-note">
+                <span>Observação</span>
+                <p>{{ detail.observacao }}</p>
+              </div>
+            }
+
+            <div class="details-images">
+              @if (resolveImageUrl(detail.foto_odometro); as odometroUrl) {
+                <button type="button" (click)="openImagePreview(odometroUrl, $event)">
+                  <img [src]="odometroUrl" alt="Hodômetro" />
+                  <span>Hodômetro</span>
+                </button>
+              }
+              @if (resolveImageUrl(detail.bomba); as bombaUrl) {
+                <button type="button" (click)="openImagePreview(bombaUrl, $event)">
+                  <img [src]="bombaUrl" alt="Bomba" />
+                  <span>Bomba</span>
+                </button>
+              }
+            </div>
+
+            <div class="details-actions">
+              <button type="button" class="btn-secondary" (click)="printComprovante(detail, $event)">Comprovante</button>
+              @if (canResolveInconsistency() && isInconsistent(detail)) {
+                <button type="button" class="btn-secondary" (click)="verificarInconsistencia(detail, $event)">Marcar consistente</button>
+              }
+              @if (isAdmin()) {
+                <a class="btn-edit" [routerLink]="['/abastecimentos', detail.id_abastecimento, 'editar']">Editar</a>
+                <button type="button" class="btn-danger" (click)="confirmDelete(detail, $event)">Excluir</button>
+              }
+            </div>
+          </div>
+        </div>
+      }
     </div>
 
       @if (previewImageUrl()) {
@@ -217,7 +355,6 @@ import jsPDF from 'jspdf';
       }
   `,
   styles: [`
-    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@700&family=Inter:wght@400;500;600&display=swap');
     * { box-sizing: border-box; }
     .page { padding: 28px; font-family: 'Inter', sans-serif; color: #e2e8f0; }
     .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
@@ -237,6 +374,24 @@ import jsPDF from 'jspdf';
     }
     .filter-field input:focus, .filter-field select:focus { border-color:#0ea5e9; }
     .filter-field select option { background:#0d1427; }
+    .autocomplete-field { position:relative; }
+    .autocomplete-field input { width:100%; padding-right:34px; }
+    .btn-clear-field {
+      position:absolute; right:6px; top:50%; transform:translateY(-50%);
+      width:22px; height:22px; border:none; border-radius:5px; background:#1e2d4a;
+      color:#cbd5e1; cursor:pointer; line-height:1; font-size:15px;
+    }
+    .btn-clear-field:hover { background:#334155; color:#fff; }
+    .autocomplete-list {
+      position:absolute; z-index:30; top:calc(100% + 4px); left:0; right:0;
+      max-height:240px; overflow:auto; background:#0a0f1e; border:1px solid #1e2d4a;
+      border-radius:8px; box-shadow:0 16px 40px rgba(2,6,23,0.35); padding:4px;
+    }
+    .autocomplete-item {
+      width:100%; border:none; background:transparent; color:#e2e8f0; text-align:left;
+      padding:8px 9px; border-radius:6px; font-size:12px; cursor:pointer;
+    }
+    .autocomplete-item:hover { background:#1e2d4a; }
     .date-row { display:flex; gap:8px; align-items:center; }
     .date-row input { flex:1; min-width:0; }
     .btn-date { height:34px; min-width:40px; padding:0 10px; background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; color:#94a3b8; cursor:pointer; font-size:14px; }
@@ -252,8 +407,28 @@ import jsPDF from 'jspdf';
     .table-wrap { overflow-x:auto; }
     .data-table { width:100%; border-collapse:collapse; font-size:12px; }
     .data-table thead th { padding:10px 12px; text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#64748b; border-bottom:1px solid #1e2d4a; white-space:nowrap; background:#080e1c; }
+    .sort-head {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
+      cursor: pointer;
+    }
+    .sort-head.sort-right { justify-content: flex-end; }
+    .sort-head:hover,
+    .sort-head.active { color:#38bdf8; }
+    .sort-icon { display:inline-block; min-width:10px; color:#475569; font-size:9px; }
+    .sort-head.active .sort-icon { color:#38bdf8; }
     .data-table tbody td { padding:10px 12px; border-bottom:1px solid #1e2d4a20; vertical-align:middle; }
     .data-table tbody tr:hover td { background:#1e2d4a15; }
+    .clickable-row { cursor:pointer; }
     .text-right { text-align:right; }
 
     .dt-cell { display:flex; flex-direction:column; }
@@ -269,8 +444,27 @@ import jsPDF from 'jspdf';
     .badge-red { background:#fee2e220; color:#f87171; }
     .badge-green { background:#dcfce720; color:#4ade80; }
     .badge-orange { background:#ffedd520; color:#fb923c; }
+    .row-inconsistent { background:#ffedd50f; box-shadow:inset 4px 0 0 #fb923c; }
+    .row-inconsistent:hover { background:#ffedd51f; }
+    .verified-by { display:flex; flex-direction:column; gap:2px; min-width:110px; }
+    .verified-by strong { color:#e2e8f0; font-size:12px; font-weight:700; }
+    .verified-by small,
+    .detail-helper { color:#64748b; font-size:11px; font-weight:500; margin-top:3px; display:block; }
 
-    .actions { display:flex; gap:6px; }
+    .data-table th:last-child,
+    .data-table td:last-child {
+      width: 86px;
+      min-width: 86px;
+      max-width: 86px;
+    }
+    .actions {
+      width: 64px;
+      display:grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap:5px;
+      align-items:center;
+      justify-items:center;
+    }
     .thumb-wrap { position:relative; width:58px; height:58px; }
     .thumb {
       width: 58px;
@@ -301,8 +495,35 @@ import jsPDF from 'jspdf';
     }
     .thumb-view:hover { background:rgba(14,165,233,0.82); border-color:#7dd3fc; }
     .muted { color: #64748b; font-size: 11px; }
-    .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; transition:background 0.2s; text-decoration:none; }
+    .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px; border-radius:5px; transition:background 0.2s; text-decoration:none; min-width:28px; min-height:28px; display:inline-flex; align-items:center; justify-content:center; }
     .action-btn:hover { background:#1e2d4a; }
+    .action-btn.verify {
+      border:1px solid #fb923c;
+      color:#111827;
+      background:#fdba74;
+      font-size:11px;
+      font-weight:800;
+      white-space:nowrap;
+      grid-column:1 / -1;
+      width:100%;
+      min-height:30px;
+      padding:5px 6px;
+    }
+    .action-btn.verify:hover { background:#fb923c; color:#111827; }
+    .action-btn.analyze {
+      border:1px solid #0284c7;
+      color:#111827;
+      background:#7dd3fc;
+      font-size:11px;
+      font-weight:700;
+      white-space:nowrap;
+      grid-column:1 / -1;
+      width:100%;
+      min-height:30px;
+      padding:5px 6px;
+    }
+    .action-btn.analyze:hover { background:#38bdf8; }
+    .action-btn:disabled { opacity:0.55; cursor:wait; }
 
     .empty-cell { text-align:center; padding:32px; color:#475569; }
 
@@ -323,6 +544,24 @@ import jsPDF from 'jspdf';
     .btn-cancel { background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; }
     .btn-danger { background:#dc2626; border:none; color:#fff; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-weight:600; }
     .btn-danger:disabled { opacity:0.5; }
+    .details-modal { background:#fff; border:1px solid #dbe4f0; border-radius:14px; padding:22px; max-width:760px; width:min(94vw,760px); max-height:88vh; overflow:auto; box-shadow:0 24px 70px rgba(15,23,42,0.22); }
+    .details-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+    .details-header h3 { margin:0; color:#111827; font-size:22px; }
+    .details-header p { margin:4px 0 0; color:#64748b; font-size:12px; }
+    .btn-icon-close { width:34px; height:34px; border-radius:8px; border:1px solid #cbd5e1; background:#fff; color:#334155; cursor:pointer; font-size:20px; }
+    .details-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+    .details-grid div, .details-note { background:#f8fafc; border:1px solid #dbe4f0; border-radius:10px; padding:10px 12px; }
+    .details-grid span, .details-note span { display:block; color:#64748b; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px; }
+    .details-grid strong { color:#111827; font-size:13px; }
+    .details-note { margin-top:10px; }
+    .details-note p { margin:0; color:#334155; font-size:13px; }
+    .details-images { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    .details-images button { width:132px; border:1px solid #dbe4f0; background:#fff; color:#334155; border-radius:10px; padding:8px; cursor:pointer; text-align:left; }
+    .details-images img { width:100%; height:92px; object-fit:cover; border-radius:8px; display:block; margin-bottom:6px; }
+    .details-images span { font-size:12px; color:#64748b; }
+    .details-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; margin-top:18px; }
+    .btn-secondary, .btn-edit { background:#fff; border:1px solid #cbd5e1; color:#334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; text-decoration:none; }
+    .btn-edit { border-color:#0ea5e9; color:#0369a1; }
     .image-overlay {
       position: fixed;
       inset: 0;
@@ -361,7 +600,7 @@ import jsPDF from 'jspdf';
     }
   `]
 })
-export class AbastecimentosListComponent implements OnInit {
+export class AbastecimentosListComponent implements OnInit, OnDestroy {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private auth = inject(AuthService);
@@ -371,24 +610,55 @@ export class AbastecimentosListComponent implements OnInit {
   loading = signal(true);
   deleting = signal(false);
   deleteTarget = signal<Abastecimento | null>(null);
+  detailTarget = signal<Abastecimento | null>(null);
   previewImageUrl = signal('');
+  proprietarioBusca = signal('');
+  showProprietariosDropdown = signal(false);
   pagination = signal({ current_page: 1, last_page: 1, per_page: 20, total: 0, from: 0, to: 0 });
 
   private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
   tiposCombustivel: string[] = [this.defaultTipoCombustivel];
 
   filters: any = {
-    id_proprietario: '', placa: '', data_inicio: '', data_fim: '', status: '', tipo_combustivel: '', page: 1
+    id_proprietario: '',
+    placa: '',
+    data_inicio: '',
+    data_fim: '',
+    tipo_combustivel: '',
+    page: 1,
+    sort_by: 'data_hora' as AbastecimentoSortField,
+    sort_dir: 'desc' as SortDirection,
+  };
+  private readonly onGaragemChanged = () => {
+    this.loadTiposCombustivel();
+    this.loadProprietarios();
+    this.load();
   };
 
+  filteredProprietarios = computed(() => {
+    const term = this.normalizeText(this.proprietarioBusca());
+    if (!term) return this.proprietarios().slice(0, 40);
+    return this.proprietarios()
+      .filter((p) => this.normalizeText(p.nome).includes(term))
+      .slice(0, 40);
+  });
+
   ngOnInit() {
+    window.addEventListener('garagem:changed', this.onGaragemChanged);
     this.loadTiposCombustivel();
-    this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
+    this.loadProprietarios();
     this.load();
   }
 
+  ngOnDestroy() {
+    window.removeEventListener('garagem:changed', this.onGaragemChanged);
+  }
+
   loadTiposCombustivel() {
-    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+    this.api.getValoresCombustivel({
+      per_page: 500,
+      local: this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz',
+    }).subscribe({
       next: (r) => {
         const tipos = Array.from(
           new Set(
@@ -408,6 +678,10 @@ export class AbastecimentosListComponent implements OnInit {
     });
   }
 
+  loadProprietarios() {
+    this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
+  }
+
   load() {
     this.loading.set(true);
     this.api.getAbastecimentos({ ...this.filters, per_page: 20 }).subscribe({
@@ -421,8 +695,61 @@ export class AbastecimentosListComponent implements OnInit {
   }
 
   clearFilters() {
-    this.filters = { id_proprietario:'',placa:'',data_inicio:'',data_fim:'',status:'',tipo_combustivel:'',page:1 };
+    const sort_by = this.filters.sort_by;
+    const sort_dir = this.filters.sort_dir;
+    this.filters = { id_proprietario:'',placa:'',data_inicio:'',data_fim:'',tipo_combustivel:'',page:1,sort_by,sort_dir };
+    this.proprietarioBusca.set('');
     this.load();
+  }
+
+  sortBy(field: AbastecimentoSortField) {
+    if (this.filters.sort_by === field) {
+      this.filters.sort_dir = this.filters.sort_dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.filters.sort_by = field;
+      this.filters.sort_dir = field === 'data_hora' ? 'desc' : 'asc';
+    }
+    this.filters.page = 1;
+    this.load();
+  }
+
+  isSorted(field: AbastecimentoSortField): boolean {
+    return this.filters.sort_by === field;
+  }
+
+  sortIcon(field: AbastecimentoSortField): string {
+    if (!this.isSorted(field)) return '↕';
+    return this.filters.sort_dir === 'asc' ? '▲' : '▼';
+  }
+
+  private normalizeText(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  onProprietarioBuscaChange(event: Event) {
+    const value = (event.target as HTMLInputElement).value;
+    this.proprietarioBusca.set(value);
+    this.showProprietariosDropdown.set(true);
+    const exact = this.proprietarios().find((p) => this.normalizeText(p.nome) === this.normalizeText(value));
+    this.filters.id_proprietario = exact?.id_proprietario ?? '';
+    this.filters.page = 1;
+    this.load();
+  }
+
+  selectProprietario(proprietario: Proprietario | null) {
+    this.filters.id_proprietario = proprietario?.id_proprietario ?? '';
+    this.filters.page = 1;
+    this.proprietarioBusca.set(proprietario?.nome ?? '');
+    this.showProprietariosDropdown.set(false);
+    this.load();
+  }
+
+  clearProprietario() {
+    this.selectProprietario(null);
+  }
+
+  closeProprietariosDropdown() {
+    setTimeout(() => this.showProprietariosDropdown.set(false), 120);
   }
 
   goToPage(p: number) {
@@ -448,15 +775,30 @@ export class AbastecimentosListComponent implements OnInit {
   }
 
   getStatusClass(status?: string): string {
-    if (status === 'Confirmado') return 'badge badge-blue';
-    if (status === 'Pago') return 'badge badge-green';
-    if (status === 'Cancelado') return 'badge badge-red';
+    const normalized = this.normalizeStatus(status);
+    if (normalized === 'Confirmado') return 'badge badge-blue';
+    if (normalized === 'Cancelado') return 'badge badge-red';
+    if (normalized === 'Inconsistente') return 'badge badge-orange';
     return 'badge badge-yellow';
   }
 
+  normalizeStatus(status?: string | null): string {
+    const normalized = String(status ?? '').trim();
+    if (normalized.toLowerCase() === 'inconsistente') return 'Inconsistente';
+    if (normalized.toLowerCase() === 'confirmado') return 'Confirmado';
+    if (normalized.toLowerCase() === 'cancelado') return 'Cancelado';
+    if (normalized.toLowerCase() === 'pendente') return 'Pendente';
+    return normalized || '—';
+  }
+
+  isInconsistent(a: Abastecimento): boolean {
+    return this.normalizeStatus(a.status) === 'Inconsistente';
+  }
+
   getDisplayStatus(a: Abastecimento): string {
-    if (a.status === 'Pago' || a.baixa_abastecimento) return 'Pago';
-    return a.status ?? '—';
+    const status = this.normalizeStatus(a.status);
+    if (status === 'Inconsistente') return status;
+    return status;
   }
 
   resolveImageUrl(url?: string | null): string | null {
@@ -474,7 +816,16 @@ export class AbastecimentosListComponent implements OnInit {
     return null;
   }
 
-  openImagePreview(url?: string | null) {
+  openDetails(a: Abastecimento) {
+    this.detailTarget.set(a);
+  }
+
+  closeDetails() {
+    this.detailTarget.set(null);
+  }
+
+  openImagePreview(url?: string | null, event?: Event) {
+    event?.stopPropagation();
     const imageUrl = this.resolveImageUrl(url);
     if (!imageUrl) return;
     this.previewImageUrl.set(imageUrl);
@@ -484,68 +835,79 @@ export class AbastecimentosListComponent implements OnInit {
     this.previewImageUrl.set('');
   }
 
-  printComprovante(a: Abastecimento) {
-    const dataHora = a.data_hora ? new Date(a.data_hora as any) : null;
-    const dataHoraFmt = dataHora && !isNaN(dataHora.getTime()) ? dataHora.toLocaleString('pt-BR') : '—';
-    const valorTotal = Number(a.valor_total ?? 0);
-    const valorLitro = Number(a.valor_por_litro ?? 0);
-    const litros = Number(a.quantidade_litros ?? 0);
-    const placa = a.veiculo?.placa ?? '—';
-    const veiculo = [a.veiculo?.marca ?? '', a.veiculo?.modelo ?? ''].join(' ').trim() || '—';
-    const status = this.getDisplayStatus(a);
+  printComprovante(a: Abastecimento, event?: Event) {
+    event?.stopPropagation();
+    const id = a.id_abastecimento;
+    if (!id) {
+      this.toastr.error('Abastecimento sem ID para exportar.');
+      return;
+    }
 
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    let y = 48;
-    const left = 44;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(20);
-    doc.text('Comprovante de Abastecimento', left, y);
-
-    y += 24;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor(80);
-    doc.text(`ID: ${a.id_abastecimento ?? '—'}`, left, y);
-
-    y += 24;
-    doc.setDrawColor(220);
-    doc.line(left, y, 552, y);
-    y += 22;
-
-    const rows: Array<[string, string]> = [
-      ['Data/Hora', dataHoraFmt],
-      ['Placa', placa],
-      ['Veículo', veiculo],
-      ['Motorista', a.nome_motorista ?? '—'],
-      ['Proprietário', a.nome_proprietario ?? '—'],
-      ['Combustível', a.tipo_combustivel ?? '—'],
-      ['Status', status],
-      ['Litros', `${litros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`],
-      ['Valor por Litro', `R$ ${valorLitro.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`],
-      ['Valor Total', valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })],
-    ];
-
-    rows.forEach(([label, value]) => {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(55, 65, 81);
-      doc.text(`${label}:`, left, y);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(17, 24, 39);
-      doc.text(String(value), left + 120, y);
-      y += 22;
+    this.api.getComprovantePdf(id).subscribe({
+      next: (response) => {
+        const blob = response.body;
+        if (!blob || blob.size === 0) {
+          this.toastr.error('PDF retornou vazio.');
+          return;
+        }
+        const filename = this.filenameFromDisposition(response.headers.get('content-disposition'))
+          || `comprovante_${id}.pdf`;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      },
+      error: async (err) => {
+        const msg = await this.errorMessageFromBlob(err?.error);
+        this.toastr.error(msg || 'Não foi possível exportar o comprovante em PDF.');
+      },
     });
-
-    y += 10;
-    doc.setTextColor(120);
-    doc.setFontSize(9);
-    doc.text(`Emitido em ${new Date().toLocaleString('pt-BR')}`, left, y);
-
-    doc.save(`comprovante_${a.id_abastecimento ?? 'abastecimento'}.pdf`);
   }
 
-  confirmDelete(a: Abastecimento) { this.deleteTarget.set(a); }
+  private filenameFromDisposition(disposition: string | null): string | null {
+    if (!disposition) return null;
+    const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+    if (utf?.[1]) return decodeURIComponent(utf[1].replace(/"/g, ''));
+    const simple = /filename="?([^"]+)"?/i.exec(disposition);
+    return simple?.[1] ?? null;
+  }
+
+  private async errorMessageFromBlob(error: unknown): Promise<string> {
+    if (!(error instanceof Blob)) return '';
+    try {
+      const text = await error.text();
+      const parsed = JSON.parse(text);
+      return parsed?.message || parsed?.error || '';
+    } catch {
+      return '';
+    }
+  }
+
+  confirmDelete(a: Abastecimento, event?: Event) {
+    event?.stopPropagation();
+    this.detailTarget.set(null);
+    this.deleteTarget.set(a);
+  }
+
+  verificarInconsistencia(a: Abastecimento, event?: Event) {
+    event?.stopPropagation();
+    if (!this.canResolveInconsistency()) {
+      this.toastr.error('Sem permissão para marcar como consistente');
+      return;
+    }
+    this.api.verificarInconsistencia(a.id_abastecimento).subscribe({
+      next: () => {
+        this.toastr.success('Abastecimento marcado como consistente');
+        this.detailTarget.set(null);
+        this.load();
+      },
+      error: err => this.toastr.error(err.error?.message ?? 'Erro ao marcar consistente'),
+    });
+  }
 
   executeDelete() {
     if (!this.isAdmin()) {
@@ -560,6 +922,7 @@ export class AbastecimentosListComponent implements OnInit {
       next: () => {
         this.toastr.success('Abastecimento excluído');
         this.deleteTarget.set(null);
+        this.detailTarget.set(null);
         this.deleting.set(false);
         this.load();
       },
@@ -576,5 +939,9 @@ export class AbastecimentosListComponent implements OnInit {
 
   canCreate(): boolean {
     return this.auth.canCreateOperationalRecords();
+  }
+
+  canResolveInconsistency(): boolean {
+    return this.auth.isAdmin() || this.auth.canCreateOperationalRecords();
   }
 }

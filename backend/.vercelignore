@@ -1,4 +1,5 @@
 .env
+.env.*
 vendor/
 database/xlsx_import_payload.json
 database/backup_before_xlsx_import_*.json

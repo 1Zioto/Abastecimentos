@@ -13,6 +13,10 @@ class Authenticate extends Middleware
 
     protected function unauthenticated($request, array $guards)
     {
-        abort(response()->json(['message' => 'Não autenticado.'], 401));
+        throw new \Illuminate\Auth\AuthenticationException(
+            'Não autenticado.',
+            $guards,
+            $this->redirectTo($request)
+        );
     }
 }

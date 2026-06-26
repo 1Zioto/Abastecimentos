@@ -1,0 +1,17 @@
+[
+    {
+        "id_encerrante": "289defaf-cf0a-4cdc-8646-fdefbe67c1db",
+        "data": "2026-05-30",
+        "local": "Viana",
+        "quantidade_tanque": "2500.00",
+        "litros_bomba": "122510.00",
+        "foto": "https://res.cloudinary.com/da5halra4/image/upload/v1780149714/abastecimentos/5c77948e-8265-4533-9d71-76367b3e0405.jpg",
+        "usuario_id": "2409a049",
+        "usuario_nome": "Vagner",
+        "created_at": "2026-05-30 14:02:00",
+        "sync_token_at": "2026-05-30 14:12:18",
+        "deleted_at": null,
+        "deleted_by": null,
+        "deleted_by_id": null
+    }
+]

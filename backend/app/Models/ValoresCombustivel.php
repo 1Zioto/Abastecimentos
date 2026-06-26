@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\SerializesDatesInAppTimezone;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
 
 class ValoresCombustivel extends Model
 {
+    use SerializesDatesInAppTimezone;
+
     private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'valores_combustivel';
     protected $primaryKey = 'id_valor';
@@ -15,7 +18,7 @@ class ValoresCombustivel extends Model
     protected $keyType = 'string';
     public $timestamps = false;
 
-    protected $fillable = ['id_valor','tipo_combustivel','valor','data','responsavel','sync_token_at'];
+    protected $fillable = ['id_valor','tipo_combustivel','valor','data','responsavel','local','sync_token_at'];
     protected $casts = ['valor' => 'decimal:3','data' => 'datetime', 'sync_token_at' => 'datetime'];
 
     protected static function boot()

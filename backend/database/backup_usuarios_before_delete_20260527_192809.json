@@ -1,0 +1,82 @@
+[
+    {
+        "id_user": "1",
+        "nome": "Douglas",
+        "login": "11705706665",
+        "tipo": "admin",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": "2026-05-27 18:22:09"
+    },
+    {
+        "id_user": "admin-import",
+        "nome": "Administrador",
+        "login": "admin",
+        "tipo": "admin",
+        "filiais_acesso": "[\"Viana\", \"Matriz\"]",
+        "ultimo_acesso": "2026-05-27 19:23:19"
+    },
+    {
+        "id_user": "0edffa3e",
+        "nome": "AUGUSTO",
+        "login": "AUGUSTO",
+        "tipo": "admin",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": "2026-05-18 15:50:06"
+    },
+    {
+        "id_user": "ecb05395-7fd0-499f-8707-eb7fa86ac09b",
+        "nome": "Codex Teste Sync",
+        "login": "codex_teste_sync",
+        "tipo": "operador",
+        "filiais_acesso": "[\"Viana\"]",
+        "ultimo_acesso": "2026-05-20 14:38:55"
+    },
+    {
+        "id_user": "eaa6265d",
+        "nome": "Gabriel",
+        "login": "Gabriel",
+        "tipo": "operador",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": null
+    },
+    {
+        "id_user": "b8387790",
+        "nome": "Heleno",
+        "login": "Heleno",
+        "tipo": "admin",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": null
+    },
+    {
+        "id_user": "b9f9ea94",
+        "nome": "Igor",
+        "login": "Igor",
+        "tipo": "admin",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": null
+    },
+    {
+        "id_user": "e6467cbb",
+        "nome": "Luiz",
+        "login": "Luiz",
+        "tipo": "admin",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": null
+    },
+    {
+        "id_user": "2409a049",
+        "nome": "Vagner",
+        "login": "Vagner",
+        "tipo": "operador",
+        "filiais_acesso": "[\"Viana\"]",
+        "ultimo_acesso": "2026-05-27 18:26:45"
+    },
+    {
+        "id_user": "96ab1fe3",
+        "nome": "Wagner",
+        "login": "Wagner",
+        "tipo": "operador",
+        "filiais_acesso": "[\"Matriz\", \"Viana\"]",
+        "ultimo_acesso": null
+    }
+]

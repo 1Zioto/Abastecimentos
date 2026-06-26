@@ -1,0 +1,15 @@
+{
+    "created_at": "2026-06-03T12:36:39-03:00",
+    "rows": [
+        {
+            "chave": "abastecimento_analysis_engine",
+            "valor": "ai",
+            "updated_at": "2026-06-03 11:06:04"
+        },
+        {
+            "chave": "abastecimento_ai_orientation",
+            "valor": "se nada for encontrado tente encontrar na imagem a Quantidade em Litros\n\nPrimeiro classifique a imagem: bomba/medidor mecânico, recibo/papel, odômetro ou outro.\n\nRegra geral: compare apenas dados visíveis e legíveis. Não invente placa, preço por litro, valor total ou odômetro ausentes.\n\nSe for bomba/medidor, compare principalmente litros/volume. Em bombas antigas, “TOTAL” pode indicar volume totalizado, não valor em reais. Considere imagem girada, cortada, empoeirada ou com visor lateral. Leia os dígitos mesmo tortos. Se o visor mostrar número sem vírgula compatível com 1 decimal implícito, normalize. Ex.: 6132 = 613,2 L.\n\nSe for recibo/papel, compare LT/litros, R$/valor total, placa e odômetro somente quando legíveis. Compare preço unitário apenas se ele aparecer explicitamente.\n\nSe um recibo/papel estiver anexado no campo da bomba, não marque erro por isso; use os campos legíveis para validar o abastecimento.",
+            "updated_at": "2026-06-03 11:06:04"
+        }
+    ]
+}

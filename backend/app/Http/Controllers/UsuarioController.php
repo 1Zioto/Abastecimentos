@@ -8,19 +8,44 @@ use Illuminate\Support\Facades\Hash;
 
 class UsuarioController extends Controller
 {
+    private function normalizarCampoSenha(Request $request): void
+    {
+        if (!$request->filled('password') && $request->filled('senha')) {
+            $request->merge(['password' => $request->input('senha')]);
+        }
+    }
+
+    private function serializeUsuario(Usuario $usuario): array
+    {
+        $data = $usuario->toArray();
+        $data['filiais_acesso'] = $usuario->filiaisAcesso();
+        return $data;
+    }
+
     public function index(Request $request)
     {
+        $this->garantirColunasAuditoria('usuarios');
         $query = Usuario::query();
+        $this->aplicarFiltroAtivos($query, 'usuarios', $request);
+        $this->aplicarFiltroSyncToken($query, $request, 'usuarios');
         if ($request->filled('search')) {
             $query->where(fn($q) => $q->where('nome','ilike','%'.$request->search.'%')
                 ->orWhere('login','ilike','%'.$request->search.'%'));
         }
         if ($request->filled('tipo')) $query->where('tipo', $request->tipo);
-        return new \Illuminate\Http\JsonResponse($query->orderBy('nome')->paginate($request->get('per_page', 50)));
+        if ($this->suportaSyncIncremental($request, 'usuarios')) {
+            $page = $query->orderBy('sync_token_at')->orderBy('id_user')->paginate($request->get('per_page', 50));
+        } else {
+            $page = $query->orderBy('nome')->paginate($request->get('per_page', 50));
+        }
+        $page->getCollection()->transform(fn (Usuario $usuario) => $this->serializeUsuario($usuario));
+        return new \Illuminate\Http\JsonResponse($page);
     }
 
     public function store(Request $request)
     {
+        $this->normalizarCampoSenha($request);
+
         $data = $request->validate([
             'nome'     => 'required|string|max:255',
             'login'    => 'required|string',
@@ -33,21 +58,23 @@ class UsuarioController extends Controller
             ->whereRaw('LOWER(login) = LOWER(?)', [trim((string) $data['login'])])
             ->first();
         if ($existing) {
-            return new \Illuminate\Http\JsonResponse($existing);
+            return new \Illuminate\Http\JsonResponse($this->serializeUsuario($existing));
         }
         $data['password'] = Hash::make($data['password']);
         $data['filiais_acesso'] = Usuario::normalizarFiliais($data['filiais_acesso'] ?? null);
-        return new \Illuminate\Http\JsonResponse(Usuario::create($data), 201);
+        return new \Illuminate\Http\JsonResponse($this->serializeUsuario(Usuario::create($data)), 201);
     }
 
     public function show(string $id)
     {
-        return new \Illuminate\Http\JsonResponse(Usuario::findOrFail($id));
+        return new \Illuminate\Http\JsonResponse($this->serializeUsuario(Usuario::findOrFail($id)));
     }
 
     public function update(Request $request, string $id)
     {
         $usuario = Usuario::findOrFail($id);
+        $this->normalizarCampoSenha($request);
+
         $data = $request->validate([
             'nome'     => 'sometimes|string|max:255',
             'login'    => 'sometimes|string|unique:usuarios,login,'.$id.',id_user',
@@ -64,8 +91,13 @@ class UsuarioController extends Controller
         if (array_key_exists('filiais_acesso', $data)) {
             $data['filiais_acesso'] = Usuario::normalizarFiliais($data['filiais_acesso']);
         }
+        $auditoria = $data;
+        if (array_key_exists('password', $auditoria)) {
+            $auditoria['password'] = '[senha alterada]';
+        }
+        $this->registrarAlteracoes($usuario, $auditoria);
         $usuario->update($data);
-        return new \Illuminate\Http\JsonResponse($usuario->fresh());
+        return new \Illuminate\Http\JsonResponse($this->serializeUsuario($usuario->fresh()));
     }
 
     public function destroy(string $id)
@@ -74,7 +106,11 @@ class UsuarioController extends Controller
         if ($currentUser && $currentUser->id_user === $id) {
             return new \Illuminate\Http\JsonResponse(['message' => 'Não é possível excluir o próprio usuário'], 422);
         }
-        Usuario::findOrFail($id)->delete();
-        return new \Illuminate\Http\JsonResponse(['message' => 'Usuário excluído']);
+        return $this->inativarRegistro(Usuario::findOrFail($id), 'Usuário inativado');
+    }
+
+    public function restore(string $id)
+    {
+        return $this->restaurarRegistro(Usuario::findOrFail($id), 'Usuário restaurado');
     }
 }

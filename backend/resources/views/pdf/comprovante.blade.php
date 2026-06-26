@@ -38,6 +38,8 @@
     $rawDataHora = method_exists($abastecimento, 'getRawOriginal') ? $abastecimento->getRawOriginal('data_hora') : ($abastecimento->data_hora ?? null);
     $tsDataHora = $rawDataHora ? strtotime((string) $rawDataHora) : false;
     $dataHoraFmt = $tsDataHora ? date('d/m/Y H:i', $tsDataHora) : '—';
+    $placaVeiculo = optional($abastecimento->veiculo)->placa ?? $abastecimento->id_veiculo ?? '—';
+    $descricaoVeiculo = trim((string) (optional($abastecimento->veiculo)->marca ?? '') . ' ' . (string) (optional($abastecimento->veiculo)->modelo ?? ''));
   @endphp
 
   <div class="grid">
@@ -50,12 +52,8 @@
       <div class="value">{{ $abastecimento->frentista ?? '—' }}</div>
     </div>
     <div class="field">
-      <div class="label">Placa do Veículo</div>
-      <div class="value">{{ optional($abastecimento->veiculo)->placa ?? $abastecimento->id_veiculo ?? '—' }}</div>
-    </div>
-    <div class="field">
-      <div class="label">Veículo</div>
-      <div class="value">{{ optional($abastecimento->veiculo)->marca }} {{ optional($abastecimento->veiculo)->modelo }}</div>
+      <div class="label">Veículo / Placa</div>
+      <div class="value">{{ $placaVeiculo }}{{ $descricaoVeiculo !== '' ? ' — ' . $descricaoVeiculo : '' }}</div>
     </div>
     <div class="field">
       <div class="label">Motorista</div>

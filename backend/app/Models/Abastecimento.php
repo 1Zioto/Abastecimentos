@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\SerializesDatesInAppTimezone;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class Abastecimento extends Model
 {
+    use SerializesDatesInAppTimezone;
+
     private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'abastecimentos';
     protected $primaryKey = 'id_abastecimento';
@@ -33,6 +36,12 @@ class Abastecimento extends Model
         'foto_odometro',
         'bomba',
         'status',
+        'imagem_verificada_por_id',
+        'imagem_verificada_por',
+        'imagem_verificada_em',
+        'auditoria_auditado_por_id',
+        'auditoria_auditado_por',
+        'auditoria_auditado_em',
         'lancado_sofit',
         'selecionado',
         'lancado_api',
@@ -63,6 +72,8 @@ class Abastecimento extends Model
         'lancado_api' => 'boolean',
         'baixa_abastecimento' => 'boolean',
         'data_baixa' => 'datetime',
+        'imagem_verificada_em' => 'datetime',
+        'auditoria_auditado_em' => 'datetime',
         'created_at' => 'datetime',
         'sync_token_at' => 'datetime',
     ];

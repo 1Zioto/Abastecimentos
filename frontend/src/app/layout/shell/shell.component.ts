@@ -8,7 +8,16 @@ interface NavItem {
   label: string;
   icon: string;
   route: string;
+  group: NavGroup;
   adminOnly?: boolean;
+  privateOnly?: boolean;
+}
+
+type NavGroup = 'Principal' | 'Financeiro' | 'Cadastros' | 'Controle' | 'Sistema';
+
+interface VisibleNavGroup {
+  label: NavGroup;
+  items: NavItem[];
 }
 
 @Component({
@@ -43,11 +52,29 @@ interface NavItem {
         </div>
 
         <nav class="sidebar-nav">
-          @for (item of visibleNavItems(); track item.route) {
-            <a [routerLink]="item.route" routerLinkActive="active" class="nav-item">
-              <span class="nav-icon">{{ item.icon }}</span>
-              <span class="nav-label">{{ item.label }}</span>
-            </a>
+          @for (group of visibleNavGroups(); track group.label) {
+            <section class="nav-group" [class.group-collapsed]="isNavGroupCollapsed(group)">
+              <button
+                type="button"
+                class="nav-group-toggle"
+                (click)="toggleNavGroup(group.label)"
+                [attr.aria-expanded]="!isNavGroupCollapsed(group)"
+              >
+                <span class="nav-group-label">{{ group.label }}</span>
+                <span class="nav-group-meta">
+                  <span class="nav-group-count">{{ group.items.length }}</span>
+                  <span class="nav-group-chevron">{{ isNavGroupCollapsed(group) ? '▾' : '▴' }}</span>
+                </span>
+              </button>
+              <div class="nav-group-items">
+                @for (item of group.items; track item.route) {
+                  <a [routerLink]="item.route" routerLinkActive="active" class="nav-item">
+                    <span class="nav-icon">{{ item.icon }}</span>
+                    <span class="nav-label">{{ item.label }}</span>
+                  </a>
+                }
+              </div>
+            </section>
           }
         </nav>
 
@@ -80,7 +107,14 @@ interface NavItem {
             </select>
           </label>
         </div>
-        <router-outlet />
+        @if (routeReady()) {
+          <router-outlet />
+        } @else {
+          <div class="branch-refresh-state">
+            <div class="loading-spinner"></div>
+            <span>Atualizando filial...</span>
+          </div>
+        }
       </main>
     </div>
   `,
@@ -176,7 +210,78 @@ interface NavItem {
       overflow-x: hidden;
       display: flex;
       flex-direction: column;
+      gap: 14px;
+    }
+
+    .nav-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .nav-group-toggle {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      padding: 2px 10px 4px 12px;
+      color: #94A3B8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .nav-group-toggle:hover {
+      background: #F8FAFC;
+      color: #64748B;
+    }
+
+    .nav-group-label {
+      color: #94A3B8;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.7px;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    .nav-group-meta {
+      display: inline-flex;
+      align-items: center;
       gap: 6px;
+      color: #CBD5E1;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .nav-group-count {
+      min-width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: #F1F5F9;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+    }
+
+    .nav-group-chevron {
+      font-size: 12px;
+      color: #94A3B8;
+    }
+
+    .nav-group-items {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .nav-group.group-collapsed .nav-group-items {
+      display: none;
     }
 
     .nav-item {
@@ -201,6 +306,9 @@ interface NavItem {
 
     .nav-icon { font-size: 16px; flex-shrink: 0; width: 24px; text-align: center; }
     .nav-label { font-size: 14px; font-weight: 600; color: #1F2937; }
+    .sidebar-collapsed .nav-group { gap: 4px; }
+    .sidebar-collapsed .nav-group-toggle { display: none; }
+    .sidebar-collapsed .nav-group-items { display: flex !important; }
     .sidebar-collapsed .nav-label { display: none; }
 
     .sidebar-footer {
@@ -331,6 +439,28 @@ interface NavItem {
       display: none;
     }
 
+    .branch-refresh-state {
+      min-height: calc(100vh - 64px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: #64748B;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .loading-spinner {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 3px solid #E5E7EB;
+      border-top-color: #2563EB;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     @media (max-width: 768px) {
       :host { min-height: 100vh; }
 
@@ -415,6 +545,19 @@ interface NavItem {
         gap: 8px;
       }
 
+      .nav-group {
+        display: contents;
+      }
+
+      .nav-group-toggle {
+        display: none;
+      }
+
+      .nav-group-items,
+      .nav-group.group-collapsed .nav-group-items {
+        display: contents;
+      }
+
       .nav-item {
         min-width: 72px;
         height: 58px;
@@ -456,22 +599,80 @@ export class ShellComponent {
   auth = inject(AuthService);
   private router = inject(Router);
   sidebarCollapsed = signal(false);
+  routeReady = signal(true);
+  collapsedNavGroups = signal<Record<NavGroup, boolean>>({
+    Principal: false,
+    Financeiro: true,
+    Cadastros: true,
+    Controle: true,
+    Sistema: true,
+  });
+
+  navGroups: NavGroup[] = ['Principal', 'Financeiro', 'Cadastros', 'Controle', 'Sistema'];
 
   navItems: NavItem[] = [
-    { label: 'Dashboard',        icon: '📊', route: '/dashboard', adminOnly: true },
-    { label: 'Abastecimentos',   icon: '⛽', route: '/abastecimentos' },
-    { label: 'Baixa',            icon: '✅', route: '/baixa', adminOnly: true },
-    { label: 'Entrada de Notas', icon: '🧾', route: '/entrada-notas' },
-    { label: 'Relatórios',       icon: '📈', route: '/relatorios', adminOnly: true },
-    { label: 'Combustível',      icon: '💲', route: '/valores-combustivel', adminOnly: true },
-    { label: 'Proprietários',    icon: '🏢', route: '/proprietarios' },
-    { label: 'Veículos',         icon: '🚗', route: '/veiculos' },
-    { label: 'Motoristas',       icon: '👤', route: '/motoristas' },
-    { label: 'Usuários',         icon: '🔐', route: '/usuarios', adminOnly: true },
+    { label: 'Dashboard',        icon: '📊', route: '/dashboard', group: 'Principal', adminOnly: true },
+    { label: 'Gráficos',         icon: '📉', route: '/graficos', group: 'Principal', adminOnly: true },
+    { label: 'Abastecimentos',   icon: '⛽', route: '/abastecimentos', group: 'Principal' },
+    { label: 'Lançar no Sofit',   icon: '↗', route: '/lancar-sofit', group: 'Principal' },
+    { label: 'Entrada de Notas', icon: '🧾', route: '/entrada-notas', group: 'Principal' },
+    { label: 'Baixa',            icon: '✅', route: '/baixa', group: 'Financeiro', adminOnly: true },
+    { label: 'Baixa por Comprovante', icon: '📲', route: '/nova-baixa-comprovante', group: 'Financeiro', adminOnly: true },
+    { label: 'Despesas',         icon: '💸', route: '/despesas-avulsas', group: 'Financeiro', adminOnly: true },
+    { label: 'Relatórios',       icon: '📈', route: '/relatorios', group: 'Financeiro', adminOnly: true },
+    { label: 'Balancete',        icon: '▦', route: '/balancete-privado', group: 'Financeiro', adminOnly: true, privateOnly: true },
+    { label: 'Proprietários',    icon: '🏢', route: '/proprietarios', group: 'Cadastros' },
+    { label: 'Veículos',         icon: '🚗', route: '/veiculos', group: 'Cadastros' },
+    { label: 'Transferir Veículo', icon: '⇄', route: '/transferencia-veiculo', group: 'Cadastros', adminOnly: true },
+    { label: 'Motoristas',       icon: '👤', route: '/motoristas', group: 'Cadastros' },
+    { label: 'Combustível',      icon: '💲', route: '/valores-combustivel', group: 'Cadastros', adminOnly: true },
+    { label: 'Usuários',         icon: '🔐', route: '/usuarios', group: 'Cadastros', adminOnly: true },
+    { label: 'Auditoria',        icon: '🔎', route: '/auditoria-abastecimentos', group: 'Controle', adminOnly: true },
+    { label: 'Encerrantes',      icon: '⏱', route: '/encerrantes-bomba', group: 'Controle', adminOnly: true },
+    { label: 'Histórico',        icon: '🕘', route: '/historico-alteracoes', group: 'Sistema', adminOnly: true },
+    { label: 'Erros do App',     icon: '⚠', route: '/app-erros', group: 'Sistema', adminOnly: true },
+    { label: 'Configurações',    icon: '⚙', route: '/configuracoes', group: 'Sistema', adminOnly: true },
   ];
 
   visibleNavItems() {
-    return this.navItems.filter(i => !i.adminOnly || this.auth.isAdmin());
+    return this.navItems.filter(i => {
+      if (i.adminOnly && !this.auth.isAdmin()) return false;
+      if (i.privateOnly && !this.canAccessPrivateScreens()) return false;
+      return true;
+    });
+  }
+
+  visibleNavGroups(): VisibleNavGroup[] {
+    const items = this.visibleNavItems();
+    return this.navGroups
+      .map(label => ({ label, items: items.filter(item => item.group === label) }))
+      .filter(group => group.items.length > 0);
+  }
+
+  isNavGroupCollapsed(group: VisibleNavGroup): boolean {
+    if (this.sidebarCollapsed()) return false;
+    if (this.groupHasActiveRoute(group)) return false;
+    return this.collapsedNavGroups()[group.label] ?? false;
+  }
+
+  toggleNavGroup(group: NavGroup) {
+    this.collapsedNavGroups.update(current => ({
+      ...current,
+      [group]: !current[group],
+    }));
+  }
+
+  private groupHasActiveRoute(group: VisibleNavGroup): boolean {
+    const currentUrl = this.router.url.split('?')[0].split('#')[0];
+    return group.items.some(item =>
+      currentUrl === item.route || currentUrl.startsWith(`${item.route}/`)
+    );
+  }
+
+  canAccessPrivateScreens(): boolean {
+    const user = this.auth.currentUser();
+    const ident = `${user?.login ?? ''} ${user?.nome ?? ''}`.toLowerCase();
+    return user?.tipo === 'admin' && (ident.includes('douglas') || user?.login === 'admin');
   }
 
   userInitial(): string {
@@ -497,10 +698,8 @@ export class ShellComponent {
   trocarFilial(filial: string) {
     if (!this.auth.canAccessGaragem(filial) || filial === this.auth.getGaragem()) return;
     this.auth.setGaragem(filial);
-    const destino = this.router.url.split('?')[0] || '/dashboard';
-    this.router.navigateByUrl('/dashboard', { skipLocationChange: true }).then(() => {
-      this.router.navigateByUrl(destino);
-    });
+    this.routeReady.set(false);
+    window.setTimeout(() => this.routeReady.set(true), 0);
   }
 
   trocarGaragem() {

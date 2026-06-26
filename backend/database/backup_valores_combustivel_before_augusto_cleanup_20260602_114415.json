@@ -1,0 +1,71 @@
+{
+    "created_at": "2026-06-02T11:44:15-03:00",
+    "kept_id_valor": "b9e02d1e-6a76-4123-ac19-d88efdb70261",
+    "rows": [
+        {
+            "id_valor": "a2fe0bc8-6480-46e8-8d22-111dce033c5c",
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "valor": "6.400",
+            "data": "2026-06-02T11:10:04",
+            "responsavel": "Douglas",
+            "sync_token_at": "2026-06-02T08:10:04",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null,
+            "local": "Matriz"
+        },
+        {
+            "id_valor": "7a4b6208-9016-41e7-82b5-815a77360655",
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "valor": "6.400",
+            "data": "2026-06-02T11:10:04",
+            "responsavel": "Douglas",
+            "sync_token_at": "2026-06-02T08:10:04",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null,
+            "local": "Viana"
+        },
+        {
+            "id_valor": "b9e02d1e-6a76-4123-ac19-d88efdb70261",
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "valor": "6.400",
+            "data": "2026-05-28T15:00:06",
+            "responsavel": "AUGUSTO",
+            "sync_token_at": "2026-06-01T20:01:09",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null,
+            "local": "Viana"
+        },
+        {
+            "id_valor": "ded6e4fa-6443-4647-9237-b69fd0b65cb2",
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "valor": "6.400",
+            "data": "2026-05-27T17:25:04",
+            "responsavel": "Administrador",
+            "sync_token_at": "2026-06-01T20:01:09",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null,
+            "local": "Viana"
+        },
+        {
+            "id_valor": "163d1db6-8b85-489c-9fcc-b3011e5b20ff",
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "valor": "6.590",
+            "data": "2026-05-25T18:01:47",
+            "responsavel": "Douglas",
+            "sync_token_at": "2026-06-01T20:01:09",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null,
+            "local": "Viana"
+        }
+    ]
+}

@@ -1,8 +1,8 @@
 import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { ApiService } from '../../core/services/api.service';
-import { DashboardData } from '../../shared/models';
+import { Abastecimento, DashboardData } from '../../shared/models';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -40,30 +40,108 @@ interface BeforeInstallPromptEvent extends Event {
       }
 
       @if (data(); as d) {
-        <section class="kpi-grid">
-          <article class="kpi-card">
-            <div class="kpi-icon icon-success">💰</div>
-            <div class="kpi-content">
-              <span class="kpi-value">{{ kpiValorVendido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
-              <span class="kpi-label">Valor Total Vendido</span>
+        @if (inconsistencias().length > 0) {
+          <section class="inconsistency-log">
+            <div class="inconsistency-main">
+              <span class="inconsistency-icon">⚑</span>
+              <div>
+                <h3>Log de inconsistências</h3>
+                <p>{{ inconsistencias().length }} abastecimento(s) aguardando conferência</p>
+              </div>
             </div>
-          </article>
+            <button type="button" class="inconsistency-btn" [disabled]="loadingInconsistencias()" (click)="openInconsistenciasModal()">
+              {{ loadingInconsistencias() ? 'Carregando...' : 'Acessar log' }}
+            </button>
+          </section>
+        }
 
-          <article class="kpi-card">
-            <div class="kpi-icon icon-pending">⏳</div>
-            <div class="kpi-content">
-              <span class="kpi-value">{{ kpiValorPendente(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
-              <span class="kpi-label">Valor Pendente de Baixa</span>
+        <section class="kpi-board">
+          <div class="kpi-group group-period">
+            <div class="kpi-group-title">
+              <span>Período</span>
+              <small>{{ selectedMesRef() ? mesLabelSelecionado(d) : 'Últimos 12 meses' }}</small>
             </div>
-          </article>
+            <div class="kpi-grid kpi-grid-two">
+              <article class="kpi-card">
+                <div class="kpi-icon icon-buy">🧾</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiValorComprado(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+                  <span class="kpi-label">Custo Final Comprado</span>
+                </div>
+              </article>
 
-          <article class="kpi-card">
-            <div class="kpi-icon icon-primary">💰</div>
-            <div class="kpi-content">
-              <span class="kpi-value">{{ kpiValorRecebido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
-              <span class="kpi-label">Valor Total Recebido</span>
+              <article class="kpi-card">
+                <div class="kpi-icon icon-success">💰</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiValorVendido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+                  <span class="kpi-label">Valor Total Vendido</span>
+                </div>
+              </article>
             </div>
-          </article>
+          </div>
+
+          <div class="kpi-group group-today">
+            <div class="kpi-group-title">
+              <span>Hoje</span>
+              <small>Operação do dia</small>
+            </div>
+            <div class="kpi-grid kpi-grid-two">
+              <article class="kpi-card">
+                <div class="kpi-icon icon-success">💰</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiValorVendidoHoje(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+                  <span class="kpi-label">Valor Vendido Hoje</span>
+                </div>
+              </article>
+
+              <article class="kpi-card">
+                <div class="kpi-icon icon-liters">⛽</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiLitrosVendidosHoje(d) | number:'1.2-2' }} L</span>
+                  <span class="kpi-label">Litros Vendidos Hoje</span>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <div class="kpi-group group-balance">
+            <div class="kpi-group-title">
+              <span>Baixas e Tanque</span>
+              <small>Recebimento e estoque</small>
+            </div>
+            <div class="kpi-grid kpi-grid-three">
+              <article class="kpi-card">
+                <div class="kpi-icon icon-pending">⏳</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiValorPendente(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+                  <span class="kpi-label">Valor Pendente de Baixa</span>
+                </div>
+              </article>
+
+              <article class="kpi-card">
+                <div class="kpi-icon icon-primary">💰</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiValorRecebido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
+                  <span class="kpi-label">Valor Total Recebido</span>
+                </div>
+              </article>
+
+              <article class="kpi-card tank-kpi">
+                <div class="kpi-icon icon-tank">⛽</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiCombustivelTanque(d) | number:'1.2-2' }} L</span>
+                  <span class="kpi-label">Combustível no Tanque</span>
+                  <span class="kpi-detail">
+                    Comprado {{ kpiCombustivelComprado(d) | number:'1.2-2' }} L − Abastecido {{ kpiCombustivelVendido(d) | number:'1.2-2' }} L
+                  </span>
+                </div>
+                <div class="mini-tank" [style.--tank-level]="dashboardTankLevel(d) + '%'" aria-hidden="true">
+                  <div class="mini-liquid"></div>
+                  <div class="mini-line"></div>
+                </div>
+              </article>
+            </div>
+          </div>
         </section>
 
         <section class="charts-grid">
@@ -77,7 +155,7 @@ interface BeforeInstallPromptEvent extends Event {
                   <span class="filter-chip">Mês: {{ mesLabelSelecionado(d) }}</span>
                 }
                 @if (selectedStatus()) {
-                  <span class="filter-chip">Status: {{ selectedStatus() }}</span>
+                  <span class="filter-chip">Baixa: {{ selectedStatus() }}</span>
                 }
                 <button class="btn-clear-filters" (click)="clearChartFilters()">Limpar filtros</button>
               </div>
@@ -108,7 +186,7 @@ interface BeforeInstallPromptEvent extends Event {
 
           <article class="panel donut-panel">
             <div class="panel-header">
-              <h3>Pendente x Pago</h3>
+              <h3>Baixa: Pendente x Pago</h3>
             </div>
             <div class="donut-layout">
               <svg viewBox="0 0 220 220" class="donut-svg">
@@ -146,7 +224,7 @@ interface BeforeInstallPromptEvent extends Event {
         <section class="charts-grid">
           <article class="panel line-panel">
             <div class="panel-header">
-              <h3>Últimos 12 meses — Comprado x Vendido (R$)</h3>
+              <h3>Últimos 12 meses — Custo Final x Vendido (R$)</h3>
             </div>
             <div class="bar-chart-wrap">
               <div class="bar-chart-grid"></div>
@@ -167,14 +245,14 @@ interface BeforeInstallPromptEvent extends Event {
               </div>
             </div>
             <div class="compare-legend">
-              <span><i class="legend-dot comprado"></i> Comprado (R$)</span>
+              <span><i class="legend-dot comprado"></i> Comprado com transporte (R$)</span>
               <span><i class="legend-dot vendido"></i> Vendido (R$)</span>
             </div>
           </article>
 
           <article class="panel donut-panel">
             <div class="panel-header">
-              <h3>Últimos 12 meses — Pendente x Pago (R$)</h3>
+              <h3>Últimos 12 meses — Baixa Pendente x Pago (R$)</h3>
             </div>
             <div class="donut-layout">
               <svg viewBox="0 0 220 220" class="donut-svg">
@@ -250,6 +328,101 @@ interface BeforeInstallPromptEvent extends Event {
           }
         </section>
       }
+
+      @if (showInconsistenciasModal()) {
+        <div class="modal-overlay" (click)="closeInconsistenciasModal()">
+          <div class="modal inconsistency-modal" (click)="$event.stopPropagation()">
+            <div class="modal-head">
+              <div>
+                <h3>Abastecimentos inconsistentes</h3>
+                <p>{{ inconsistencias().length }} registro(s) pendente(s) de conferência</p>
+              </div>
+              <button type="button" class="modal-close" (click)="closeInconsistenciasModal()">×</button>
+            </div>
+
+            @if (inconsistencias().length > 0) {
+              <div class="inconsistency-list">
+                @for (item of inconsistencias(); track item.id_abastecimento) {
+                  <article class="inconsistency-item">
+                    <div class="inconsistency-title">
+                      <strong>{{ item.veiculo?.placa || item.id_veiculo || '—' }}</strong>
+                      <span class="status-flag">Inconsistente</span>
+                    </div>
+                    <div class="inconsistency-meta">
+                      <span>{{ item.data | date:'dd/MM/yyyy' }}</span>
+                      <span>{{ item.quantidade_litros | number:'1.2-2' }} L</span>
+                      <span>{{ item.valor_total | currency:'BRL':'symbol':'1.2-2' }}</span>
+                    </div>
+                    <div class="inconsistency-details">
+                      <div>
+                        <small>Proprietário</small>
+                        <strong>{{ item.nome_proprietario || item.proprietario?.nome || '—' }}</strong>
+                      </div>
+                      <div>
+                        <small>Motorista</small>
+                        <strong>{{ item.nome_motorista || item.motorista?.nome || '—' }}</strong>
+                      </div>
+                      <div>
+                        <small>Combustível</small>
+                        <strong>{{ item.tipo_combustivel || '—' }}</strong>
+                      </div>
+                      <div>
+                        <small>Local</small>
+                        <strong>{{ item.local || '—' }}</strong>
+                      </div>
+                      <div>
+                        <small>Odômetro</small>
+                        <strong>{{ item.odometro ?? '—' }}</strong>
+                      </div>
+                    </div>
+
+                    <div class="inconsistency-attachments">
+                      @if (resolveImageUrl(item.foto_odometro); as fotoOdometroUrl) {
+                        <button type="button" class="attachment-thumb" (click)="openImagePreview(fotoOdometroUrl)">
+                          <img [src]="fotoOdometroUrl" alt="Foto do hodômetro">
+                          <span>Hodômetro</span>
+                        </button>
+                      }
+                      @if (resolveImageUrl(item.bomba); as bombaUrl) {
+                        <button type="button" class="attachment-thumb" (click)="openImagePreview(bombaUrl)">
+                          <img [src]="bombaUrl" alt="Imagem da bomba">
+                          <span>Bomba</span>
+                        </button>
+                      }
+                      @if (!resolveImageUrl(item.foto_odometro) && !resolveImageUrl(item.bomba)) {
+                        <p>Sem imagem anexada.</p>
+                      }
+                    </div>
+
+                    <div class="inconsistency-actions">
+                      <button type="button" class="btn-secondary" (click)="editarAbastecimento(item)">
+                        Editar abastecimento
+                      </button>
+                      <button type="button" class="btn-verified" (click)="marcarVerificado(item)">
+                        Verificado
+                      </button>
+                    </div>
+                  </article>
+                }
+              </div>
+            } @else {
+              <div class="empty-state table-empty">
+                <span class="empty-icon">✓</span>
+                <p>Nenhuma inconsistência pendente.</p>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+      @if (previewImageUrl()) {
+        <div class="image-overlay" (click)="closeImagePreview()">
+          <div class="image-modal" (click)="$event.stopPropagation()">
+            <img [src]="previewImageUrl()" alt="Imagem ampliada">
+            <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+          </div>
+        </div>
+      }
     </div>
   `,
   styles: [`
@@ -276,6 +449,8 @@ interface BeforeInstallPromptEvent extends Event {
       align-items: center;
       justify-content: flex-end;
       min-height: 40px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .install-app-btn {
@@ -322,6 +497,328 @@ interface BeforeInstallPromptEvent extends Event {
       white-space: nowrap;
     }
 
+    .inconsistency-log {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: #FFF7ED;
+      border: 1px solid #FDBA74;
+      border-left: 5px solid #F97316;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+
+    .inconsistency-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .inconsistency-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #FED7AA;
+      color: #9A3412;
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    .inconsistency-log h3 {
+      margin: 0;
+      font-size: 15px;
+      color: #9A3412;
+    }
+
+    .inconsistency-log p {
+      margin: 3px 0 0;
+      font-size: 12px;
+      color: #C2410C;
+    }
+
+    .inconsistency-btn {
+      border: 1px solid #FB923C;
+      background: #F97316;
+      color: #FFFFFF;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .inconsistency-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(15, 23, 42, 0.58);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal {
+      background: #FFFFFF;
+      border-radius: 14px;
+      width: min(760px, 100%);
+      max-height: min(82vh, 760px);
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.24);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      border-bottom: 1px solid #E5E7EB;
+    }
+
+    .modal-head h3 {
+      margin: 0;
+      font-size: 18px;
+      color: #111827;
+    }
+
+    .modal-head p {
+      margin: 4px 0 0;
+      color: #6B7280;
+      font-size: 13px;
+    }
+
+    .modal-close {
+      border: 0;
+      background: #F3F4F6;
+      color: #374151;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .inconsistency-list {
+      max-height: 62vh;
+      overflow: auto;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .inconsistency-item {
+      border: 1px solid #FED7AA;
+      background: #FFF7ED;
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .inconsistency-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .inconsistency-item strong {
+      color: #9A3412;
+      font-size: 14px;
+    }
+
+    .inconsistency-item span {
+      color: #475569;
+      font-size: 12px;
+    }
+
+    .status-flag {
+      background: #FED7AA;
+      border: 1px solid #FB923C;
+      border-radius: 999px;
+      color: #9A3412 !important;
+      font-weight: 800;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
+
+    .inconsistency-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .inconsistency-meta span {
+      background: #FFFFFF;
+      border: 1px solid #FDBA74;
+      border-radius: 999px;
+      padding: 4px 8px;
+      color: #9A3412;
+      font-weight: 700;
+    }
+
+    .inconsistency-item p {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: #92400E;
+    }
+
+    .inconsistency-details {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px;
+      background: #FFFFFF;
+      border: 1px solid #FED7AA;
+      border-radius: 10px;
+    }
+
+    .inconsistency-details div {
+      min-width: 0;
+    }
+
+    .inconsistency-details small {
+      display: block;
+      color: #92400E;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+
+    .inconsistency-details strong {
+      display: block;
+      color: #111827;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inconsistency-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .attachment-thumb {
+      width: 116px;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      color: #111827;
+    }
+
+    .attachment-thumb img {
+      width: 116px;
+      height: 82px;
+      display: block;
+      border-radius: 10px;
+      object-fit: cover;
+      border: 1px solid #FDBA74;
+      background: #FFFFFF;
+    }
+
+    .attachment-thumb span {
+      display: block;
+      margin-top: 5px;
+      color: #9A3412;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .attachment-thumb:hover img {
+      border-color: #F97316;
+      box-shadow: 0 8px 18px rgba(249, 115, 22, 0.22);
+    }
+
+    .image-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      background: rgba(2, 6, 23, 0.88);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .image-modal {
+      max-width: min(94vw, 1100px);
+      max-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .image-modal img {
+      max-width: 100%;
+      max-height: calc(92vh - 58px);
+      object-fit: contain;
+      border-radius: 12px;
+      background: #020617;
+      border: 1px solid #334155;
+    }
+
+    .btn-close-image {
+      border: 1px solid #CBD5E1;
+      background: #FFFFFF;
+      color: #111827;
+      border-radius: 10px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .inconsistency-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn-secondary,
+    .btn-verified {
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .btn-secondary {
+      border: 1px solid #CBD5E1;
+      background: #FFFFFF;
+      color: #111827;
+    }
+
+    .btn-verified {
+      border: 1px solid #16A34A;
+      background: #DCFCE7;
+      color: #14532D;
+    }
+
     .dashboard-header h1 {
       margin: 0;
       font-size: 30px;
@@ -359,11 +856,58 @@ interface BeforeInstallPromptEvent extends Event {
       box-shadow: 0 0 0 3px #DBEAFE;
     }
 
-    .kpi-grid {
+    .kpi-board {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
       margin-bottom: 18px;
+    }
+
+    .kpi-group {
+      background: #F8FAFC;
+      border: 1px solid #E5E7EB;
+      border-radius: 16px;
+      padding: 12px;
+      min-width: 0;
+    }
+
+    .group-balance {
+      grid-column: 1 / -1;
+    }
+
+    .kpi-group-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 2px 10px;
+    }
+
+    .kpi-group-title span {
+      color: #111827;
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .kpi-group-title small {
+      color: #64748B;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .kpi-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .kpi-grid-two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .kpi-grid-three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .kpi-card {
@@ -398,6 +942,52 @@ interface BeforeInstallPromptEvent extends Event {
     .icon-success { background: #DCFCE7; }
     .icon-info { background: #FEE2E2; }
     .icon-pending { background: #DBEAFE; }
+    .icon-liters { background: #E0F2FE; }
+    .icon-tank { background: #E0F2FE; }
+    .icon-buy { background: #FFEDD5; }
+
+    .tank-kpi {
+      align-items: center;
+    }
+
+    .tank-kpi .kpi-content {
+      flex: 1;
+    }
+
+    .mini-tank {
+      position: relative;
+      width: 74px;
+      height: 74px;
+      flex: 0 0 74px;
+      overflow: hidden;
+      border: 7px solid #A7B5AE;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.7), transparent 36%),
+        linear-gradient(120deg, #DDE5E0, #9CA8A2);
+      box-shadow: inset -8px -7px 14px rgba(15, 23, 42, 0.16);
+    }
+
+    .mini-liquid {
+      position: absolute;
+      left: -4%;
+      right: -4%;
+      bottom: 0;
+      height: var(--tank-level);
+      background: linear-gradient(180deg, #F8CD63, #C9770D);
+      border-top: 2px solid #F8DD85;
+      transition: height 0.2s ease;
+    }
+
+    .mini-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      background: rgba(68, 85, 78, 0.2);
+    }
+
     .kpi-content {
       display: flex;
       flex-direction: column;
@@ -413,6 +1003,12 @@ interface BeforeInstallPromptEvent extends Event {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .kpi-detail {
+      color: #64748B;
+      font-size: 11px;
+      line-height: 1.3;
     }
 
     .kpi-label {
@@ -784,7 +1380,8 @@ interface BeforeInstallPromptEvent extends Event {
     }
 
     @media (max-width: 1160px) {
-      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .kpi-board { grid-template-columns: 1fr; }
+      .kpi-grid-three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .charts-grid { grid-template-columns: 1fr; }
       .bar-chart-wrap { height: 300px; }
       .bars { height: 234px; }
@@ -794,7 +1391,10 @@ interface BeforeInstallPromptEvent extends Event {
       .dashboard-page { padding: 16px; }
       .dashboard-header { flex-direction: column; }
       .dashboard-actions { width: 100%; justify-content: flex-start; }
-      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .kpi-grid,
+      .kpi-grid-two,
+      .kpi-grid-three { grid-template-columns: 1fr; }
+      .tank-kpi { grid-column: 1 / -1; }
       .header-filters { width: 100%; }
       .filter-select { flex: 1; min-width: 0; }
       .panel { padding: 14px; }
@@ -820,6 +1420,7 @@ interface BeforeInstallPromptEvent extends Event {
 })
 export class DashboardComponent implements OnInit, OnDestroy {
   private api = inject(ApiService);
+  private router = inject(Router);
   private readonly onGaragemChanged = () => {
     this.clearChartFilters();
     this.load();
@@ -827,6 +1428,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   data = signal<DashboardData | null>(null);
   loading = signal(true);
+  inconsistencias = signal<Abastecimento[]>([]);
+  loadingInconsistencias = signal(false);
+  showInconsistenciasModal = signal(false);
+  previewImageUrl = signal('');
   selectedMesRef = signal<string | null>(null);
   selectedStatus = signal<'Pendente' | 'Pago' | null>(null);
   canInstallApp = signal(false);
@@ -873,6 +1478,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   load() {
     this.loading.set(true);
+    this.loadInconsistencias();
     this.api.getDashboard().subscribe({
       next: (d) => {
         const normalized = this.normalizeDashboard(d as DashboardData & any);
@@ -883,6 +1489,75 @@ export class DashboardComponent implements OnInit, OnDestroy {
       error: () => {
         this.data.set(null);
         this.loading.set(false);
+      }
+    });
+  }
+
+  loadInconsistencias() {
+    this.loadingInconsistencias.set(true);
+    this.api.getAbastecimentos({ status: 'Inconsistente', per_page: 50 }).subscribe({
+      next: (resp) => {
+        this.inconsistencias.set(resp.data ?? []);
+        this.loadingInconsistencias.set(false);
+      },
+      error: () => {
+        this.inconsistencias.set([]);
+        this.loadingInconsistencias.set(false);
+      }
+    });
+  }
+
+  openInconsistenciasModal() {
+    if (!this.inconsistencias().length) return;
+    this.showInconsistenciasModal.set(true);
+  }
+
+  closeInconsistenciasModal() {
+    this.showInconsistenciasModal.set(false);
+  }
+
+  openImagePreview(url?: string | null) {
+    const imageUrl = this.resolveImageUrl(url);
+    if (!imageUrl) return;
+    this.previewImageUrl.set(imageUrl);
+  }
+
+  closeImagePreview() {
+    this.previewImageUrl.set('');
+  }
+
+  resolveImageUrl(url?: string | null): string | null {
+    if (!url) return null;
+    const normalized = String(url).trim();
+    if (!normalized) return null;
+    if (
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('data:image/') ||
+      normalized.startsWith('blob:')
+    ) {
+      return normalized;
+    }
+    return null;
+  }
+
+  editarAbastecimento(item: Abastecimento) {
+    if (!item.id_abastecimento) return;
+    this.closeInconsistenciasModal();
+    this.router.navigate(['/abastecimentos', item.id_abastecimento, 'editar']);
+  }
+
+  marcarVerificado(item: Abastecimento) {
+    if (!item.id_abastecimento) return;
+    this.api.verificarInconsistencia(item.id_abastecimento).subscribe({
+      next: () => {
+        this.inconsistencias.update(items =>
+          items.filter(a => a.id_abastecimento !== item.id_abastecimento)
+        );
+        if (!this.inconsistencias().length) this.closeInconsistenciasModal();
+      },
+      error: () => {
+        this.loadInconsistencias();
       }
     });
   }
@@ -1069,12 +1744,52 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return this.getFilteredTotals(d).vendido;
   }
 
+  kpiValorComprado(d: DashboardData): number {
+    const selectedMes = this.selectedMesRef();
+    if (selectedMes) {
+      return (d?.comparativo_12_meses ?? [])
+        .filter((item) => item.mes_ref === selectedMes)
+        .reduce((sum, item) => sum + Number(item.comprado_valor ?? 0), 0);
+    }
+
+    const totalApi = Number(d?.totais?.valor_total_comprado ?? 0);
+    if (totalApi > 0) return totalApi;
+
+    return (d?.comparativo_12_meses ?? []).reduce((sum, item) => sum + Number(item.comprado_valor ?? 0), 0);
+  }
+
+  kpiValorVendidoHoje(d: DashboardData): number {
+    return Number(d?.totais?.valor_vendido_hoje ?? 0);
+  }
+
+  kpiLitrosVendidosHoje(d: DashboardData): number {
+    return Number(d?.totais?.litros_vendidos_hoje ?? 0);
+  }
+
   kpiValorPendente(d: DashboardData): number {
     return this.getFilteredTotals(d).pendente;
   }
 
   kpiValorRecebido(d: DashboardData): number {
     return this.getFilteredTotals(d).recebido;
+  }
+
+  kpiCombustivelTanque(d: DashboardData): number {
+    return Number(d?.totais?.combustivel_tanque_litros ?? 0);
+  }
+
+  kpiCombustivelComprado(d: DashboardData): number {
+    return Number(d?.totais?.combustivel_comprado_litros ?? 0);
+  }
+
+  kpiCombustivelVendido(d: DashboardData): number {
+    return Number(d?.totais?.combustivel_vendido_litros ?? d?.totais?.litros ?? 0);
+  }
+
+  dashboardTankLevel(d: DashboardData): number {
+    const atual = Math.max(0, this.kpiCombustivelTanque(d));
+    const capacidade = Math.max(15000, Math.ceil(Math.max(atual, 1) / 1000) * 1000);
+    return Math.max(0, Math.min(100, (atual / capacidade) * 100));
   }
 
   totalStatus(d: DashboardData): number {
@@ -1112,9 +1827,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
         litros: Number(raw?.totais?.litros ?? 0),
         valor: Number(raw?.totais?.valor ?? 0),
         pendente_baixa: Number(raw?.totais?.pendente_baixa ?? 0),
+        valor_total_comprado: Number(raw?.totais?.valor_total_comprado ?? 0),
         valor_total_vendido: Number(raw?.totais?.valor_total_vendido ?? raw?.totais?.valor ?? 0),
         valor_total_pendente_baixa: Number(raw?.totais?.valor_total_pendente_baixa ?? 0),
         valor_total_recebido: Number(raw?.totais?.valor_total_recebido ?? 0),
+        litros_vendidos_hoje: Number(raw?.totais?.litros_vendidos_hoje ?? 0),
+        valor_vendido_hoje: Number(raw?.totais?.valor_vendido_hoje ?? 0),
+        combustivel_comprado_litros: Number(raw?.totais?.combustivel_comprado_litros ?? 0),
+        combustivel_vendido_litros: Number(raw?.totais?.combustivel_vendido_litros ?? raw?.totais?.litros ?? 0),
+        combustivel_tanque_litros: Number(raw?.totais?.combustivel_tanque_litros ?? 0),
       },
       comparativo_12_meses: comparativo.map((item: any) => ({
         mes_ref: String(item?.mes_ref ?? ''),

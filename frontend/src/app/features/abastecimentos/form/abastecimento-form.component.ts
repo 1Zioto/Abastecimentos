@@ -1,13 +1,14 @@
 // src/app/features/abastecimentos/form/abastecimento-form.component.ts
 import { Component, OnInit, inject, signal, Input, computed } from '@angular/core';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Proprietario, Veiculo, Motorista } from '../../../shared/models';
 import { AuthService } from '../../../core/services/auth.service';
-import { catchError, forkJoin, of } from 'rxjs';
+import { catchError, firstValueFrom, forkJoin, of } from 'rxjs';
+import { OcrCheck, OcrVerificationResult, OcrVerifierService } from '../../../core/services/ocr-verifier.service';
 
 @Component({
   selector: 'app-abastecimento-form',
@@ -18,7 +19,7 @@ import { catchError, forkJoin, of } from 'rxjs';
       <div class="page-header">
         <div>
           <a routerLink="/abastecimentos" class="back-link">← Abastecimentos</a>
-          <h1>{{ isEdit() ? 'Editar Abastecimento' : 'Novo Abastecimento' }}</h1>
+          <h1>{{ isSofitMode() ? 'Lançar no Sofit' : (isEdit() ? 'Editar Abastecimento' : 'Novo Abastecimento') }}</h1>
         </div>
       </div>
 
@@ -43,8 +44,36 @@ import { catchError, forkJoin, of } from 'rxjs';
 
           <!-- Frentista -->
           <div class="field">
-            <label>Frentista</label>
+            <label>Frentista <span class="req">*</span></label>
             <input type="text" formControlName="frentista" readonly class="readonly-field" />
+          </div>
+
+          <!-- Veículo -->
+          <div class="field">
+            <label>Veículo <span class="req">*</span></label>
+            <div class="search-with-add">
+              <input
+                type="text"
+                [value]="veiculoBusca()"
+                placeholder="Digite placa/modelo..."
+                (input)="onVeiculoBuscaChange($event)"
+                (focus)="showVeiculosDropdown.set(true)"
+                (blur)="closeVeiculosDropdown()"
+              />
+              <button type="button" class="btn-plus" (click)="openNovoVeiculoModal()">+</button>
+            </div>
+            @if (showVeiculosDropdown() && filteredVeiculos().length > 0) {
+              <div class="autocomplete-list">
+                @for (v of filteredVeiculos(); track v.id_veiculo) {
+                  <button type="button" class="autocomplete-item" (mousedown)="selectVeiculo(v)">
+                    {{ v.placa }} — {{ v.modelo || 'Sem modelo' }}
+                    @if (v.proprietario?.nome) {
+                      <small>{{ v.proprietario?.nome }}</small>
+                    }
+                  </button>
+                }
+              </div>
+            }
           </div>
 
           <!-- Proprietário -->
@@ -54,7 +83,7 @@ import { catchError, forkJoin, of } from 'rxjs';
               <input
                 type="text"
                 [value]="proprietarioBusca()"
-                placeholder="Digite para buscar proprietário..."
+                placeholder="Preenchido pela placa ou digite..."
                 (input)="onProprietarioBuscaChange($event)"
                 (focus)="showProprietariosDropdown.set(true)"
                 (blur)="closeProprietariosDropdown()"
@@ -72,47 +101,46 @@ import { catchError, forkJoin, of } from 'rxjs';
             }
           </div>
 
-          <!-- Veículo -->
+          <!-- Motorista -->
           <div class="field">
-            <label>Veículo <span class="req">*</span></label>
+            <label>Motorista <span class="req">*</span></label>
             <div class="search-with-add">
               <input
                 type="text"
-                [value]="veiculoBusca()"
-                [placeholder]="form.value.id_proprietario ? 'Digite placa/modelo...' : 'Selecione o proprietário primeiro...'"
+                [value]="motoristaBusca()"
+                [placeholder]="form.value.id_proprietario ? 'Digite nome ou apelido...' : 'Selecione o proprietário primeiro...'"
                 [disabled]="!form.value.id_proprietario"
-                (input)="onVeiculoBuscaChange($event)"
-                (focus)="showVeiculosDropdown.set(true)"
-                (blur)="closeVeiculosDropdown()"
+                (input)="onMotoristaBuscaChange($event)"
+                (focus)="showMotoristasDropdown.set(true)"
+                (blur)="closeMotoristasDropdown()"
               />
-              <button type="button" class="btn-plus" (click)="openNovoVeiculoModal()">+</button>
             </div>
-            @if (showVeiculosDropdown() && filteredVeiculos().length > 0) {
+            @if (showMotoristasDropdown() && filteredMotoristas().length > 0) {
               <div class="autocomplete-list">
-                @for (v of filteredVeiculos(); track v.id_veiculo) {
-                  <button type="button" class="autocomplete-item" (mousedown)="selectVeiculo(v)">
-                    {{ v.placa }} — {{ v.modelo || 'Sem modelo' }}
+                @for (m of filteredMotoristas(); track m.id_motorista) {
+                  <button type="button" class="autocomplete-item" (mousedown)="selectMotorista(m)">
+                    {{ motoristaLabel(m) }}
                   </button>
                 }
               </div>
             }
           </div>
 
-          <!-- Motorista -->
-          <div class="field">
-            <label>Motorista</label>
-            <select formControlName="id_motorista" (change)="onMotoristaChange()">
-              <option value="">Selecione...</option>
-              @for (m of motoristas(); track m.id_motorista) {
-                <option [value]="m.id_motorista">{{ m.nome }}</option>
-              }
-            </select>
-          </div>
+          @if (isSofitMode()) {
+            <div class="field">
+              <label>VGM vinculado</label>
+              <input
+                type="text"
+                formControlName="vgm_vinculado"
+                placeholder="Informe o VGM vinculado"
+              />
+            </div>
+          }
 
           <!-- Local -->
           <div class="field">
-            <label>Local</label>
-            <select formControlName="local">
+            <label>Local <span class="req">*</span></label>
+            <select formControlName="local" (change)="onCombustivelChange()">
               @for (garagem of garagens; track garagem) {
                 <option [value]="garagem">{{ garagem }}</option>
               }
@@ -151,19 +179,20 @@ import { catchError, forkJoin, of } from 'rxjs';
 
           <!-- Odômetro -->
           <div class="field">
-            <label>Odômetro (km)</label>
+            <label>Odômetro (km) @if (proprietarioSelecionadoExigeOdometro()) { <span class="req">*</span> }</label>
             <input type="number" formControlName="odometro" placeholder="Ex: 125000" />
             @if (ultimoOdometroReferencia() !== null) {
-              <small class="upload-hint">Último odômetro do veículo: {{ ultimoOdometroReferencia() }} km</small>
+              <small class="upload-hint">Último odômetro do veículo: {{ ultimoOdometroReferencia() }} km. Mínimo: {{ (ultimoOdometroReferencia() ?? 0) + 1 }} km</small>
             }
           </div>
 
-          <!-- Foto Hodômetro -->
           <div class="field">
             <label>Foto Hodômetro</label>
-            <input type="file" accept="image/*" (change)="onUploadFotoOdometro($event)" />
-            @if (uploadingFotoOdometro()) {
-              <small class="upload-hint">Enviando imagem...</small>
+            <input #fotoOdometroInput class="file-input-hidden" type="file" accept="image/*" (change)="onUploadFotoOdometro($event)" />
+            @if (uploadingFotoOdometro() || analyzingFotoOdometro()) {
+              <small class="upload-hint">
+                {{ uploadingFotoOdometro() ? 'Enviando imagem...' : (canSeeAnalysisFeedback() ? analysisLoadingLabel() : 'Imagem enviada ✓') }}
+              </small>
             } @else if (resolveImageUrl(form.value.foto_odometro); as fotoOdometroUrl) {
               <small class="upload-hint">Imagem enviada ✓</small>
               <div class="preview-box">
@@ -173,14 +202,19 @@ import { catchError, forkJoin, of } from 'rxjs';
                 Expandir
               </button>
             }
+            <button type="button" class="btn-preview" (click)="fotoOdometroInput.click()">
+              {{ resolveImageUrl(form.value.foto_odometro) ? 'Substituir foto' : 'Anexar foto' }}
+            </button>
           </div>
 
           <!-- Bomba -->
           <div class="field">
-            <label>Bomba (Imagem)</label>
-            <input type="file" accept="image/*" (change)="onUploadBomba($event)" />
-            @if (uploadingBomba()) {
-              <small class="upload-hint">Enviando imagem...</small>
+            <label>Bomba (Imagem) <span class="req">*</span></label>
+            <input #bombaInput class="file-input-hidden" type="file" accept="image/*" (change)="onUploadBomba($event)" />
+            @if (uploadingBomba() || analyzingBomba()) {
+              <small class="upload-hint">
+                {{ uploadingBomba() ? 'Enviando imagem...' : (canSeeAnalysisFeedback() ? analysisLoadingLabel() : 'Imagem enviada ✓') }}
+              </small>
             } @else if (resolveImageUrl(form.value.bomba); as bombaUrl) {
               <small class="upload-hint">Imagem enviada ✓</small>
               <div class="preview-box">
@@ -190,20 +224,52 @@ import { catchError, forkJoin, of } from 'rxjs';
                 Expandir
               </button>
             }
+            <button type="button" class="btn-preview" (click)="bombaInput.click()">
+              {{ resolveImageUrl(form.value.bomba) ? 'Substituir imagem' : 'Anexar imagem' }}
+            </button>
           </div>
 
-          <!-- Status -->
-          <div class="field">
-            <label>Status</label>
-            <select formControlName="status">
-              <option value="Pendente">Pendente</option>
-              <option value="Confirmado">Confirmado</option>
-              <option value="Pago">Pago</option>
-              <option value="Cancelado">Cancelado</option>
-            </select>
+          <div class="field field-wide">
+            <label>Observação</label>
+            <textarea
+              formControlName="observacao"
+              rows="3"
+              placeholder="Observação opcional sobre este abastecimento"
+            ></textarea>
           </div>
 
         </div>
+
+        @if (canSeeAnalysisFeedback() && hasOcrResult()) {
+          <div class="ocr-panel">
+            <div class="ocr-panel-header">
+              <span>{{ analysisPanelTitle() }}</span>
+              @if (hasOcrWarnings()) {
+                <strong class="ocr-status warning">Atenção</strong>
+              } @else {
+                <strong class="ocr-status ok">Sem inconsistências</strong>
+              }
+            </div>
+            <div class="ocr-grid">
+              @if (ocrFotoOdometro(); as fotoOcr) {
+                <div class="ocr-card">
+                  <h4>Foto Hodômetro</h4>
+                  @for (check of fotoOcr.checks; track check.message) {
+                    <p [class.warn]="check.severity === 'warning'">{{ check.message }}</p>
+                  }
+                </div>
+              }
+              @if (ocrBomba(); as bombaOcr) {
+                <div class="ocr-card">
+                  <h4>Bomba (Imagem)</h4>
+                  @for (check of bombaOcr.checks; track check.message) {
+                    <p [class.warn]="check.severity === 'warning'">{{ check.message }}</p>
+                  }
+                </div>
+              }
+            </div>
+          </div>
+        }
 
         @if (!isEdit()) {
           <div class="price-preview">
@@ -225,11 +291,11 @@ import { catchError, forkJoin, of } from 'rxjs';
 
         <div class="form-actions">
           <a routerLink="/abastecimentos" class="btn-cancel">Cancelar</a>
-          <button type="submit" class="btn-primary" [disabled]="saving()">
+          <button type="submit" class="btn-primary" [disabled]="saving() || uploadingBomba()">
             @if (saving()) {
-              <span class="spinner"></span> Salvando...
+              <span class="spinner"></span> {{ isSofitMode() ? 'Preparando...' : 'Salvando...' }}
             } @else {
-              {{ isEdit() ? 'Salvar Alterações' : 'Registrar Abastecimento' }}
+              {{ isSofitMode() ? 'Lançar no sistema' : (isEdit() ? 'Salvar Alterações' : 'Registrar Abastecimento') }}
             }
           </button>
         </div>
@@ -351,7 +417,7 @@ import { catchError, forkJoin, of } from 'rxjs';
     .req { color: #f87171; }
     .badge-info { background: #0ea5e920; color: #38bdf8; font-size: 9px; padding: 2px 6px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    .field input, .field select {
+    .field input, .field select, .field textarea {
       background: #0a0f1e;
       border: 1px solid #1e2d4a;
       border-radius: 8px;
@@ -362,8 +428,14 @@ import { catchError, forkJoin, of } from 'rxjs';
       outline: none;
       transition: border-color 0.2s;
     }
-    .field input:focus, .field select:focus { border-color: #0ea5e9; }
-    .field input::placeholder { color: #334155; }
+    .field textarea {
+      min-height: 92px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .field-wide { grid-column: 1 / -1; }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: #0ea5e9; }
+    .field input::placeholder, .field textarea::placeholder { color: #334155; }
     .field select option { background: #0d1427; }
     .date-row { display: flex; gap: 8px; align-items: center; }
     .date-row input { flex: 1; min-width: 0; }
@@ -382,6 +454,56 @@ import { catchError, forkJoin, of } from 'rxjs';
     .readonly-field { opacity: 0.7; cursor: not-allowed; }
     .readonly-field.highlight { color: #4ade80; font-weight: 600; border-color: #4ade8040; }
     .upload-hint { color: #94a3b8; font-size: 11px; }
+    .file-input-hidden { display: none; }
+    .ocr-panel {
+      background: #f8fafc;
+      border: 1px solid #dbe4f0;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 20px;
+      color: #111827;
+    }
+    .ocr-panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .ocr-status {
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .ocr-status.ok { background: #dcfce7; color: #166534; }
+    .ocr-status.warning { background: #fef3c7; color: #92400e; }
+    .ocr-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 10px;
+    }
+    .ocr-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }
+    .ocr-card h4 {
+      margin: 0 0 8px;
+      color: #334155;
+      font-size: 12px;
+    }
+    .ocr-card p {
+      margin: 6px 0;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .ocr-card p.warn { color: #b45309; font-weight: 600; }
     .preview-box {
       margin-top: 6px;
       border: 1px solid #1e2d4a;
@@ -443,6 +565,12 @@ import { catchError, forkJoin, of } from 'rxjs';
       padding: 10px 12px;
       cursor: pointer;
       font-size: 13px;
+    }
+    .autocomplete-item small {
+      display: block;
+      margin-top: 2px;
+      color: #94a3b8;
+      font-size: 11px;
     }
     .autocomplete-item:last-child { border-bottom: 0; }
     .autocomplete-item:hover { background: #1e2d4a40; }
@@ -563,30 +691,46 @@ import { catchError, forkJoin, of } from 'rxjs';
   `]
 })
 export class AbastecimentoFormComponent implements OnInit {
+  private readonly aiOrientationKey = 'abastecimento-ai-orientation';
   @Input() id?: string;
 
   private fb = inject(FormBuilder);
   private api = inject(ApiService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
   private toastr = inject(ToastrService);
   private auth = inject(AuthService);
+  private ocrVerifier = inject(OcrVerifierService);
 
   saving = signal(false);
   savingInline = signal(false);
   uploadingFotoOdometro = signal(false);
   uploadingBomba = signal(false);
+  analyzingFotoOdometro = signal(false);
+  analyzingBomba = signal(false);
+  useAiAnalysis = signal(localStorage.getItem('abastecimento-analysis-engine') === 'ai');
+  aiOrientation = signal(localStorage.getItem(this.aiOrientationKey) || '');
+  ocrFotoOdometro = signal<OcrVerificationResult | null>(null);
+  ocrBomba = signal<OcrVerificationResult | null>(null);
   isEdit = signal(false);
+  isSofitMode = signal(false);
   proprietarios = signal<Proprietario[]>([]);
   veiculos = signal<Veiculo[]>([]);
   motoristas = signal<Motorista[]>([]);
   proprietarioBusca = signal('');
   veiculoBusca = signal('');
+  motoristaBusca = signal('');
   showProprietariosDropdown = signal(false);
   showVeiculosDropdown = signal(false);
+  showMotoristasDropdown = signal(false);
   novoProprietarioModal = signal(false);
   novoVeiculoModal = signal(false);
   previewImageUrl = signal('');
   ultimoOdometroReferencia = signal<number | null>(null);
+  hasOcrResult = computed(() => !!this.ocrFotoOdometro() || !!this.ocrBomba());
+  hasOcrWarnings = computed(() => this.allOcrChecks().some((check) => check.severity === 'warning'));
+  analysisPanelTitle = computed(() => this.useAiAnalysis() ? 'Verificador IA' : 'Verificador OCR');
+  analysisLoadingLabel = computed(() => this.useAiAnalysis() ? 'Analisando imagem com IA...' : 'Lendo OCR da imagem...');
 
   filteredProprietarios = computed(() => {
     const term = this.proprietarioBusca().trim().toLowerCase();
@@ -598,7 +742,15 @@ export class AbastecimentoFormComponent implements OnInit {
     const term = this.veiculoBusca().trim().toLowerCase();
     if (!term) return this.veiculos().slice(0, 30);
     return this.veiculos()
-      .filter(v => `${v.placa} ${v.modelo ?? ''}`.toLowerCase().includes(term))
+      .filter(v => `${v.placa} ${v.modelo ?? ''} ${v.marca ?? ''} ${v.proprietario?.nome ?? ''}`.toLowerCase().includes(term))
+      .slice(0, 30);
+  });
+
+  filteredMotoristas = computed(() => {
+    const term = this.motoristaBusca().trim().toLowerCase();
+    if (!term) return this.motoristas().slice(0, 30);
+    return this.motoristas()
+      .filter(m => `${m.nome} ${m.apelido ?? ''}`.toLowerCase().includes(term))
       .slice(0, 30);
   });
 
@@ -606,6 +758,9 @@ export class AbastecimentoFormComponent implements OnInit {
   tiposCombustivel: string[] = [this.defaultTipoCombustivel];
   get garagens() {
     return this.auth.getFiliaisAcesso();
+  }
+  canSeeAnalysisFeedback() {
+    return this.auth.isAdmin();
   }
 
   novoProprietario: Partial<Proprietario> = {
@@ -627,32 +782,37 @@ export class AbastecimentoFormComponent implements OnInit {
   form = this.fb.group({
     data:              ['', Validators.required],
     data_hora:         ['', Validators.required],
-    frentista:         [''],
+    frentista:         ['', Validators.required],
     id_proprietario:   ['', Validators.required],
     id_veiculo:        ['', Validators.required],
-    id_motorista:      [''],
+    id_motorista:      ['', Validators.required],
     nome_motorista:    [''],
     nome_proprietario: [''],
-    local:             [this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz'],
+    local:             [this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz', Validators.required],
     tipo_combustivel:  [this.defaultTipoCombustivel, Validators.required],
     valor_por_litro:   [{ value: 0, disabled: true }],
     quantidade_litros: [null as number | null, [Validators.required, Validators.min(0.01)]],
     valor_total:       [{ value: 0, disabled: true }],
     odometro:          [null as number | null],
     foto_odometro:     [''],
-    bomba:             [''],
-    status:            ['Pendente'],
+    bomba:             ['', Validators.required],
+    status:            ['Pendente', Validators.required],
+    observacao:        [''],
+    vgm_vinculado:     [''],
   });
 
   ngOnInit() {
+    this.isSofitMode.set(this.route.snapshot.routeConfig?.path === 'lancar-sofit');
     if (!this.id && !this.auth.canCreateOperationalRecords()) {
       this.toastr.error('Perfil somente visualização: sem permissão para criar abastecimentos');
       this.router.navigate(['/abastecimentos']);
       return;
     }
 
+    this.loadAnalysisConfig();
     this.loadTiposCombustivel();
     this.loadProprietarios();
+    this.loadVeiculos();
     const usuarioLogado = this.auth.currentUser()?.nome ?? '';
     this.form.patchValue({ frentista: usuarioLogado });
     if (this.id) {
@@ -681,8 +841,15 @@ export class AbastecimentoFormComponent implements OnInit {
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
   }
 
+  loadVeiculos() {
+    this.api.getVeiculos({ per_page: 5000 }).subscribe(r => this.veiculos.set(r.data ?? []));
+  }
+
   loadTiposCombustivel() {
-    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+    this.api.getValoresCombustivel({
+      per_page: 500,
+      local: this.form.getRawValue().local || this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz',
+    }).subscribe({
       next: (r) => {
         const tipos = Array.from(
           new Set(
@@ -724,6 +891,7 @@ export class AbastecimentoFormComponent implements OnInit {
         this.proprietarioBusca.set(a.nome_proprietario ?? '');
         const veiculoTexto = a.veiculo ? `${a.veiculo.placa} — ${a.veiculo.modelo ?? 'Sem modelo'}` : '';
         this.veiculoBusca.set(veiculoTexto);
+        this.motoristaBusca.set(a.nome_motorista ?? '');
         this.form.patchValue({ frentista: this.auth.currentUser()?.nome ?? '' });
 
         forkJoin({
@@ -744,10 +912,11 @@ export class AbastecimentoFormComponent implements OnInit {
   onProprietarioChange() {
     const id = this.form.value.id_proprietario;
     if (!id) {
-      this.veiculos.set([]);
       this.motoristas.set([]);
       this.ultimoOdometroReferencia.set(null);
       this.form.patchValue({ odometro: null });
+      this.motoristaBusca.set('');
+      this.loadVeiculos();
       return;
     }
     const prop = this.proprietarios().find(p => p.id_proprietario === id);
@@ -755,6 +924,7 @@ export class AbastecimentoFormComponent implements OnInit {
     this.api.getVeiculosByProprietario(id).subscribe(v => this.veiculos.set(v));
     this.api.getMotoristassByProprietario(id).subscribe(m => this.motoristas.set(m));
     this.form.patchValue({ id_veiculo: '', id_motorista: '' });
+    this.motoristaBusca.set('');
     this.ultimoOdometroReferencia.set(null);
     this.form.patchValue({ odometro: null });
   }
@@ -779,71 +949,148 @@ export class AbastecimentoFormComponent implements OnInit {
     this.form.patchValue({ nome_motorista: m?.nome ?? '' });
   }
 
+  motoristaLabel(m: Motorista) {
+    return m.apelido ? `${m.nome} (${m.apelido})` : m.nome;
+  }
+
+  private normalizarNomeBusca(valor?: string | null) {
+    return String(valor ?? '').trim().toUpperCase();
+  }
+
+  proprietarioSelecionadoExigeOdometro() {
+    const raw = this.form.getRawValue();
+    const veiculo = this.veiculos().find(v => v.id_veiculo === raw.id_veiculo);
+    const idProprietario = veiculo?.id_proprietario || raw.id_proprietario;
+    const proprietario = veiculo?.proprietario || this.proprietarios().find(p => p.id_proprietario === idProprietario);
+    const flag = (proprietario as any)?.odometro_obrigatorio;
+    return flag === true || flag === 1 || flag === '1' || String(flag).toLowerCase() === 'true';
+  }
+
+  private odometroEstaPreenchido(valor: unknown) {
+    return valor !== null && valor !== undefined && String(valor).trim() !== '';
+  }
+
   onCombustivelChange() {
     const tipo = this.form.value.tipo_combustivel;
     if (!tipo || this.isEdit()) return;
-    this.api.getValorAtual(tipo).subscribe({
+    const local = this.form.getRawValue().local || this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz';
+    this.api.getValorAtual(tipo, local).subscribe({
       next: v => {
         if (v) {
           this.form.patchValue({ valor_por_litro: v.valor } as any);
-          this.calcTotal();
+        } else {
+          this.form.patchValue({ valor_por_litro: 0 } as any);
+          this.toastr.warning(`Nenhum preço cadastrado para ${tipo} em ${local}.`);
         }
+        this.calcTotal();
       },
-      error: () => {}
+      error: () => {
+        this.form.patchValue({ valor_por_litro: 0 } as any);
+        this.calcTotal();
+      }
     });
   }
 
   calcTotal() {
     const qtd = this.form.value.quantidade_litros ?? 0;
     const vl = (this.form.getRawValue() as any).valor_por_litro ?? 0;
-    const total = +(qtd * vl).toFixed(2);
+    const totalComCentavos = Math.round(((qtd * vl) + Number.EPSILON) * 100) / 100;
+    const total = Math.floor(totalComCentavos + 0.5);
     this.form.patchValue({ valor_total: total } as any);
   }
 
   fetchUltimoOdometroVeiculo(idVeiculo: string, fallbackOdometro: number | null = null) {
-    this.api.getAbastecimentos({ id_veiculo: idVeiculo, per_page: 1 }).subscribe({
+    this.api.getAbastecimentos({ id_veiculo: idVeiculo, per_page: 500 }).subscribe({
       next: (r) => {
-        const ultimoDoAbastecimento = r.data?.[0]?.odometro;
-        const candidatos = [ultimoDoAbastecimento, fallbackOdometro]
+        const odometrosAnteriores = (r.data ?? [])
+          .filter((a: any) => !this.isEdit() || a.id_abastecimento !== this.id)
+          .map((a: any) => a.odometro)
+          .filter((v: any) => v !== null && v !== undefined)
+          .map((v: any) => Number(v));
+        const ultimoDoAbastecimento = odometrosAnteriores.length ? Math.max(...odometrosAnteriores) : null;
+        const candidatos = [ultimoDoAbastecimento, this.isEdit() ? null : fallbackOdometro]
           .filter((v) => v !== null && v !== undefined)
           .map((v) => Number(v));
         const ultimo = candidatos.length ? Math.max(...candidatos) : null;
         this.ultimoOdometroReferencia.set(ultimo);
-        if (!this.isEdit()) {
-          this.form.patchValue({ odometro: ultimo });
+        if (!this.isEdit() && ultimo !== null) {
+          this.form.patchValue({ odometro: ultimo + 1 });
         }
       },
       error: () => {
-        this.ultimoOdometroReferencia.set(fallbackOdometro);
-        if (!this.isEdit()) {
-          this.form.patchValue({ odometro: fallbackOdometro });
+        const ultimo = this.isEdit() ? null : fallbackOdometro;
+        this.ultimoOdometroReferencia.set(ultimo);
+        if (!this.isEdit() && ultimo !== null) {
+          this.form.patchValue({ odometro: ultimo + 1 });
         }
       },
     });
   }
 
   onSubmit() {
-    if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+    if (this.uploadingBomba()) {
+      this.toastr.warning('Aguarde o upload da imagem da bomba terminar.');
+      return;
+    }
+
+    if (!this.resolveImageUrl(this.form.getRawValue().bomba)) {
+      this.form.get('bomba')?.markAsTouched();
+      this.toastr.error('Anexe a imagem da bomba antes de salvar o abastecimento.');
+      return;
+    }
+
+    if (this.form.invalid) {
+      this.form.markAllAsTouched();
+      this.toastr.warning('Preencha todos os campos obrigatórios.');
+      return;
+    }
     if (!this.isEdit() && !this.auth.canCreateOperationalRecords()) {
       this.toastr.error('Perfil somente visualização: sem permissão para criar abastecimentos');
       return;
     }
 
+    const proprietarioSelecionado = this.proprietarios().find(p => p.id_proprietario === this.form.value.id_proprietario);
+    if ((proprietarioSelecionado?.status ?? '').trim().toLowerCase() === 'bloqueado') {
+      const detalhe = proprietarioSelecionado?.observacao ? ` Motivo: ${proprietarioSelecionado.observacao}` : '';
+      this.toastr.error(`Proprietário bloqueado. Não é possível registrar abastecimento.${detalhe}`);
+      return;
+    }
+
     const odometroInformado = this.form.getRawValue().odometro;
     const ultimoOdometro = this.ultimoOdometroReferencia();
+    if (ultimoOdometro !== null && !this.odometroEstaPreenchido(odometroInformado)) {
+      this.toastr.error(`Odômetro é obrigatório para esta placa porque já existe abastecimento anterior. Próximo mínimo: ${ultimoOdometro + 1} km.`);
+      return;
+    }
+
+    if (this.proprietarioSelecionadoExigeOdometro() && !this.odometroEstaPreenchido(odometroInformado)) {
+      this.toastr.error('Odômetro é obrigatório para este proprietário.');
+      return;
+    }
+
     if (
       odometroInformado !== null &&
       odometroInformado !== undefined &&
       ultimoOdometro !== null &&
-      Number(odometroInformado) < ultimoOdometro
+      Number(odometroInformado) <= ultimoOdometro
     ) {
-      this.toastr.error(`Odômetro inválido. Informe um valor maior ou igual a ${ultimoOdometro} km.`);
+      this.toastr.error(`Odômetro inválido. Informe um valor maior que ${ultimoOdometro} km. Próximo mínimo: ${ultimoOdometro + 1} km.`);
       return;
+    }
+
+    if (this.canSeeAnalysisFeedback() && this.hasOcrWarnings()) {
+      this.toastr.warning(`${this.analysisPanelTitle()} encontrou possíveis inconsistências. Revise os avisos antes de confirmar.`);
     }
 
     this.saving.set(true);
 
     const raw = this.form.getRawValue() as any;
+    if (this.isSofitMode()) {
+      this.saving.set(false);
+      this.toastr.info('Tela preparada. A integração com o Sofit será conectada na próxima etapa.');
+      return;
+    }
+
     const payload = { ...raw, frentista: this.auth.currentUser()?.nome ?? raw.frentista };
 
     const obs = this.isEdit()
@@ -867,13 +1114,14 @@ export class AbastecimentoFormComponent implements OnInit {
     this.proprietarioBusca.set(term);
     this.showProprietariosDropdown.set(true);
     this.form.patchValue({ id_proprietario: '', nome_proprietario: '', id_veiculo: '', id_motorista: '' });
-    this.veiculos.set([]);
     this.motoristas.set([]);
+    this.loadVeiculos();
     this.veiculoBusca.set('');
+    this.motoristaBusca.set('');
   }
 
   selectProprietario(p: Proprietario) {
-    if (p.status === 'Bloqueado') {
+    if ((p.status ?? '').trim().toLowerCase() === 'bloqueado') {
       const detalhe = p.observacao ? `\nMotivo: ${p.observacao}` : '';
       this.toastr.error(`Proprietário bloqueado. Não é possível registrar abastecimento.${detalhe}`);
       this.showProprietariosDropdown.set(false);
@@ -883,6 +1131,7 @@ export class AbastecimentoFormComponent implements OnInit {
     this.form.patchValue({ id_proprietario: p.id_proprietario, nome_proprietario: p.nome, id_veiculo: '', id_motorista: '' });
     this.showProprietariosDropdown.set(false);
     this.veiculoBusca.set('');
+    this.motoristaBusca.set('');
     this.onProprietarioChange();
   }
 
@@ -894,20 +1143,56 @@ export class AbastecimentoFormComponent implements OnInit {
     const term = (event.target as HTMLInputElement).value;
     this.veiculoBusca.set(term);
     this.showVeiculosDropdown.set(true);
-    this.form.patchValue({ id_veiculo: '' });
+    this.form.patchValue({ id_veiculo: '', id_proprietario: '', nome_proprietario: '', id_motorista: '', nome_motorista: '' });
+    this.proprietarioBusca.set('');
+    this.motoristas.set([]);
+    this.motoristaBusca.set('');
     this.ultimoOdometroReferencia.set(null);
     this.form.patchValue({ odometro: null });
   }
 
   selectVeiculo(v: Veiculo) {
     this.veiculoBusca.set(`${v.placa} — ${v.modelo ?? 'Sem modelo'}`);
-    this.form.patchValue({ id_veiculo: v.id_veiculo });
+    const proprietario = v.proprietario || this.proprietarios().find(p => p.id_proprietario === v.id_proprietario);
+    this.proprietarioBusca.set(proprietario?.nome ?? '');
+    this.form.patchValue({
+      id_veiculo: v.id_veiculo,
+      id_proprietario: v.id_proprietario,
+      nome_proprietario: proprietario?.nome ?? '',
+      id_motorista: '',
+      nome_motorista: ''
+    });
+    this.motoristaBusca.set('');
+    if ((proprietario?.status ?? '').trim().toLowerCase() === 'bloqueado') {
+      const detalhe = proprietario?.observacao ? `\nMotivo: ${proprietario.observacao}` : '';
+      this.toastr.error(`Proprietário bloqueado. Não é possível registrar abastecimento.${detalhe}`);
+    }
+    if (v.id_proprietario) {
+      this.api.getMotoristassByProprietario(v.id_proprietario).subscribe(m => this.motoristas.set(m));
+    }
     this.showVeiculosDropdown.set(false);
     this.onVeiculoChange();
   }
 
   closeVeiculosDropdown() {
     setTimeout(() => this.showVeiculosDropdown.set(false), 120);
+  }
+
+  onMotoristaBuscaChange(event: Event) {
+    const term = (event.target as HTMLInputElement).value;
+    this.motoristaBusca.set(term);
+    this.showMotoristasDropdown.set(true);
+    this.form.patchValue({ id_motorista: '', nome_motorista: '' });
+  }
+
+  selectMotorista(m: Motorista) {
+    this.motoristaBusca.set(this.motoristaLabel(m));
+    this.form.patchValue({ id_motorista: m.id_motorista, nome_motorista: m.nome });
+    this.showMotoristasDropdown.set(false);
+  }
+
+  closeMotoristasDropdown() {
+    setTimeout(() => this.showMotoristasDropdown.set(false), 120);
   }
 
   openNovoProprietarioModal() {
@@ -925,7 +1210,8 @@ export class AbastecimentoFormComponent implements OnInit {
       nome: this.novoProprietario.nome.trim(),
       status: this.novoProprietario.status || 'Ativo',
       responsavel: this.novoProprietario.responsavel || '',
-      celular: this.novoProprietario.celular || ''
+      celular: this.novoProprietario.celular || '',
+      local: this.auth.getGaragem() || undefined
     }).subscribe({
       next: p => {
         this.proprietarios.update(list => [p, ...list]);
@@ -976,7 +1262,8 @@ export class AbastecimentoFormComponent implements OnInit {
       ano: this.novoVeiculo.ano || '',
       tipo_combustivel: this.novoVeiculo.tipo_combustivel || '',
       numero_chassi: this.novoVeiculo.numero_chassi || '',
-      id_proprietario: idProprietario
+      id_proprietario: idProprietario,
+      local: this.auth.getGaragem() || undefined
     }).subscribe({
       next: v => {
         this.veiculos.update(list => [v, ...list]);
@@ -992,15 +1279,22 @@ export class AbastecimentoFormComponent implements OnInit {
     });
   }
 
-  onUploadFotoOdometro(event: Event) {
+  async onUploadFotoOdometro(event: Event) {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
+    await this.refreshAnalysisConfig();
+    if (this.shouldRunAnalysisOnCurrentRecord() && !this.useAiAnalysis()) {
+      this.runOcrVerification(file, 'odometro');
+    }
     this.uploadingFotoOdometro.set(true);
     this.api.uploadToDrive(file).subscribe({
       next: (res) => {
         const url = res?.file?.downloadUrl || res?.file?.webViewLink || '';
         this.form.patchValue({ foto_odometro: url });
         this.uploadingFotoOdometro.set(false);
+        if (this.shouldRunAnalysisOnCurrentRecord() && this.useAiAnalysis()) {
+          this.runAiVerification(url, 'odometro');
+        }
         this.toastr.success('Foto do hodômetro enviada');
       },
       error: (err) => {
@@ -1010,15 +1304,22 @@ export class AbastecimentoFormComponent implements OnInit {
     });
   }
 
-  onUploadBomba(event: Event) {
+  async onUploadBomba(event: Event) {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
+    await this.refreshAnalysisConfig();
+    if (this.shouldRunAnalysisOnCurrentRecord() && !this.useAiAnalysis()) {
+      this.runOcrVerification(file, 'bomba');
+    }
     this.uploadingBomba.set(true);
     this.api.uploadToDrive(file).subscribe({
       next: (res) => {
         const url = res?.file?.downloadUrl || res?.file?.webViewLink || '';
         this.form.patchValue({ bomba: url });
         this.uploadingBomba.set(false);
+        if (this.shouldRunAnalysisOnCurrentRecord() && this.useAiAnalysis()) {
+          this.runAiVerification(url, 'bomba');
+        }
         this.toastr.success('Imagem da bomba enviada');
       },
       error: (err) => {
@@ -1051,6 +1352,151 @@ export class AbastecimentoFormComponent implements OnInit {
 
   closeImagePreview() {
     this.previewImageUrl.set('');
+  }
+
+  private runOcrVerification(file: File, kind: 'odometro' | 'bomba') {
+    const raw = this.form.getRawValue() as any;
+    const expected = {
+      odometro: raw.odometro,
+      quantidadeLitros: raw.quantidade_litros,
+      valorPorLitro: raw.valor_por_litro,
+      valorTotal: raw.valor_total,
+    };
+
+    if (kind === 'odometro') {
+      this.analyzingFotoOdometro.set(true);
+      this.ocrFotoOdometro.set(null);
+    } else {
+      this.analyzingBomba.set(true);
+      this.ocrBomba.set(null);
+    }
+
+    this.ocrVerifier.verifyImage(file, kind, expected)
+      .then((result) => {
+        if (kind === 'odometro') {
+          this.ocrFotoOdometro.set(result);
+        } else {
+          this.ocrBomba.set(result);
+        }
+
+        if (result.checks.some((check) => check.severity === 'warning')) {
+          this.form.patchValue({ status: 'Inconsistente' });
+          if (this.canSeeAnalysisFeedback()) {
+            this.toastr.warning('OCR encontrou possível divergência no anexo.');
+          }
+        }
+      })
+      .catch(() => {
+        if (this.canSeeAnalysisFeedback()) {
+          this.toastr.warning('Não foi possível ler OCR desta imagem. Confira o lançamento manualmente.');
+        }
+      })
+      .finally(() => {
+        if (kind === 'odometro') {
+          this.analyzingFotoOdometro.set(false);
+        } else {
+          this.analyzingBomba.set(false);
+        }
+      });
+  }
+
+  private shouldRunAnalysisOnCurrentRecord(): boolean {
+    return !this.isEdit();
+  }
+
+  private runAiVerification(imageUrl: string, kind: 'odometro' | 'bomba') {
+    if (!imageUrl) {
+      if (this.canSeeAnalysisFeedback()) {
+        this.toastr.warning('Imagem enviada sem URL pública para análise por IA.');
+      }
+      return;
+    }
+
+    const raw = this.form.getRawValue() as any;
+    const veiculo = this.veiculos().find(v => v.id_veiculo === raw.id_veiculo);
+    const expected = {
+      odometro: raw.odometro,
+      quantidadeLitros: raw.quantidade_litros,
+      valorPorLitro: raw.valor_por_litro,
+      valorTotal: raw.valor_total,
+      placa: veiculo?.placa ?? '',
+    };
+
+    if (kind === 'odometro') {
+      this.analyzingFotoOdometro.set(true);
+      this.ocrFotoOdometro.set(null);
+    } else {
+      this.analyzingBomba.set(true);
+      this.ocrBomba.set(null);
+    }
+
+    this.api.analisarComprovante({
+      image_url: imageUrl,
+      kind,
+      expected,
+      ai_orientation: this.aiOrientation(),
+    }).subscribe({
+      next: (result: OcrVerificationResult) => {
+        if (kind === 'odometro') {
+          this.ocrFotoOdometro.set(result);
+        } else {
+          this.ocrBomba.set(result);
+        }
+
+        if ((result.checks ?? []).some((check) => check.severity === 'warning')) {
+          this.form.patchValue({ status: 'Inconsistente' });
+          if (this.canSeeAnalysisFeedback()) {
+            this.toastr.warning('IA encontrou possível divergência no anexo. O status da imagem foi marcado como Inconsistente.');
+          }
+        }
+      },
+      error: (err) => {
+        if (this.canSeeAnalysisFeedback()) {
+          this.toastr.warning(err.error?.message ?? 'Não foi possível analisar a imagem com IA.');
+        }
+      },
+      complete: () => {
+        if (kind === 'odometro') {
+          this.analyzingFotoOdometro.set(false);
+        } else {
+          this.analyzingBomba.set(false);
+        }
+      },
+    });
+  }
+
+  private loadAnalysisConfig() {
+    this.api.getAbastecimentoAnaliseConfig().subscribe({
+      next: res => this.applyAnalysisConfig(res),
+      error: () => {}
+    });
+  }
+
+  private async refreshAnalysisConfig() {
+    try {
+      const res = await firstValueFrom(this.api.getAbastecimentoAnaliseConfig());
+      this.applyAnalysisConfig(res);
+    } catch (_) {
+      // Sem internet: usa a ultima configuracao salva localmente.
+    }
+  }
+
+  private applyAnalysisConfig(res: { analysis_engine?: 'ai' | 'ocr'; use_ai_analysis?: boolean; ai_orientation?: string }) {
+    const engine = res?.analysis_engine === 'ocr' ? 'ocr' : 'ai';
+    const orientation = (res?.ai_orientation || '').trim();
+    this.useAiAnalysis.set(engine === 'ai');
+    this.aiOrientation.set(orientation);
+    localStorage.setItem('abastecimento-analysis-engine', engine);
+    if (orientation) {
+      localStorage.setItem(this.aiOrientationKey, orientation);
+    }
+  }
+
+  private allOcrChecks(): OcrCheck[] {
+    return [
+      ...(this.ocrFotoOdometro()?.checks ?? []),
+      ...(this.ocrBomba()?.checks ?? []),
+    ];
   }
 
   openDatePicker(input: HTMLInputElement) {

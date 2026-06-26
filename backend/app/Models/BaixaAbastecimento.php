@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\SerializesDatesInAppTimezone;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
 
 class BaixaAbastecimento extends Model
 {
+    use SerializesDatesInAppTimezone;
+
     private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'baixa_abastecimento';
     protected $primaryKey = 'id_baixa';

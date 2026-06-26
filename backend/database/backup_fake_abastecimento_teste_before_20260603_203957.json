@@ -1,0 +1,80 @@
+{
+    "created_at": "2026-06-03T20:39:57-03:00",
+    "purpose": "Backup antes de criar abastecimento ficticio para teste de baixa",
+    "proprietario": {
+        "id_proprietario": "481625a",
+        "nome": "TESTE",
+        "status": "Ativo",
+        "responsavel": "TESTE",
+        "celular": "27981416770",
+        "data_registro": "2026-05-18T10:53:48",
+        "observacao": null,
+        "local": "Viana",
+        "sync_token_at": "2026-05-26T11:47:13",
+        "deleted_at": null,
+        "deleted_by": null,
+        "deleted_by_id": null,
+        "odometro_obrigatorio": false
+    },
+    "veiculos": [
+        {
+            "id_veiculo": "96845bf4-241c-4da7-b515-66a3d82c421d",
+            "placa": "ABC123",
+            "marca": null,
+            "modelo": null,
+            "ano": null,
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "numero_chassi": null,
+            "id_proprietario": "481625a",
+            "odometro": null,
+            "renavam": null,
+            "cor": null,
+            "foto": null,
+            "created_at": "2026-05-27 16:47:54.474628",
+            "local": "Viana",
+            "sync_token_at": "2026-05-27T13:47:54",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null
+        },
+        {
+            "id_veiculo": "TESTE",
+            "placa": "TESTE",
+            "marca": null,
+            "modelo": null,
+            "ano": null,
+            "tipo_combustivel": "OLEO DIESEL S10",
+            "numero_chassi": null,
+            "id_proprietario": "481625a",
+            "odometro": null,
+            "renavam": null,
+            "cor": null,
+            "foto": null,
+            "created_at": "2026-05-18 10:53:48",
+            "local": "Viana",
+            "sync_token_at": "2026-05-26T11:47:13",
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null
+        }
+    ],
+    "motoristas": [
+        {
+            "id_motorista": "548515s",
+            "nome": "TESTE",
+            "id_proprietario": "481625a",
+            "documento": null,
+            "celular": null,
+            "local": "Viana",
+            "sync_token_at": "2026-05-26T11:47:13",
+            "apelido": null,
+            "deleted_at": null,
+            "deleted_by": null,
+            "deleted_by_id": null,
+            "status": null
+        }
+    ],
+    "abastecimentos": []
+}

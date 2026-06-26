@@ -4,7 +4,7 @@ import { AppComponent } from './app/app.component';
 import { appConfig } from './app/app.config';
 import { environment } from './environments/environment';
 
-const APP_BUILD_VERSION = '2026-05-18-10';
+const APP_BUILD_VERSION = '2026-05-28-login-fix';
 
 async function disableWebServiceWorkerCache() {
   if (!('serviceWorker' in navigator)) return;

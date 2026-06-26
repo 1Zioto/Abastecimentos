@@ -1,0 +1,23 @@
+{
+    "created_at": "2026-06-03T23:54:48-03:00",
+    "reason": "Restaurar baixas invisiveis cujo abastecimento esta marcado como baixado",
+    "rows": [
+        {
+            "id_baixa": "59b31e65-f0f9-4fcc-9784-c83f99eb50c6",
+            "id_abastecimento": "teste-baixa-20260603-204047",
+            "data_hora": "2026-06-03 23:51:31",
+            "usuario": "BOT",
+            "forma_pagamento": "PIX",
+            "data_pagamento": "2026-06-03 00:00:00",
+            "nota_entrada": "",
+            "sync_token_at": "2026-06-03 23:51:31+00",
+            "deleted_at": "2026-06-03 23:51:05",
+            "deleted_by": "Douglas",
+            "deleted_by_id": "1",
+            "status": "Inativo",
+            "nome_proprietario": "TESTE",
+            "local": "Viana",
+            "valor_total": "128.00"
+        }
+    ]
+}

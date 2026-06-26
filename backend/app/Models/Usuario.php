@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\SerializesDatesInAppTimezone;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
@@ -9,6 +10,8 @@ use Tymon\JWTAuth\Contracts\JWTSubject;
 
 class Usuario extends Authenticatable implements JWTSubject
 {
+    use SerializesDatesInAppTimezone;
+
     private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'usuarios';
     protected $primaryKey = 'id_user';
@@ -62,6 +65,11 @@ class Usuario extends Authenticatable implements JWTSubject
 
     public static function normalizarFiliais($filiais): array
     {
+        if (is_string($filiais)) {
+            $decoded = json_decode($filiais, true);
+            $filiais = is_array($decoded) ? $decoded : preg_split('/[,;|]/', $filiais);
+        }
+
         if (!is_array($filiais)) {
             return static::filiaisPadrao();
         }
@@ -69,8 +77,21 @@ class Usuario extends Authenticatable implements JWTSubject
         $permitidas = static::filiaisPadrao();
         $normalizadas = [];
         foreach ($filiais as $filial) {
+            $valor = trim((string) $filial);
+            $aliases = [
+                'cariacica' => 'Matriz',
+                'garagem' => 'Matriz',
+                'garagem cariacica' => 'Matriz',
+                'filial viana' => 'Viana',
+                'garagem viana' => 'Viana',
+            ];
+            $chave = mb_strtolower($valor);
+            if (isset($aliases[$chave])) {
+                $normalizadas[] = $aliases[$chave];
+                continue;
+            }
             foreach ($permitidas as $permitida) {
-                if (mb_strtolower(trim((string) $filial)) === mb_strtolower($permitida)) {
+                if ($chave === mb_strtolower($permitida)) {
                     $normalizadas[] = $permitida;
                     break;
                 }

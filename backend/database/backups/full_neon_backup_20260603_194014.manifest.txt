@@ -1,0 +1,119 @@
+;
+; Archive created at 2026-06-03 19:40:14
+;     dbname: neondb
+;     TOC Entries: 108
+;     Compression: gzip
+;     Dump Version: 1.16-0
+;     Format: CUSTOM
+;     Integer: 4 bytes
+;     Offset: 8 bytes
+;     Dumped from database version: 17.10 (6a49db4)
+;     Dumped by pg_dump version: 18.4
+;
+;
+; Selected TOC Entries:
+;
+2; 3079 57344 EXTENSION - pgcrypto 
+3615; 0 0 COMMENT - EXTENSION pgcrypto 
+276; 1255 57474 FUNCTION public set_updated_at() neondb_owner
+224; 1259 24615 TABLE public abastecimentos neondb_owner
+230; 1259 57410 TABLE public accounts neondb_owner
+239; 1259 204801 TABLE public app_erros neondb_owner
+238; 1259 204800 SEQUENCE public app_erros_id_seq neondb_owner
+3616; 0 0 SEQUENCE OWNED BY public app_erros_id_seq neondb_owner
+231; 1259 57437 TABLE public attachments neondb_owner
+234; 1259 147457 TABLE public auditoria_alteracoes neondb_owner
+233; 1259 147456 SEQUENCE public auditoria_alteracoes_id_seq neondb_owner
+3617; 0 0 SEQUENCE OWNED BY public auditoria_alteracoes_id_seq neondb_owner
+226; 1259 24649 TABLE public baixa_abastecimento neondb_owner
+229; 1259 57392 TABLE public categories neondb_owner
+235; 1259 155648 TABLE public configuracoes_sistema neondb_owner
+237; 1259 180224 TABLE public despesas_avulsas neondb_owner
+236; 1259 155656 TABLE public encerrantes_bomba neondb_owner
+227; 1259 24661 TABLE public entrada_notas neondb_owner
+222; 1259 24596 TABLE public motoristas neondb_owner
+220; 1259 24576 TABLE public proprietarios neondb_owner
+232; 1259 57460 TABLE public settings neondb_owner
+228; 1259 57381 TABLE public users neondb_owner
+223; 1259 24608 TABLE public usuarios neondb_owner
+225; 1259 24642 TABLE public valores_combustivel neondb_owner
+221; 1259 24583 TABLE public veiculos neondb_owner
+3357; 2604 204804 DEFAULT public app_erros id neondb_owner
+3352; 2604 147460 DEFAULT public auditoria_alteracoes id neondb_owner
+3593; 0 24615 TABLE DATA public abastecimentos neondb_owner
+3599; 0 57410 TABLE DATA public accounts neondb_owner
+3608; 0 204801 TABLE DATA public app_erros neondb_owner
+3600; 0 57437 TABLE DATA public attachments neondb_owner
+3603; 0 147457 TABLE DATA public auditoria_alteracoes neondb_owner
+3595; 0 24649 TABLE DATA public baixa_abastecimento neondb_owner
+3598; 0 57392 TABLE DATA public categories neondb_owner
+3604; 0 155648 TABLE DATA public configuracoes_sistema neondb_owner
+3606; 0 180224 TABLE DATA public despesas_avulsas neondb_owner
+3605; 0 155656 TABLE DATA public encerrantes_bomba neondb_owner
+3596; 0 24661 TABLE DATA public entrada_notas neondb_owner
+3591; 0 24596 TABLE DATA public motoristas neondb_owner
+3589; 0 24576 TABLE DATA public proprietarios neondb_owner
+3601; 0 57460 TABLE DATA public settings neondb_owner
+3597; 0 57381 TABLE DATA public users neondb_owner
+3592; 0 24608 TABLE DATA public usuarios neondb_owner
+3594; 0 24642 TABLE DATA public valores_combustivel neondb_owner
+3590; 0 24583 TABLE DATA public veiculos neondb_owner
+3618; 0 0 SEQUENCE SET public app_erros_id_seq neondb_owner
+3619; 0 0 SEQUENCE SET public auditoria_alteracoes_id_seq neondb_owner
+3386; 2606 24626 CONSTRAINT public abastecimentos abastecimentos_pkey neondb_owner
+3409; 2606 57424 CONSTRAINT public accounts accounts_pkey neondb_owner
+3429; 2606 204810 CONSTRAINT public app_erros app_erros_pkey neondb_owner
+3413; 2606 57447 CONSTRAINT public attachments attachments_pkey neondb_owner
+3419; 2606 147465 CONSTRAINT public auditoria_alteracoes auditoria_alteracoes_pkey neondb_owner
+3395; 2606 24655 CONSTRAINT public baixa_abastecimento baixa_abastecimento_pkey neondb_owner
+3406; 2606 57403 CONSTRAINT public categories categories_pkey neondb_owner
+3421; 2606 155655 CONSTRAINT public configuracoes_sistema configuracoes_sistema_pkey neondb_owner
+3425; 2606 180231 CONSTRAINT public despesas_avulsas despesas_avulsas_pkey neondb_owner
+3423; 2606 155663 CONSTRAINT public encerrantes_bomba encerrantes_bomba_pkey neondb_owner
+3398; 2606 24667 CONSTRAINT public entrada_notas entrada_notas_pkey neondb_owner
+3381; 2606 24602 CONSTRAINT public motoristas motoristas_pkey neondb_owner
+3371; 2606 24582 CONSTRAINT public proprietarios proprietarios_pkey neondb_owner
+3417; 2606 57468 CONSTRAINT public settings settings_pkey neondb_owner
+3402; 2606 57391 CONSTRAINT public users users_email_key neondb_owner
+3404; 2606 57389 CONSTRAINT public users users_pkey neondb_owner
+3384; 2606 24614 CONSTRAINT public usuarios usuarios_pkey neondb_owner
+3393; 2606 24648 CONSTRAINT public valores_combustivel valores_combustivel_pkey neondb_owner
+3376; 2606 24590 CONSTRAINT public veiculos veiculos_pkey neondb_owner
+3426; 1259 204811 INDEX public app_erros_created_at_idx neondb_owner
+3427; 1259 204813 INDEX public app_erros_level_idx neondb_owner
+3430; 1259 204812 INDEX public app_erros_tipo_idx neondb_owner
+3387; 1259 24670 INDEX public idx_abastecimentos_data neondb_owner
+3388; 1259 24669 INDEX public idx_abastecimentos_motorista neondb_owner
+3389; 1259 139275 INDEX public idx_abastecimentos_sync_token_at neondb_owner
+3390; 1259 24668 INDEX public idx_abastecimentos_veiculo neondb_owner
+3410; 1259 57435 INDEX public idx_accounts_user_due neondb_owner
+3411; 1259 57436 INDEX public idx_accounts_user_profile_type neondb_owner
+3414; 1259 57458 INDEX public idx_attachments_user_account neondb_owner
+3415; 1259 57459 INDEX public idx_attachments_user_invoice neondb_owner
+3396; 1259 139278 INDEX public idx_baixa_abastecimento_sync_token_at neondb_owner
+3407; 1259 57409 INDEX public idx_categories_user_profile neondb_owner
+3399; 1259 114690 INDEX public idx_entrada_notas_local neondb_owner
+3400; 1259 139276 INDEX public idx_entrada_notas_sync_token_at neondb_owner
+3377; 1259 98308 INDEX public idx_motoristas_local neondb_owner
+3378; 1259 24672 INDEX public idx_motoristas_proprietario neondb_owner
+3379; 1259 139274 INDEX public idx_motoristas_sync_token_at neondb_owner
+3368; 1259 98307 INDEX public idx_proprietarios_local neondb_owner
+3369; 1259 139272 INDEX public idx_proprietarios_sync_token_at neondb_owner
+3382; 1259 139279 INDEX public idx_usuarios_sync_token_at neondb_owner
+3391; 1259 139277 INDEX public idx_valores_combustivel_sync_token_at neondb_owner
+3372; 1259 98309 INDEX public idx_veiculos_local neondb_owner
+3373; 1259 24671 INDEX public idx_veiculos_proprietario neondb_owner
+3374; 1259 139273 INDEX public idx_veiculos_sync_token_at neondb_owner
+3443; 2620 57475 TRIGGER public accounts trg_accounts_updated_at neondb_owner
+3438; 2606 57430 FK CONSTRAINT public accounts accounts_category_id_fkey neondb_owner
+3439; 2606 57425 FK CONSTRAINT public accounts accounts_user_id_fkey neondb_owner
+3440; 2606 57453 FK CONSTRAINT public attachments attachments_account_id_fkey neondb_owner
+3441; 2606 57448 FK CONSTRAINT public attachments attachments_user_id_fkey neondb_owner
+3437; 2606 57404 FK CONSTRAINT public categories categories_user_id_fkey neondb_owner
+3433; 2606 24632 FK CONSTRAINT public abastecimentos fk_abastecimento_motorista neondb_owner
+3434; 2606 24637 FK CONSTRAINT public abastecimentos fk_abastecimento_proprietario neondb_owner
+3435; 2606 24627 FK CONSTRAINT public abastecimentos fk_abastecimento_veiculo neondb_owner
+3436; 2606 24656 FK CONSTRAINT public baixa_abastecimento fk_baixa_abastecimento neondb_owner
+3432; 2606 24603 FK CONSTRAINT public motoristas fk_motorista_proprietario neondb_owner
+3431; 2606 24591 FK CONSTRAINT public veiculos fk_veiculo_proprietario neondb_owner
+3442; 2606 57469 FK CONSTRAINT public settings settings_user_id_fkey neondb_owner

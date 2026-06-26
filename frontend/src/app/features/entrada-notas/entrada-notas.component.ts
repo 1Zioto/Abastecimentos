@@ -36,6 +36,15 @@ import { AuthService } from '../../core/services/auth.service';
             </select>
           </div>
           <div class="filter-field">
+            <label>Número da NF</label>
+            <input
+              type="text"
+              [(ngModel)]="filtroNumeroNota"
+              (keydown.enter)="load()"
+              placeholder="Ex.: 1673273"
+            />
+          </div>
+          <div class="filter-field">
             <label>Data Início</label>
             <div class="date-row">
               <input #dataInicioInput type="date" [(ngModel)]="filtroDataInicio" (change)="load()" />
@@ -66,6 +75,10 @@ import { AuthService } from '../../core/services/auth.service';
                 </div>
               </div>
               <div class="field">
+                <label>Hora *</label>
+                <input type="time" formControlName="hora" />
+              </div>
+              <div class="field">
                 <label>Número da NF</label>
                 <input type="text" formControlName="numero_nota_fiscal" placeholder="000000" />
               </div>
@@ -80,16 +93,15 @@ import { AuthService } from '../../core/services/auth.service';
               </div>
               <div class="field">
                 <label>Quantidade (L)</label>
-                <input type="number" formControlName="quantidade" placeholder="0.00" step="0.01" (input)="calcValor()" />
+                <input type="number" formControlName="quantidade" placeholder="0.00" step="0.01" />
               </div>
               <div class="field">
                 <label>Valor por Litro(compra)</label>
-                <input type="number" formControlName="valor_litro" placeholder="0.000" step="0.001" (input)="calcValor()" />
+                <input type="number" formControlName="valor_litro" placeholder="0.000" step="0.001" />
               </div>
               <div class="field">
-                <label>Valor Total</label>
-                <input type="hidden" formControlName="valor" />
-                <input type="text" [value]="formatCurrencyBR(form.value.valor)" readonly class="highlight-field readonly-field" />
+                <label>Valor Total *</label>
+                <input type="number" formControlName="valor" placeholder="0.00" step="0.01" class="highlight-field" />
               </div>
               <div class="field">
                 <label>Responsável</label>
@@ -103,7 +115,7 @@ import { AuthService } from '../../core/services/auth.service';
                 } @else if (resolveImageUrl(form.value.foto_nota); as fotoNotaUrl) {
                   <small class="upload-hint">Imagem enviada ✓</small>
                   <div class="preview-box">
-                    <img class="preview-img" [src]="fotoNotaUrl" alt="Anexo da nota" />
+                    <img class="preview-img" [src]="displayImageUrl(fotoNotaUrl)" alt="Anexo da nota" />
                   </div>
                   <button type="button" class="btn-preview" (click)="openImagePreview(fotoNotaUrl)">Expandir</button>
                 }
@@ -131,8 +143,16 @@ import { AuthService } from '../../core/services/auth.service';
             <span class="s-value blue">{{ totalLitros() | number:'1.2-2' }} L</span>
           </div>
           <div class="summary-item">
-            <span class="s-label">Valor Total</span>
+            <span class="s-label">Valor Fiscal</span>
             <span class="s-value green">{{ totalValor() | currency:'BRL':'symbol':'1.2-2' }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="s-label">Transporte</span>
+            <span class="s-value amber">{{ totalTransporte() | currency:'BRL':'symbol':'1.2-2' }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="s-label">Custo Final</span>
+            <span class="s-value purple">{{ totalCompraFinal() | currency:'BRL':'symbol':'1.2-2' }}</span>
           </div>
         </div>
       }
@@ -143,13 +163,16 @@ import { AuthService } from '../../core/services/auth.service';
           <table class="data-table">
             <thead>
               <tr>
-                <th>Data</th>
+                <th>Data/Hora</th>
                 <th>Nº NF</th>
                 <th>Tipo</th>
                 <th class="text-right">Qtd (L)</th>
                 <th class="text-right">R$/L</th>
-                <th class="text-right">Valor Total</th>
+                <th class="text-right">Valor Fiscal</th>
+                <th class="text-right">Transporte</th>
+                <th class="text-right">Custo Final</th>
                 <th>Responsável</th>
+                <th>Verificação</th>
                 <th>Anexo</th>
                 <th>Ações</th>
               </tr>
@@ -157,7 +180,12 @@ import { AuthService } from '../../core/services/auth.service';
             <tbody>
               @for (n of notas(); track n.id_financeiro) {
                 <tr>
-                  <td>{{ n.data | date:'dd/MM/yyyy' }}</td>
+                  <td>
+                    <div class="date-time-cell">
+                      <span>{{ notaDataLabel(n) }}</span>
+                      <small>{{ notaHoraLabel(n) }}</small>
+                    </div>
+                  </td>
                   <td><code class="code-badge">{{ n.numero_nota_fiscal ?? '—' }}</code></td>
                   <td><span class="fuel-badge">{{ n.tipo ?? '—' }}</span></td>
                   <td class="text-right">{{ n.quantidade ? (n.quantidade | number:'1.2-2') : '—' }}</td>
@@ -165,10 +193,29 @@ import { AuthService } from '../../core/services/auth.service';
                   <td class="text-right val-green">
                     {{ n.valor ? (n.valor | currency:'BRL':'symbol':'1.2-2') : '—' }}
                   </td>
+                  <td class="text-right val-amber">
+                    {{ custoTransporteTotal(n) | currency:'BRL':'symbol':'1.2-2' }}
+                  </td>
+                  <td class="text-right val-purple">
+                    {{ valorCompraFinal(n) | currency:'BRL':'symbol':'1.2-2' }}
+                  </td>
                   <td>{{ n.responsavel ?? '—' }}</td>
                   <td>
+                    <span class="verify-badge" [class.ok]="n.nota_verificacao_status === 'validada'" [class.warn]="n.nota_verificacao_status === 'suspeita'">
+                      {{ notaVerificacaoLabel(n) }}
+                    </span>
+                    @if (n.nota_verificacao_mensagem) {
+                      <small class="verify-message">{{ n.nota_verificacao_mensagem }}</small>
+                    }
+                  </td>
+                  <td>
                     @if (resolveImageUrl(n.foto_nota); as fotoNotaListUrl) {
-                      <button type="button" class="link-btn" (click)="openImagePreview(fotoNotaListUrl)">Ver imagem</button>
+                      <div class="note-image-cell">
+                        <button type="button" class="note-thumb-btn" (click)="openImagePreview(fotoNotaListUrl)" title="Ver foto da nota">
+                          <img [src]="displayImageUrl(fotoNotaListUrl)" alt="Foto da nota" />
+                        </button>
+                        <button type="button" class="link-btn" (click)="openImagePreview(fotoNotaListUrl)">Ver imagem</button>
+                      </div>
                     } @else { — }
                   </td>
                   <td>
@@ -184,7 +231,7 @@ import { AuthService } from '../../core/services/auth.service';
                 </tr>
               }
               @empty {
-                <tr><td colspan="9" class="empty-cell">Nenhuma nota registrada</td></tr>
+                <tr><td colspan="12" class="empty-cell">Nenhuma nota registrada</td></tr>
               }
             </tbody>
           </table>
@@ -207,8 +254,11 @@ import { AuthService } from '../../core/services/auth.service';
       @if (previewImageUrl()) {
         <div class="image-overlay" (click)="closeImagePreview()">
           <div class="image-modal" (click)="$event.stopPropagation()">
-            <img [src]="previewImageUrl()" alt="Imagem ampliada" />
-            <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+            <img [src]="displayImageUrl(previewImageUrl())" alt="Imagem ampliada" />
+            <div class="image-actions">
+              <button type="button" class="btn-close-image" (click)="openExternalImage(previewImageUrl())">Abrir em nova aba</button>
+              <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+            </div>
           </div>
         </div>
       }
@@ -260,6 +310,8 @@ import { AuthService } from '../../core/services/auth.service';
     .s-value { font-size: 18px; font-weight: 700; color: #f8fafc; margin-top: 2px; }
     .s-value.blue { color: #38bdf8; }
     .s-value.green { color: #4ade80; }
+    .s-value.amber { color: #f59e0b; }
+    .s-value.purple { color: #c084fc; }
 
     .table-card { background: #0d1427; border: 1px solid #1e2d4a; border-radius: 12px; overflow: hidden; }
     .table-wrap { overflow-x: auto; }
@@ -268,11 +320,24 @@ import { AuthService } from '../../core/services/auth.service';
     .data-table tbody td { padding: 10px 12px; border-bottom: 1px solid #1e2d4a15; vertical-align: middle; color: #e2e8f0; }
     .data-table tbody tr:hover td { background: #1e2d4a15; }
     .text-right { text-align: right; }
+    .date-time-cell { display: flex; flex-direction: column; gap: 2px; min-width: 86px; }
+    .date-time-cell span { color: #f8fafc; font-weight: 600; }
+    .date-time-cell small { color: #38bdf8; font-size: 11px; font-weight: 700; }
     .val-green { color: #4ade80; font-weight: 600; }
+    .val-amber { color: #f59e0b; font-weight: 600; }
+    .val-purple { color: #c084fc; font-weight: 700; }
     .code-badge { background: #0a0f1e; color: #cbd5e1; padding: 2px 7px; border-radius: 4px; font-size: 11px; }
     .fuel-badge { background: #1e2d4a; color: #7dd3fc; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 600; }
+    .verify-badge { display: inline-flex; padding: 3px 8px; border-radius: 999px; background: #1e293b; color: #cbd5e1; font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .verify-badge.ok { background: rgba(34, 197, 94, 0.16); color: #4ade80; }
+    .verify-badge.warn { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+    .verify-message { display: block; margin-top: 4px; color: #94a3b8; max-width: 180px; line-height: 1.25; }
     .link-btn { color: #38bdf8; font-size: 11px; text-decoration: none; background: transparent; border: none; cursor: pointer; padding: 0; }
     .link-btn:hover { text-decoration: underline; }
+    .note-image-cell { display: flex; align-items: center; gap: 8px; min-width: 118px; }
+    .note-thumb-btn { width: 54px; height: 54px; border: 1px solid #1e2d4a; border-radius: 8px; padding: 0; background: #0a0f1e; overflow: hidden; cursor: pointer; }
+    .note-thumb-btn:hover { border-color: #38bdf8; }
+    .note-thumb-btn img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .actions { display: flex; gap: 6px; }
     .action-btn { background: transparent; border: none; cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 5px; }
     .action-btn:hover { background: #1e2d4a; }
@@ -286,6 +351,7 @@ import { AuthService } from '../../core/services/auth.service';
     .image-overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, 0.9); display: flex; align-items: center; justify-content: center; z-index: 1100; padding: 20px; }
     .image-modal { max-width: min(92vw, 1100px); max-height: 90vh; display: flex; flex-direction: column; gap: 12px; align-items: center; }
     .image-modal img { width: auto; max-width: 100%; max-height: calc(90vh - 56px); object-fit: contain; border-radius: 12px; border: 1px solid #1e2d4a; background: #0a0f1e; }
+    .image-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
     .btn-close-image { background: #0a0f1e; border: 1px solid #1e2d4a; color: #e2e8f0; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; }
   `]
 })
@@ -303,20 +369,26 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   uploadingFotoNota = signal(false);
   previewImageUrl = signal('');
   private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
-  private readonly onGaragemChanged = () => this.load();
+  private readonly custoTransportePorLitro = 0.04;
+  private readonly onGaragemChanged = () => {
+    this.loadTiposCombustivel();
+    this.load();
+  };
   tiposCombustivel = signal<string[]>([this.defaultTipoCombustivel]);
 
   filtroTipo = '';
+  filtroNumeroNota = '';
   filtroDataInicio = '';
   filtroDataFim = '';
 
   form = this.fb.group({
     data:               ['', Validators.required],
+    hora:               [this.currentTimeInput(), Validators.required],
     numero_nota_fiscal: [''],
     tipo:               [this.defaultTipoCombustivel],
     quantidade:         [null as number | null],
     valor_litro:        [null as number | null],
-    valor:              [null as number | null],
+    valor:              [null as number | null, [Validators.required, Validators.min(0.01)]],
     responsavel:        [''],
     foto_nota:          [''],
   });
@@ -335,7 +407,10 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   canShowForm() { return this.showForm() && (this.isAdmin() || !this.editItem()); }
 
   loadTiposCombustivel() {
-    this.api.getValoresCombustivel({ per_page: 500 }).subscribe({
+    this.api.getValoresCombustivel({
+      per_page: 500,
+      local: this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz',
+    }).subscribe({
       next: (r) => {
         const tipos = Array.from(
           new Set(
@@ -358,10 +433,24 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   load() {
     this.api.getEntradaNotas({
       tipo: this.filtroTipo,
+      numero_nota_fiscal: this.filtroNumeroNota.trim(),
       data_inicio: this.filtroDataInicio,
       data_fim: this.filtroDataFim,
       per_page: 100
-    }).subscribe(r => this.notas.set((r.data ?? []).map(n => this.normalizeNota(n))));
+    }).subscribe(r => {
+      const notas = (r.data ?? [])
+        .map(n => this.normalizeNota(n))
+        .sort((a, b) => this.notaTimestamp(b) - this.notaTimestamp(a));
+      this.notas.set(notas);
+    });
+  }
+
+  private notaTimestamp(n: EntradaNota): number {
+    const raw = n.data_hora || n.data;
+    if (!raw) return 0;
+    const normalized = String(raw).includes('T') ? String(raw) : String(raw).replace(' ', 'T');
+    const parsed = Date.parse(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   private normalizeNota(n: EntradaNota): EntradaNota {
@@ -370,6 +459,9 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
       valor: this.toNumber(n.valor),
       quantidade: this.toNumber(n.quantidade),
       valor_litro: this.toNumber(n.valor_litro),
+      custo_transporte_litro: this.toNumber(n.custo_transporte_litro),
+      custo_transporte_total: this.toNumber(n.custo_transporte_total),
+      valor_compra_final: this.toNumber(n.valor_compra_final),
     };
   }
 
@@ -384,14 +476,6 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
     return Number.isFinite(numeric) ? numeric : undefined;
   }
 
-  calcValor() {
-    const qtd = this.form.value.quantidade ?? 0;
-    const vl  = this.form.value.valor_litro ?? 0;
-    if (qtd && vl) {
-      this.form.patchValue({ valor: +(qtd * vl).toFixed(2) });
-    }
-  }
-
   totalLitros(): number {
     return this.notas().reduce((a, n) => a + (n.quantidade ?? 0), 0);
   }
@@ -400,10 +484,39 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
     return this.notas().reduce((a, n) => a + (n.valor ?? 0), 0);
   }
 
+  custoTransporteTotal(n: EntradaNota): number {
+    const persisted = Number(n.custo_transporte_total ?? 0);
+    if (Number.isFinite(persisted) && persisted > 0) return persisted;
+    return Math.round((Number(n.quantidade ?? 0) * this.custoTransportePorLitro) * 100) / 100;
+  }
+
+  valorCompraFinal(n: EntradaNota): number {
+    const persisted = Number(n.valor_compra_final ?? 0);
+    if (Number.isFinite(persisted) && persisted > 0) return persisted;
+    return Number(n.valor ?? 0) + this.custoTransporteTotal(n);
+  }
+
+  notaVerificacaoLabel(n: EntradaNota): string {
+    const status = String(n.nota_verificacao_status ?? '').trim().toLowerCase();
+    if (status === 'validada') return 'Nota validada';
+    if (status === 'suspeita') return 'Suspeita';
+    if (status === 'desativada') return 'IA desativada';
+    return 'Pendente';
+  }
+
+  totalTransporte(): number {
+    return this.notas().reduce((a, n) => a + this.custoTransporteTotal(n), 0);
+  }
+
+  totalCompraFinal(): number {
+    return this.notas().reduce((a, n) => a + this.valorCompraFinal(n), 0);
+  }
+
   newItem() {
     this.editItem.set(null);
     this.form.reset({
       data: new Date().toISOString().slice(0, 10),
+      hora: this.currentTimeInput(),
       tipo: this.tiposCombustivel()[0] ?? this.defaultTipoCombustivel,
       responsavel: this.auth.currentUser()?.nome ?? ''
     });
@@ -412,7 +525,7 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
 
   edit(n: EntradaNota) {
     this.editItem.set(n);
-    this.form.patchValue({ ...n, data: n.data?.slice(0, 10) } as any);
+    this.form.patchValue({ ...n, data: n.data?.slice(0, 10), hora: this.notaHoraInput(n) } as any);
     this.form.patchValue({ responsavel: this.auth.currentUser()?.nome ?? n.responsavel ?? '' });
     this.showForm.set(true);
   }
@@ -420,7 +533,11 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   cancelForm() {
     this.showForm.set(false);
     this.editItem.set(null);
-    this.form.reset({ tipo: this.tiposCombustivel()[0] ?? this.defaultTipoCombustivel, responsavel: this.auth.currentUser()?.nome ?? '' });
+    this.form.reset({
+      hora: this.currentTimeInput(),
+      tipo: this.tiposCombustivel()[0] ?? this.defaultTipoCombustivel,
+      responsavel: this.auth.currentUser()?.nome ?? ''
+    });
   }
 
   onSubmit() {
@@ -430,16 +547,24 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
       return;
     }
     this.saving.set(true);
+    const raw = this.form.getRawValue();
     const data = {
-      ...(this.form.value as any),
-      responsavel: this.auth.currentUser()?.nome ?? this.form.value.responsavel ?? '',
+      ...(raw as any),
+      data_hora: this.combineDateTime(raw.data, raw.hora),
+      responsavel: this.auth.currentUser()?.nome ?? raw.responsavel ?? '',
     };
+    delete (data as any).hora;
     const obs = this.editItem()
       ? this.api.updateEntradaNota(this.editItem()!.id_financeiro, data)
       : this.api.createEntradaNota(data);
     obs.subscribe({
       next: () => { this.toastr.success('Nota salva com sucesso'); this.cancelForm(); this.load(); this.saving.set(false); },
-      error: () => { this.toastr.error('Erro ao salvar nota'); this.saving.set(false); }
+      error: (err) => {
+        const message = this.apiErrorMessage(err, 'Erro ao salvar nota');
+        console.error('Erro ao salvar entrada de nota', err);
+        this.toastr.error(message);
+        this.saving.set(false);
+      }
     });
   }
 
@@ -464,10 +589,66 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
         this.toastr.success('Imagem da nota enviada');
       },
       error: (err) => {
-        this.toastr.error(err.error?.message ?? 'Erro no upload da imagem');
+        const message = this.apiErrorMessage(err, 'Erro no upload da imagem');
+        console.error('Erro no upload da imagem da nota', err);
+        this.toastr.error(message);
         this.uploadingFotoNota.set(false);
       }
     });
+  }
+
+  private apiErrorMessage(err: any, fallback: string): string {
+    const parts: string[] = [];
+    const message = err?.error?.message || err?.message || fallback;
+    parts.push(message);
+    const errors = err?.error?.errors;
+    if (errors && typeof errors === 'object') {
+      for (const [field, value] of Object.entries(errors)) {
+        if (Array.isArray(value)) {
+          parts.push(`${field}: ${value.join(', ')}`);
+        } else if (value) {
+          parts.push(`${field}: ${value}`);
+        }
+      }
+    }
+    return parts.filter(Boolean).join(' | ');
+  }
+
+  notaDataLabel(n: EntradaNota): string {
+    const date = this.rawDatePart(n.data_hora || n.data);
+    if (!date) return '—';
+    const [year, month, day] = date.split('-');
+    return `${day}/${month}/${year}`;
+  }
+
+  notaHoraLabel(n: EntradaNota): string {
+    return this.rawTimePart(n.data_hora) ?? '—';
+  }
+
+  private notaHoraInput(n: EntradaNota): string {
+    return this.rawTimePart(n.data_hora) ?? '00:00';
+  }
+
+  private currentTimeInput(): string {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }
+
+  private combineDateTime(date?: string | null, time?: string | null): string | null {
+    const datePart = this.rawDatePart(date);
+    if (!datePart) return null;
+    const timePart = time && /^\d{2}:\d{2}$/.test(time) ? time : '00:00';
+    return `${datePart} ${timePart}:00`;
+  }
+
+  private rawDatePart(value?: string | null): string | null {
+    const match = String(value ?? '').match(/^(\d{4}-\d{2}-\d{2})/);
+    return match?.[1] ?? null;
+  }
+
+  private rawTimePart(value?: string | null): string | null {
+    const match = String(value ?? '').match(/[T\s](\d{2}:\d{2})/);
+    return match?.[1] ?? null;
   }
 
   resolveImageUrl(url?: string | null): string | null {
@@ -485,6 +666,29 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
     return null;
   }
 
+  displayImageUrl(url?: string | null): string {
+    const imageUrl = this.resolveImageUrl(url);
+    if (!imageUrl) return '';
+    const driveId = this.googleDriveFileId(imageUrl);
+    if (driveId) {
+      return `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveId)}&sz=w1600`;
+    }
+    return imageUrl;
+  }
+
+  private googleDriveFileId(url: string): string | null {
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname.includes('drive.google.com')) return null;
+      const idParam = parsed.searchParams.get('id');
+      if (idParam) return idParam;
+      const match = parsed.pathname.match(/\/file\/d\/([^/]+)/);
+      return match?.[1] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   openImagePreview(url?: string | null) {
     const imageUrl = this.resolveImageUrl(url);
     if (!imageUrl) return;
@@ -495,14 +699,10 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
     this.previewImageUrl.set('');
   }
 
-  formatCurrencyBR(value: number | null | undefined): string {
-    const amount = Number(value ?? 0);
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number.isFinite(amount) ? amount : 0);
+  openExternalImage(url?: string | null) {
+    const imageUrl = this.resolveImageUrl(url);
+    if (!imageUrl) return;
+    window.open(imageUrl, '_blank', 'noopener,noreferrer');
   }
 
   openDatePicker(input: HTMLInputElement) {

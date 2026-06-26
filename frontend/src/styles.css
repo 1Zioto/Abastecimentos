@@ -39,6 +39,9 @@ html, body {
 ::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
 
 /* Toast overrides */
+.toast-container {
+  z-index: 5000 !important;
+}
 .toast-container .ngx-toastr {
   background: var(--bg-panel) !important;
   border: 1px solid var(--border-color) !important;

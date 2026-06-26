@@ -2,12 +2,15 @@
 // app/Models/Proprietario.php
 namespace App\Models;
 
+use App\Models\Concerns\SerializesDatesInAppTimezone;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
 
 class Proprietario extends Model
 {
+    use SerializesDatesInAppTimezone;
+
     private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'proprietarios';
     protected $primaryKey = 'id_proprietario';
@@ -15,8 +18,31 @@ class Proprietario extends Model
     protected $keyType = 'string';
     public $timestamps = false;
 
-    protected $fillable = ['id_proprietario','nome','status','responsavel','celular','observacao','data_registro','local', 'sync_token_at'];
-    protected $casts = ['data_registro' => 'datetime', 'sync_token_at' => 'datetime'];
+    protected $fillable = [
+        'id_proprietario',
+        'nome',
+        'status',
+        'responsavel',
+        'celular',
+        'observacao',
+        'data_registro',
+        'local',
+        'odometro_obrigatorio',
+        'limite_financeiro',
+        'limite_litros',
+        'bloqueio_automatico',
+        'alerta_limite_percentual',
+        'sync_token_at',
+    ];
+    protected $casts = [
+        'data_registro' => 'datetime',
+        'odometro_obrigatorio' => 'boolean',
+        'limite_financeiro' => 'decimal:2',
+        'limite_litros' => 'decimal:2',
+        'bloqueio_automatico' => 'boolean',
+        'alerta_limite_percentual' => 'decimal:2',
+        'sync_token_at' => 'datetime',
+    ];
 
     protected static function boot()
     {

@@ -1,0 +1,34 @@
+{
+    "proprietarios": 0,
+    "veiculos": 1,
+    "motoristas": 0,
+    "usuarios": 1,
+    "missing_details": {
+        "veiculos": [
+            {
+                "ID Veículo": "6a49904e",
+                "Placa": "George Bras",
+                "Marca": "",
+                "Modelo": "",
+                "Ano": "",
+                "Tipo Combustível": "Oleo Diesel S10",
+                "Número do Chassi": "",
+                "Proprietário": "19545c28",
+                "odometro": "",
+                "RENAVAM": "",
+                "Cor": "",
+                "Foto": ""
+            }
+        ],
+        "usuarios": [
+            {
+                "idUser": "f6c334fb",
+                "Nome": "Vagner",
+                "Login": "",
+                "Password": "12345",
+                "LastAccess": "",
+                "Tipo": "Frentista"
+            }
+        ]
+    }
+}

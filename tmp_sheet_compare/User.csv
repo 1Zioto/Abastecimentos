@@ -1,0 +1,12 @@
+idUser,Nome,Login,Password,LastAccess,Tipo
+1,Douglas,11705706665,1234,04/10/2024 08:00:00,Administrador
+0edffa3e,AUGUSTO,AUGUSTO,12345,,Administrador
+2409a049,Vagner,,12345,,Frentista
+,,,,,
+,,,,,
+b8387790,Heleno,,1234,,Administrador
+96ab1fe3,Wagner,,1234,,Frentista
+b9f9ea94,Igor,,1234,,Administrador
+e6467cbb,Luiz,,1234,,Administrador
+f6c334fb,Vagner,,12345,,Frentista
+eaa6265d,Gabriel,,12345,,Operacional

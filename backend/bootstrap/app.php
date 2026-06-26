@@ -5,6 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\UnauthorizedHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -33,31 +34,31 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (\Illuminate\Auth\AuthenticationException $e, $request) {
-            if ($request->expectsJson()) {
-                return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado.'], 401);
-            }
+            return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado.'], 401);
         });
 
         $exceptions->render(function (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e, $request) {
-            if ($request->expectsJson() || $request->is('api/*')) {
-                return new \Illuminate\Http\JsonResponse(['message' => 'Token expirado.'], 401);
-            }
+            return new \Illuminate\Http\JsonResponse(['message' => 'Token expirado.'], 401);
         });
 
         $exceptions->render(function (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e, $request) {
-            if ($request->expectsJson() || $request->is('api/*')) {
-                return new \Illuminate\Http\JsonResponse(['message' => 'Token inválido.'], 401);
-            }
+            return new \Illuminate\Http\JsonResponse(['message' => 'Token inválido.'], 401);
+        });
+
+        $exceptions->render(function (\Tymon\JWTAuth\Exceptions\UserNotDefinedException $e, $request) {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Usuário da sessão não encontrado. Faça login novamente.'], 401);
         });
 
         $exceptions->render(function (\Tymon\JWTAuth\Exceptions\JWTException $e, $request) {
-            if ($request->expectsJson() || $request->is('api/*')) {
-                return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado.'], 401);
-            }
+            return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado.'], 401);
+        });
+
+        $exceptions->render(function (UnauthorizedHttpException $e, $request) {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Não autenticado. Faça login novamente.'], 401);
         });
 
         $exceptions->render(function (\Illuminate\Validation\ValidationException $e, $request) {
-            if ($request->expectsJson()) {
+            if ($request->expectsJson() || $request->is('api/*')) {
                 return new \Illuminate\Http\JsonResponse([
                     'message' => 'Dados inválidos.',
                     'errors'  => $e->errors(),
@@ -66,7 +67,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (\Illuminate\Database\Eloquent\ModelNotFoundException $e, $request) {
-            if ($request->expectsJson()) {
+            if ($request->expectsJson() || $request->is('api/*')) {
                 return new \Illuminate\Http\JsonResponse(['message' => 'Registro não encontrado.'], 404);
             }
         });

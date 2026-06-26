@@ -1,16 +1,19 @@
 <?php
 namespace App\Models;
+use App\Models\Concerns\SerializesDatesInAppTimezone;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
 
 class Motorista extends Model
 {
+    use SerializesDatesInAppTimezone;
+
     private static ?bool $hasSyncTokenColumn = null;
     protected $table = 'motoristas';
     protected $primaryKey = 'id_motorista';
     public $incrementing = false; protected $keyType = 'string'; public $timestamps = false;
-    protected $fillable = ['id_motorista','nome','id_proprietario','documento','celular','local','sync_token_at'];
+    protected $fillable = ['id_motorista','nome','apelido','id_proprietario','documento','celular','local','sync_token_at'];
     protected $casts = ['sync_token_at' => 'datetime'];
     protected static function boot()
     {

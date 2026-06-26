@@ -1,0 +1,104 @@
+{
+    "generated_at": "2026-06-02T13:02:12-03:00",
+    "public_base": "https:\/\/abastecimentovipetrasportes.vercel.app\/assets\/abastecimentos\/junho-2026",
+    "records": [
+        {
+            "id_abastecimento": "ee8ee841",
+            "data_hora": "2026-06-01T07:29:31",
+            "id_veiculo": "MSZ8E81",
+            "foto_odometro": "Abastecimentos_Images\/ee8ee841.Foto_Odometro.121759.jpg",
+            "bomba": "Abastecimentos_Images\/ee8ee841.Bomba.121759.jpg"
+        },
+        {
+            "id_abastecimento": "d0798413",
+            "data_hora": "2026-06-01T09:17:51",
+            "id_veiculo": "MST7D43",
+            "foto_odometro": "Abastecimentos_Images\/d0798413.Foto_Odometro.151541.jpg",
+            "bomba": "Abastecimentos_Images\/d0798413.Bomba.151541.jpg"
+        },
+        {
+            "id_abastecimento": "873a2dc0",
+            "data_hora": "2026-06-01T12:17:00",
+            "id_veiculo": "ODA4J72",
+            "foto_odometro": "Abastecimentos_Images\/873a2dc0.Foto_Odometro.152717.jpg",
+            "bomba": "Abastecimentos_Images\/873a2dc0.Bomba.152717.jpg"
+        },
+        {
+            "id_abastecimento": "6b101e4b",
+            "data_hora": "2026-06-01T12:27:09",
+            "id_veiculo": "SGC2G66",
+            "foto_odometro": "Abastecimentos_Images\/6b101e4b.Foto_Odometro.155448.jpg",
+            "bomba": "Abastecimentos_Images\/6b101e4b.Bomba.155447.jpg"
+        },
+        {
+            "id_abastecimento": "f11e6ff2",
+            "data_hora": "2026-06-01T13:09:31",
+            "id_veiculo": "ODA4J95",
+            "foto_odometro": "Abastecimentos_Images\/f11e6ff2.Foto_Odometro.162220.jpg",
+            "bomba": "Abastecimentos_Images\/f11e6ff2.Bomba.162220.jpg"
+        },
+        {
+            "id_abastecimento": "1f136001",
+            "data_hora": "2026-06-01T13:22:12",
+            "id_veiculo": "QRG5E81",
+            "foto_odometro": "Abastecimentos_Images\/1f136001.Foto_Odometro.164923.jpg",
+            "bomba": "Abastecimentos_Images\/1f136001.Bomba.164923.jpg"
+        },
+        {
+            "id_abastecimento": "2577071b",
+            "data_hora": "2026-06-01T14:51:04",
+            "id_veiculo": "SFP0A20",
+            "foto_odometro": "Abastecimentos_Images\/2577071b.Foto_Odometro.180910.jpg",
+            "bomba": "Abastecimentos_Images\/2577071b.Bomba.180910.jpg"
+        },
+        {
+            "id_abastecimento": "274576b8",
+            "data_hora": "2026-06-01T15:09:02",
+            "id_veiculo": "RBA7J29",
+            "foto_odometro": "Abastecimentos_Images\/274576b8.Foto_Odometro.201023.jpg",
+            "bomba": "Abastecimentos_Images\/274576b8.Bomba.201023.jpg"
+        },
+        {
+            "id_abastecimento": "773a6514",
+            "data_hora": "2026-06-01T17:10:15",
+            "id_veiculo": "ODG4G87",
+            "foto_odometro": "Abastecimentos_Images\/773a6514.Foto_Odometro.202252.jpg",
+            "bomba": "Abastecimentos_Images\/773a6514.Bomba.202252.jpg"
+        },
+        {
+            "id_abastecimento": "5387a124",
+            "data_hora": "2026-06-01T17:22:44",
+            "id_veiculo": "RBB1H58",
+            "foto_odometro": "Abastecimentos_Images\/5387a124.Foto_Odometro.205008.jpg",
+            "bomba": "Abastecimentos_Images\/5387a124.Bomba.205008.jpg"
+        },
+        {
+            "id_abastecimento": "f8586509",
+            "data_hora": "2026-06-01T17:50:00",
+            "id_veiculo": "QRH6F52",
+            "foto_odometro": "Abastecimentos_Images\/f8586509.Foto_Odometro.225604.jpg",
+            "bomba": "Abastecimentos_Images\/f8586509.Bomba.225604.jpg"
+        },
+        {
+            "id_abastecimento": "8ac7428c",
+            "data_hora": "2026-06-02T07:21:00",
+            "id_veiculo": "OVI0A98",
+            "foto_odometro": "Abastecimentos_Images\/8ac7428c.Foto_Odometro.102228.jpg",
+            "bomba": "Abastecimentos_Images\/8ac7428c.Bomba.102228.jpg"
+        },
+        {
+            "id_abastecimento": "a7752db6",
+            "data_hora": "2026-06-02T07:22:20",
+            "id_veiculo": "ODC3636",
+            "foto_odometro": "Abastecimentos_Images\/a7752db6.Foto_Odometro.125241.jpg",
+            "bomba": "Abastecimentos_Images\/a7752db6.Bomba.125241.jpg"
+        },
+        {
+            "id_abastecimento": "7403c6e4",
+            "data_hora": "2026-06-02T12:06:25",
+            "id_veiculo": "QRI1G74",
+            "foto_odometro": "Abastecimentos_Images\/7403c6e4.Foto_Odometro.151653.jpg",
+            "bomba": "Abastecimentos_Images\/7403c6e4.Bomba.151653.jpg"
+        }
+    ]
+}

@@ -1,0 +1,115 @@
+{
+    "inserted": {
+        "proprietarios": [
+            {
+                "id": "2a6d1ee5",
+                "nome": "João Vitor (Ak Transporte)",
+                "local": "Matriz"
+            },
+            {
+                "id": "08803ed5",
+                "nome": "Fabiano Pazolini",
+                "local": "Matriz"
+            }
+        ],
+        "veiculos": [
+            {
+                "id": "a7130862",
+                "placa": "DXB8E64",
+                "local": "Matriz"
+            },
+            {
+                "id": "08e8c63d",
+                "placa": "QXZ0E85",
+                "local": "Matriz"
+            },
+            {
+                "id": "9a59a517",
+                "placa": "RBD8E15",
+                "local": "Matriz"
+            },
+            {
+                "id": "6d5801b9",
+                "placa": "RBD3G46",
+                "local": "Matriz"
+            },
+            {
+                "id": "08af63bd",
+                "placa": "PPT4F16",
+                "local": "Matriz"
+            },
+            {
+                "id": "9f0a5c9b",
+                "placa": "QXD9160",
+                "local": "Matriz"
+            },
+            {
+                "id": "ef681e6b",
+                "placa": "IZO3H71",
+                "local": "Matriz"
+            }
+        ],
+        "motoristas": [
+            {
+                "id": "c6f5503e",
+                "nome": "Leandro",
+                "local": "Matriz"
+            },
+            {
+                "id": "e40bff57",
+                "nome": "Vitor Luiz",
+                "local": "Matriz"
+            },
+            {
+                "id": "cf94fd48",
+                "nome": "Reginaldo",
+                "local": "Matriz"
+            },
+            {
+                "id": "db7b5f48",
+                "nome": "Dinei",
+                "local": "Matriz"
+            },
+            {
+                "id": "9c514f4f",
+                "nome": "Rafael",
+                "local": "Matriz"
+            },
+            {
+                "id": "d9c4abc8",
+                "nome": "João Vitor",
+                "local": "Matriz"
+            },
+            {
+                "id": "531ce5e6",
+                "nome": "Felipe",
+                "local": "Matriz"
+            },
+            {
+                "id": "85847501",
+                "nome": "Gustavo",
+                "local": "Matriz"
+            },
+            {
+                "id": "3ff25643",
+                "nome": "Gildacio",
+                "local": "Matriz"
+            },
+            {
+                "id": "b0593a0c",
+                "nome": "Josmar",
+                "local": "Matriz"
+            }
+        ]
+    },
+    "skipped": [
+        "proprietario:ae85512b"
+    ],
+    "errors": [
+        {
+            "tipo": "veiculo",
+            "id": "6a49904e",
+            "erro": "SQLSTATE[22001]: String data, right truncated: 7 ERROR:  value too long for type character varying(10) (Connection: pgsql, SQL: insert into \"veiculos\" (\"id_veiculo\", \"placa\", \"marca\", \"modelo\", \"ano\", \"tipo_combustivel\", \"numero_chassi\", \"id_proprietario\", \"odometro\", \"renavam\", \"cor\", \"foto\", \"created_at\", \"local\") values (6a49904e, George Bras, ?, ?, ?, Oleo Diesel S10, ?, 19545c28, ?, ?, ?, ?, 2026-05-26 14:34:21, Matriz))"
+        }
+    ]
+}

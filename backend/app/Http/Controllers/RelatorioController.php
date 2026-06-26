@@ -14,19 +14,16 @@ class RelatorioController extends Controller
     private function aplicarFiltroFiliais($query, Request $request)
     {
         $user = auth()->user();
-        $permitidas = method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
-        $query->whereIn('local', $permitidas);
-
-        if ($request->filled('local')) {
-            $local = trim((string) $request->local);
-            if (!in_array($local, $permitidas, true)) {
-                $query->whereRaw('1 = 0');
-                return $query;
-            }
-            $query->whereRaw('LOWER(local) = LOWER(?)', [$local]);
+        if (!$user) {
+            abort(401, 'Não autenticado.');
         }
-
-        return $query;
+        $permitidas = method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
+        return $this->aplicarFiltroLocalPermitido(
+            $query,
+            $query->getModel()->getTable(),
+            $permitidas,
+            $request->query('local')
+        );
     }
 
     private function pdfRuntimeOptions(): array
@@ -42,16 +39,38 @@ class RelatorioController extends Controller
         ];
     }
 
+    private function aplicarFiltroBaixaOuStatusImagem($query, ?string $status)
+    {
+        $status = trim((string) $status);
+        if ($status === '') {
+            return $query;
+        }
+
+        $normalizado = mb_strtolower($status);
+        if ($normalizado === 'pago') {
+            return $query->whereRaw('COALESCE(baixa_abastecimento, false) = true');
+        }
+        if ($normalizado === 'pendente') {
+            return $query->whereRaw('COALESCE(baixa_abastecimento, false) = false');
+        }
+
+        return $query->where('status', $status);
+    }
+
     public function porProprietario(Request $request)
     {
         $request->validate([
-            'id_proprietario' => 'required|exists:proprietarios,id_proprietario',
+            'id_proprietario' => 'nullable|exists:proprietarios,id_proprietario',
         ]);
 
-        $proprietario = Proprietario::findOrFail($request->id_proprietario);
+        $proprietario = $request->filled('id_proprietario')
+            ? Proprietario::findOrFail($request->id_proprietario)
+            : null;
 
-        $query = Abastecimento::with(['veiculo','motorista'])
-            ->where('id_proprietario', $request->id_proprietario);
+        $query = Abastecimento::with(['veiculo','motorista','proprietario']);
+        if ($request->filled('id_proprietario')) {
+            $query->where('id_proprietario', $request->id_proprietario);
+        }
         $this->aplicarFiltroFiliais($query, $request);
 
         if ($request->filled('data_inicio')) {
@@ -61,15 +80,16 @@ class RelatorioController extends Controller
             $query->whereDate('data', '<=', $request->data_fim);
         }
         if ($request->filled('status')) {
-            $query->where('status', $request->status);
+            $this->aplicarFiltroBaixaOuStatusImagem($query, $request->status);
         }
         if ($request->filled('id_veiculo')) {
             $query->where('id_veiculo', $request->id_veiculo);
         }
 
         $abastecimentos = $query->orderByDesc('data_hora')->get([
-            'id_abastecimento','data_hora','id_veiculo','id_motorista',
-            'nome_motorista','quantidade_litros','valor_por_litro','valor_total','status','tipo_combustivel'
+            'id_abastecimento','data_hora','id_veiculo','id_motorista','id_proprietario',
+            'nome_motorista','nome_proprietario','quantidade_litros','valor_por_litro',
+            'valor_total','status','tipo_combustivel','baixa_abastecimento'
         ]);
 
         $totais = [
@@ -82,7 +102,7 @@ class RelatorioController extends Controller
             'proprietario'   => $proprietario,
             'abastecimentos' => $abastecimentos,
             'totais'         => $totais,
-            'filtros'        => $request->only(['data_inicio','data_fim','status','id_veiculo']),
+            'filtros'        => $request->only(['id_proprietario','data_inicio','data_fim','status','id_veiculo']),
         ]);
     }
 
@@ -101,7 +121,7 @@ class RelatorioController extends Controller
 
             if ($request->filled('data_inicio')) $query->whereDate('data', '>=', $request->data_inicio);
             if ($request->filled('data_fim'))    $query->whereDate('data', '<=', $request->data_fim);
-            if ($request->filled('status'))      $query->where('status', $request->status);
+            if ($request->filled('status'))      $this->aplicarFiltroBaixaOuStatusImagem($query, $request->status);
             if ($request->filled('id_veiculo'))  $query->where('id_veiculo', $request->id_veiculo);
 
             $abastecimentos = $query->orderByDesc('data_hora')->get();
@@ -112,7 +132,7 @@ class RelatorioController extends Controller
 
             $pdf = Pdf::setOption($this->pdfRuntimeOptions())
                 ->loadView('pdf.relatorio_proprietario', compact('proprietario','abastecimentos','totais','request'))
-                ->setPaper('a4', 'landscape');
+                ->setPaper('a4', 'portrait');
 
             $safeOwner = Str::slug((string) $proprietario->nome, '_');
             $safeOwner = $safeOwner !== '' ? $safeOwner : (string) $proprietario->id_proprietario;

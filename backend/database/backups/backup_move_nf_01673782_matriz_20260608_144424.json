@@ -1,0 +1,22 @@
+{
+    "created_at": "2026-06-08 14:44:24",
+    "operation": "move entrada nota NF 01673782 para Matriz",
+    "before": {
+        "id_financeiro": "a4fce18b-33e3-4f66-9b45-20a80fb29186",
+        "data": "2026-06-06",
+        "numero_nota_fiscal": "01673782",
+        "valor": "30227.50",
+        "quantidade": "5000.00",
+        "valor_litro": "6.046",
+        "responsavel": "Douglas",
+        "foto_nota": "https://res.cloudinary.com/da5halra4/image/upload/v1780940232/abastecimentos/dc83c8f5-3a15-4b25-afe9-e041d6d15857.jpg",
+        "tipo": "OLEO DIESEL S10",
+        "local": "Viana",
+        "sync_token_at": "2026-06-08 14:37:13+00",
+        "deleted_at": null,
+        "deleted_by": null,
+        "deleted_by_id": null,
+        "status": null,
+        "data_hora": "2026-06-06 14:35:00"
+    }
+}

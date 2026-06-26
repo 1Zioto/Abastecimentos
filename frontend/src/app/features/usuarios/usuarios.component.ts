@@ -241,8 +241,34 @@ export class UsuariosComponent implements OnInit {
     this.form.get('password')?.markAsPristine();
   }
 
+  private normalizarFiliais(valor: unknown): string[] {
+    let filiais: unknown[] = [];
+    if (Array.isArray(valor)) {
+      filiais = valor;
+    } else if (typeof valor === 'string') {
+      try {
+        const parsed = JSON.parse(valor);
+        filiais = Array.isArray(parsed) ? parsed : valor.split(/[,;|]/);
+      } catch {
+        filiais = valor.split(/[,;|]/);
+      }
+    }
+
+    const aliases: Record<string, string> = {
+      cariacica: 'Matriz',
+      garagem: 'Matriz',
+      'garagem cariacica': 'Matriz',
+      'filial viana': 'Viana',
+      'garagem viana': 'Viana',
+    };
+    return [...new Set(filiais.map(item => {
+      const texto = String(item ?? '').trim();
+      return aliases[texto.toLowerCase()] ?? texto;
+    }).filter(filial => this.filiaisDisponiveis.includes(filial)))];
+  }
+
   filiaisDoUsuario(usuario: Usuario): string[] {
-    const filiais = Array.isArray(usuario.filiais_acesso) ? usuario.filiais_acesso : [];
+    const filiais = this.normalizarFiliais(usuario.filiais_acesso);
     const validas = filiais.filter(filial => this.filiaisDisponiveis.includes(filial));
     return validas.length ? validas : [...this.filiaisDisponiveis];
   }
@@ -263,7 +289,7 @@ export class UsuariosComponent implements OnInit {
       return;
     }
     this.saving.set(true);
-    const data = { ...(this.form.value as any), filiais_acesso: this.filiaisSelecionadas() };
+    const data = { ...(this.form.value as any), filiais_acesso: this.normalizarFiliais(this.filiaisSelecionadas()) };
     if (this.editItem()) {
       const passwordControl = this.form.get('password');
       if (!this.passwordEditing() || !passwordControl?.dirty || !String(data.password ?? '').trim()) {

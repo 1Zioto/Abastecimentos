@@ -6,11 +6,12 @@ import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Proprietario } from '../../shared/models';
 import { AuthService } from '../../core/services/auth.service';
+import { LinkedEntityContext, VinculosEntidadeModalComponent } from '../../shared/components/vinculos-entidade-modal/vinculos-entidade-modal.component';
 
 @Component({
   selector: 'app-proprietarios',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, VinculosEntidadeModalComponent],
   template: `
     <div class="page">
       <div class="page-header">
@@ -37,8 +38,29 @@ import { AuthService } from '../../core/services/auth.service';
               </div>
               <div class="field"><label>Responsável</label><input type="text" formControlName="responsavel" /></div>
               <div class="field"><label>Celular</label><input type="text" formControlName="celular" /></div>
+              <label class="check-field">
+                <input type="checkbox" formControlName="odometro_obrigatorio" />
+                <span>Odômetro obrigatório no abastecimento</span>
+              </label>
               <div class="field wide"><label>Observação</label><textarea formControlName="observacao" rows="2" placeholder="Motivo do bloqueio ou observação"></textarea></div>
             </div>
+            @if (isAdmin()) {
+              <div class="limit-section">
+                <div class="limit-title">
+                  <strong>Controle de limite</strong>
+                  <span>Configuração administrativa para bloqueio automático</span>
+                </div>
+                <div class="form-row">
+                  <div class="field"><label>Limite financeiro</label><input type="number" step="0.01" min="0" formControlName="limite_financeiro" /></div>
+                  <div class="field"><label>Limite de litros</label><input type="number" step="0.01" min="0" formControlName="limite_litros" /></div>
+                  <div class="field"><label>Alerta em %</label><input type="number" step="1" min="1" max="100" formControlName="alerta_limite_percentual" /></div>
+                  <label class="check-field">
+                    <input type="checkbox" formControlName="bloqueio_automatico" />
+                    <span>Bloquear automaticamente ao exceder limite</span>
+                  </label>
+                </div>
+              </div>
+            }
             <div class="form-actions">
               <button type="button" class="btn-cancel" (click)="cancelForm()">Cancelar</button>
               <button type="submit" class="btn-primary sm" [disabled]="saving()">{{ saving() ? 'Salvando...' : 'Salvar' }}</button>
@@ -48,30 +70,48 @@ import { AuthService } from '../../core/services/auth.service';
       }
       <div class="table-card">
         <table class="data-table">
-          <thead><tr><th>Nome</th><th>Status</th><th>Responsável</th><th>Celular</th><th>Observação</th><th>Cadastro</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Status</th><th>Responsável</th><th>Celular</th><th>Odômetro</th>@if (isAdmin()) {<th>Limite financeiro</th><th>Limite litros</th><th>Situação limite</th>}<th>Observação</th><th>Cadastro</th><th>Ações</th></tr></thead>
           <tbody>
             @for (p of items(); track p.id_proprietario) {
-              <tr>
+              <tr class="click-row" (click)="openLinks(p)">
                 <td><strong>{{ p.nome }}</strong></td>
                 <td><span class="badge" [class]="getStatusClass(p.status)">{{ p.status ?? '—' }}</span></td>
                 <td>{{ p.responsavel ?? '—' }}</td>
                 <td>{{ p.celular ?? '—' }}</td>
+                <td><span class="badge" [class]="p.odometro_obrigatorio ? 'badge-blue' : 'badge-gray'">{{ p.odometro_obrigatorio ? 'Obrigatório' : 'Opcional' }}</span></td>
+                @if (isAdmin()) {
+                  <td>
+                    <strong>{{ money(p.limite_financeiro) }}</strong>
+                    <small>{{ money(p.limites_resumo?.pendente_valor) }} pendente</small>
+                  </td>
+                  <td>
+                    <strong>{{ litros(p.limite_litros) }}</strong>
+                    <small>{{ litros(p.limites_resumo?.pendente_litros) }} pendente</small>
+                  </td>
+                  <td>
+                    <span class="badge" [class]="getLimiteClass(p)">{{ limiteLabel(p) }}</span>
+                    <small>{{ percentualLimite(p) }}</small>
+                  </td>
+                }
                 <td class="obs-cell">{{ p.observacao ?? '—' }}</td>
                 <td>{{ p.data_registro | date:'dd/MM/yyyy' }}</td>
                 <td><div class="actions">
+                  @if (canEdit()) {
+                    <button class="action-btn" (click)="$event.stopPropagation(); edit(p)">✏️</button>
+                  }
                   @if (isAdmin()) {
-                    <button class="action-btn" (click)="edit(p)">✏️</button>
-                    <button class="action-btn" [title]="p.status === 'Bloqueado' ? 'Desbloquear' : 'Bloquear'" (click)="toggleBloqueio(p)">
+                    <button class="action-btn" [title]="p.status === 'Bloqueado' ? 'Desbloquear' : 'Bloquear'" (click)="$event.stopPropagation(); toggleBloqueio(p)">
                       {{ p.status === 'Bloqueado' ? '🔓' : '🔒' }}
                     </button>
-                    <button class="action-btn" (click)="confirmDelete(p)">🗑️</button>
-                  } @else {
+                    <button class="action-btn" (click)="$event.stopPropagation(); confirmDelete(p)">🗑️</button>
+                  }
+                  @if (!canEdit()) {
                     <span style="color:#64748b;font-size:12px;">Somente leitura</span>
                   }
                 </div></td>
               </tr>
             }
-            @empty { <tr><td colspan="7" class="empty-cell">Nenhum proprietário</td></tr> }
+            @empty { <tr><td [attr.colspan]="isAdmin() ? 11 : 8" class="empty-cell">Nenhum proprietário</td></tr> }
           </tbody>
         </table>
       </div>
@@ -87,6 +127,7 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
         </div>
       }
+      <app-vinculos-entidade-modal [context]="linksContext()" (closed)="linksContext.set(null)" />
     </div>
   `,
   styles: [`
@@ -110,6 +151,12 @@ import { AuthService } from '../../core/services/auth.service';
     .field input:focus,.field select:focus,.field textarea:focus{border-color:#0ea5e9}
     .field select option{background:#0d1427}
     .field.wide{grid-column:1 / -1}
+    .limit-section{border-top:1px solid #1e2d4a;padding-top:14px;margin-bottom:14px}
+    .limit-title{display:flex;flex-direction:column;gap:3px;margin-bottom:12px}
+    .limit-title strong{color:#f8fafc;font-size:13px}
+    .limit-title span{color:#94a3b8;font-size:12px}
+    .check-field{display:flex;align-items:center;gap:8px;background:#0a0f1e;border:1px solid #1e2d4a;border-radius:7px;padding:9px 10px;color:#cbd5e1;font-size:12px}
+    .check-field input{width:16px;height:16px;accent-color:#0ea5e9}
     .form-actions{display:flex;gap:10px;justify-content:flex-end}
     .btn-cancel{background:transparent;border:1px solid #1e2d4a;color:#64748b;padding:8px 16px;border-radius:7px;cursor:pointer;font-size:13px}
     .table-card{background:#0d1427;border:1px solid #1e2d4a;border-radius:12px;overflow:hidden}
@@ -117,11 +164,15 @@ import { AuthService } from '../../core/services/auth.service';
     .data-table thead th{padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;border-bottom:1px solid #1e2d4a;background:#080e1c;text-align:left}
     .data-table tbody td{padding:12px 14px;border-bottom:1px solid #1e2d4a15}
     .data-table tbody tr:hover td{background:#1e2d4a15}
+    .click-row{cursor:pointer}
     .badge{padding:3px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase}
     .badge-green{background:#dcfce720;color:#4ade80}
+    .badge-blue{background:#dbeafe20;color:#60a5fa}
     .badge-gray{background:#1e2d4a;color:#64748b}
     .badge-red{background:#fee2e220;color:#f87171}
+    .badge-amber{background:#fef3c720;color:#f59e0b}
     .obs-cell{max-width:260px;color:#94a3b8;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    td small{display:block;margin-top:4px;color:#94a3b8;font-size:11px}
     .actions{display:flex;gap:6px}
     .action-btn{background:transparent;border:none;cursor:pointer;font-size:14px;padding:4px 6px;border-radius:5px}
     .action-btn:hover{background:#1e2d4a}
@@ -138,24 +189,45 @@ export class ProprietariosComponent implements OnInit {
   private api = inject(ApiService); private toastr = inject(ToastrService); private fb = inject(FormBuilder); private auth = inject(AuthService);
   items = signal<Proprietario[]>([]); total = signal(0);
   showForm = signal(false); editItem = signal<Proprietario | null>(null); deleteTarget = signal<Proprietario | null>(null); saving = signal(false);
+  linksContext = signal<LinkedEntityContext | null>(null);
   search = '';
-  form = this.fb.group({ nome:['',Validators.required],status:['Ativo'],responsavel:[''],celular:[''],observacao:[''] });
+  form = this.fb.group({
+    nome:['',Validators.required],
+    status:['Ativo'],
+    responsavel:[''],
+    celular:[''],
+    odometro_obrigatorio:[false],
+    observacao:[''],
+    limite_financeiro:[null as number | null],
+    limite_litros:[null as number | null],
+    bloqueio_automatico:[false],
+    alerta_limite_percentual:[80],
+  });
   isAdmin() { return this.auth.isAdmin(); }
   canCreate() { return this.auth.canCreateOperationalRecords(); }
-  canShowForm() { return this.showForm() && (this.isAdmin() || !this.editItem()); }
+  canEdit() { return this.auth.canCreateOperationalRecords(); }
+  canShowForm() { return this.showForm() && (this.canEdit() || !this.editItem()); }
   ngOnInit() { this.load(); }
-  load() { this.api.getProprietarios({search:this.search,per_page:100}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
-  newItem() { this.editItem.set(null);this.form.reset({status:'Ativo'});this.showForm.set(true); }
-  edit(p:Proprietario) { this.editItem.set(p);this.form.patchValue(p as any);this.showForm.set(true); }
+  load() { this.api.getProprietarios({search:this.search,per_page:100,with_limites:this.isAdmin() ? 1 : undefined}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
+  newItem() { this.editItem.set(null);this.form.reset({status:'Ativo', odometro_obrigatorio:false, bloqueio_automatico:false, alerta_limite_percentual:80});this.showForm.set(true); }
+  edit(p:Proprietario) { this.editItem.set(p);this.form.patchValue({ ...p, odometro_obrigatorio: !!p.odometro_obrigatorio } as any);this.showForm.set(true); }
+  openLinks(p: Proprietario) { this.linksContext.set({ type: 'proprietario', entity: p }); }
   cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset(); }
   onSubmit() {
     if(this.form.invalid){this.form.markAllAsTouched();return;}
-    if (this.editItem() && !this.isAdmin()) {
-      this.toastr.error('Somente administradores podem editar proprietários');
+    if (this.editItem() && !this.canEdit()) {
+      this.toastr.error('Você não tem permissão para editar proprietários');
       return;
     }
     this.saving.set(true);
-    const obs = this.editItem() ? this.api.updateProprietario(this.editItem()!.id_proprietario,this.form.value as any) : this.api.createProprietario(this.form.value as any);
+    const payload = { ...this.form.value } as any;
+    if (!this.isAdmin()) {
+      delete payload.limite_financeiro;
+      delete payload.limite_litros;
+      delete payload.bloqueio_automatico;
+      delete payload.alerta_limite_percentual;
+    }
+    const obs = this.editItem() ? this.api.updateProprietario(this.editItem()!.id_proprietario,payload) : this.api.createProprietario(payload);
     obs.subscribe({next:()=>{this.toastr.success('Salvo');this.cancelForm();this.load();this.saving.set(false);},error:()=>{this.toastr.error('Erro');this.saving.set(false);}});
   }
   confirmDelete(p:Proprietario){this.deleteTarget.set(p);}
@@ -164,6 +236,38 @@ export class ProprietariosComponent implements OnInit {
     if (status === 'Ativo') return 'badge-green';
     if (status === 'Bloqueado') return 'badge-red';
     return 'badge-gray';
+  }
+  money(value?: number | string | null) {
+    const n = Number(value ?? 0);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+  }
+  litros(value?: number | string | null) {
+    const n = Number(value ?? 0);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    return `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)} L`;
+  }
+  limiteLabel(p: Proprietario) {
+    const situacao = p.limites_resumo?.situacao;
+    if (!p.bloqueio_automatico) return 'Sem bloqueio';
+    if (situacao === 'estourado') return 'Estourado';
+    if (situacao === 'alerta') return 'Alerta';
+    return 'Normal';
+  }
+  getLimiteClass(p: Proprietario) {
+    if (!p.bloqueio_automatico) return 'badge-gray';
+    if (p.limites_resumo?.situacao === 'estourado') return 'badge-red';
+    if (p.limites_resumo?.situacao === 'alerta') return 'badge-amber';
+    return 'badge-green';
+  }
+  percentualLimite(p: Proprietario) {
+    const financeiro = p.limites_resumo?.percentual_financeiro;
+    const litros = p.limites_resumo?.percentual_litros;
+    const partes = [
+      financeiro === null || financeiro === undefined ? '' : `R$ ${financeiro}%`,
+      litros === null || litros === undefined ? '' : `L ${litros}%`,
+    ].filter(Boolean);
+    return partes.join(' / ') || 'Sem limite definido';
   }
   toggleBloqueio(p: Proprietario) {
     if (p.status === 'Bloqueado') {

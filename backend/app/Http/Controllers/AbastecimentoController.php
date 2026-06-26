@@ -3,11 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\Abastecimento;
+use App\Models\EncerranteBomba;
 use App\Models\Proprietario;
 use App\Models\ValoresCombustivel;
 use App\Models\Veiculo;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -15,27 +19,26 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class AbastecimentoController extends Controller
 {
+    private const ENCERRANTE_HORA_PADRAO = '07:00';
+    private const ENCERRANTE_DIA_OBRIGATORIO = CarbonInterface::SATURDAY;
+
     private function filiaisPermitidas(): array
     {
         $user = auth()->user();
+        if (!$user) {
+            abort(401, 'Não autenticado.');
+        }
         return method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : ['Matriz', 'Viana'];
     }
 
     private function aplicarFiltroFiliais($query, Request $request)
     {
-        $permitidas = $this->filiaisPermitidas();
-        $query->whereIn('local', $permitidas);
-
-        if ($request->filled('local')) {
-            $local = trim((string) $request->local);
-            if (!in_array($local, $permitidas, true)) {
-                $query->whereRaw('1 = 0');
-                return $query;
-            }
-            $query->whereRaw('LOWER(local) = LOWER(?)', [$local]);
-        }
-
-        return $query;
+        return $this->aplicarFiltroLocalPermitido(
+            $query,
+            'abastecimentos',
+            $this->filiaisPermitidas(),
+            $request->query('local')
+        );
     }
 
     private function validarAcessoFilial(string $local): void
@@ -47,32 +50,369 @@ class AbastecimentoController extends Controller
         }
     }
 
-    private function normalizarStatusBaixa(array &$data, ?Abastecimento $original = null): void
+    private function garantirSchemaEncerrante(): void
     {
-        if (!array_key_exists('status', $data)) {
+        DB::statement(<<<'SQL'
+            CREATE TABLE IF NOT EXISTS configuracoes_sistema (
+                chave VARCHAR(120) PRIMARY KEY,
+                valor TEXT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        SQL);
+
+        DB::statement(<<<'SQL'
+            CREATE TABLE IF NOT EXISTS encerrantes_bomba (
+                id_encerrante VARCHAR(120) PRIMARY KEY,
+                data DATE NOT NULL,
+                local VARCHAR(80) NOT NULL,
+                quantidade_tanque NUMERIC(12,2) NOT NULL,
+                litros_bomba NUMERIC(12,2) NOT NULL,
+                foto TEXT NOT NULL,
+                usuario_id VARCHAR(120) NULL,
+                usuario_nome VARCHAR(255) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sync_token_at TIMESTAMP NULL,
+                deleted_at TIMESTAMP NULL,
+                deleted_by VARCHAR(255) NULL,
+                deleted_by_id VARCHAR(120) NULL
+            )
+        SQL);
+
+        DB::table('configuracoes_sistema')->insertOrIgnore([
+            [
+                'chave' => 'encerrante_bomba_hora',
+                'valor' => self::ENCERRANTE_HORA_PADRAO,
+                'updated_at' => now(),
+            ],
+        ]);
+    }
+
+    private function horaObrigatoriaEncerrante(): string
+    {
+        $this->garantirSchemaEncerrante();
+        $valor = DB::table('configuracoes_sistema')
+            ->where('chave', 'encerrante_bomba_hora')
+            ->value('valor');
+
+        return preg_match('/^\d{2}:\d{2}$/', (string) $valor)
+            ? (string) $valor
+            : self::ENCERRANTE_HORA_PADRAO;
+    }
+
+    private function ultimoMomentoObrigatorioEncerrante(CarbonImmutable $agora, string $hora): CarbonImmutable
+    {
+        $momento = $agora->setTimeFromTimeString($hora . ':00');
+
+        while ($momento->dayOfWeek !== self::ENCERRANTE_DIA_OBRIGATORIO || $momento->greaterThan($agora)) {
+            $momento = $momento->subDay();
+        }
+
+        return $momento;
+    }
+
+    private function validarEncerranteObrigatorio(string $local): void
+    {
+        $this->garantirSchemaEncerrante();
+
+        $tipo = strtolower((string) (auth()->user()?->tipo ?? ''));
+        if (!in_array($tipo, ['admin', 'operador'], true)) {
             return;
         }
 
-        $status = trim((string) ($data['status'] ?? ''));
-        if ($status === '') {
+        $hora = $this->horaObrigatoriaEncerrante();
+        $agora = CarbonImmutable::now(config('app.timezone', 'America/Sao_Paulo'));
+        $momentoObrigatorio = $this->ultimoMomentoObrigatorioEncerrante($agora, $hora);
+        if ($agora->lessThan($momentoObrigatorio)) {
             return;
         }
 
-        if ($status === 'Pago') {
-            $data['baixa_abastecimento'] = true;
-            $data['data_baixa'] = $data['data_baixa'] ?? now();
+        $ultimoQuery = EncerranteBomba::query()
+            ->where('local', $local)
+            ->whereDate('data', '>=', $momentoObrigatorio->toDateString());
+
+        if ($this->tabelaTemColuna('encerrantes_bomba', 'deleted_at')) {
+            $ultimoQuery->whereNull('deleted_at');
+        }
+
+        $ultimo = $ultimoQuery
+            ->orderByDesc('data')
+            ->orderByDesc('created_at')
+            ->first();
+
+        if ($ultimo) {
             return;
         }
 
-        if ($status === 'Pendente') {
-            $jaTemBaixa = $original
-                ? $original->baixas()->exists()
-                : false;
+        throw ValidationException::withMessages([
+            'encerrante_bomba' => [
+                "Encerrante semanal pendente para {$local}. Informe o encerrante da bomba antes de registrar novo abastecimento.",
+            ],
+        ]);
+    }
 
-            if (!$jaTemBaixa) {
-                $data['baixa_abastecimento'] = false;
-            }
+    private function garantirColunasVerificacaoImagem(): void
+    {
+        if (!$this->tabelaTemColuna('abastecimentos', 'id_abastecimento')) {
+            return;
         }
+
+        DB::statement('ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS imagem_verificada_por_id VARCHAR(120) NULL');
+        DB::statement('ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS imagem_verificada_por VARCHAR(255) NULL');
+        DB::statement('ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS imagem_verificada_em TIMESTAMP NULL');
+    }
+
+    private function proprietarioEstaBloqueado(?Proprietario $proprietario): bool
+    {
+        return mb_strtoupper(trim((string) ($proprietario?->status ?? ''))) === 'BLOQUEADO';
+    }
+
+    private function validarProprietarioPodeAbastecer(string $idProprietario): void
+    {
+        $proprietario = Proprietario::query()
+            ->select(['id_proprietario', 'nome', 'status', 'observacao'])
+            ->findOrFail($idProprietario);
+
+        if (!$this->proprietarioEstaBloqueado($proprietario)) {
+            return;
+        }
+
+        $mensagem = 'Proprietário bloqueado. Não é possível registrar abastecimento para este proprietário.';
+        $observacao = trim((string) $proprietario->observacao);
+        if ($observacao !== '') {
+            $mensagem .= ' Motivo: ' . $observacao;
+        }
+
+        throw ValidationException::withMessages([
+            'id_proprietario' => [$mensagem],
+        ]);
+    }
+
+    private function garantirColunasLimiteProprietarios(): void
+    {
+        if (!$this->tabelaTemColuna('proprietarios', 'id_proprietario')) {
+            return;
+        }
+
+        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS limite_financeiro NUMERIC(14,2) NULL');
+        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS limite_litros NUMERIC(14,2) NULL');
+        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS bloqueio_automatico BOOLEAN NOT NULL DEFAULT FALSE');
+        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS alerta_limite_percentual NUMERIC(5,2) NOT NULL DEFAULT 80');
+    }
+
+    private function formatarMoeda(float $valor): string
+    {
+        return 'R$ ' . number_format($valor, 2, ',', '.');
+    }
+
+    private function formatarLitros(float $valor): string
+    {
+        return number_format($valor, 2, ',', '.') . ' L';
+    }
+
+    private function validarLimiteProprietarioAbastecimento(string $idProprietario, float $litrosNovo, float $valorNovo): void
+    {
+        $this->garantirColunasLimiteProprietarios();
+
+        $proprietario = Proprietario::query()
+            ->select([
+                'id_proprietario',
+                'nome',
+                'status',
+                'observacao',
+                'limite_financeiro',
+                'limite_litros',
+                'bloqueio_automatico',
+            ])
+            ->findOrFail($idProprietario);
+
+        if (!$proprietario->bloqueio_automatico) {
+            return;
+        }
+
+        $limiteFinanceiro = $proprietario->limite_financeiro !== null ? (float) $proprietario->limite_financeiro : null;
+        $limiteLitros = $proprietario->limite_litros !== null ? (float) $proprietario->limite_litros : null;
+        if (($limiteFinanceiro === null || $limiteFinanceiro <= 0) && ($limiteLitros === null || $limiteLitros <= 0)) {
+            return;
+        }
+
+        $pendentes = DB::table('abastecimentos')
+            ->where('id_proprietario', $idProprietario);
+
+        $this->aplicarFiltroAtivos($pendentes, 'abastecimentos', request());
+
+        if ($this->tabelaTemColuna('abastecimentos', 'baixa_abastecimento')) {
+            $pendentes->where(function ($q) {
+                $q->whereRaw('baixa_abastecimento = false')
+                    ->orWhereNull('baixa_abastecimento');
+            });
+        }
+
+        $valorPendente = (float) (clone $pendentes)->sum('valor_total');
+        $litrosPendente = (float) (clone $pendentes)->sum('quantidade_litros');
+        $valorProjetado = $valorPendente + $valorNovo;
+        $litrosProjetado = $litrosPendente + $litrosNovo;
+        $motivos = [];
+
+        if ($limiteFinanceiro !== null && $limiteFinanceiro > 0 && $valorProjetado > $limiteFinanceiro) {
+            $motivos[] = 'limite financeiro excedido: pendente atual '
+                . $this->formatarMoeda($valorPendente)
+                . ', novo abastecimento '
+                . $this->formatarMoeda($valorNovo)
+                . ', limite '
+                . $this->formatarMoeda($limiteFinanceiro);
+        }
+
+        if ($limiteLitros !== null && $limiteLitros > 0 && $litrosProjetado > $limiteLitros) {
+            $motivos[] = 'limite de litros excedido: pendente atual '
+                . $this->formatarLitros($litrosPendente)
+                . ', novo abastecimento '
+                . $this->formatarLitros($litrosNovo)
+                . ', limite '
+                . $this->formatarLitros($limiteLitros);
+        }
+
+        if ($motivos === []) {
+            return;
+        }
+
+        $mensagem = 'Proprietário bloqueado automaticamente por limite. ' . implode('; ', $motivos) . '.';
+        $payload = [
+            'status' => 'Bloqueado',
+            'observacao' => trim($mensagem . ' ' . trim((string) $proprietario->observacao)),
+        ];
+
+        $this->registrarAlteracoes($proprietario, $payload);
+        $proprietario->forceFill($payload)->save();
+
+        throw ValidationException::withMessages([
+            'id_proprietario' => [$mensagem],
+        ]);
+    }
+
+    private function normalizarLocal(?string $local): string
+    {
+        $valor = trim((string) $local);
+        if ($valor === '' || strcasecmp($valor, 'Garagem') === 0 || strcasecmp($valor, 'Cariacica') === 0) {
+            return 'Matriz';
+        }
+        if (strcasecmp($valor, 'Garagem Viana') === 0) {
+            return 'Viana';
+        }
+        return $valor;
+    }
+
+    private function normalizarDataRequest(mixed $value): mixed
+    {
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        $text = trim($value);
+        if ($text === '') {
+            return $value;
+        }
+
+        if (preg_match('/^(\d{4}-\d{2}-\d{2})/', $text, $matches)) {
+            return $matches[1];
+        }
+
+        if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})/', $text, $matches)) {
+            return "{$matches[3]}-{$matches[2]}-{$matches[1]}";
+        }
+
+        try {
+            return (new \DateTimeImmutable($text))->format('Y-m-d');
+        } catch (\Throwable) {
+            return $value;
+        }
+    }
+
+    private function normalizarDataHoraRequest(mixed $value, mixed $dateFallback = null): mixed
+    {
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        $text = trim($value);
+        if ($text === '') {
+            return $value;
+        }
+
+        $date = null;
+        if (preg_match('/^(\d{4}-\d{2}-\d{2})/', $text, $dateMatches)) {
+            $date = $dateMatches[1];
+        }
+
+        preg_match_all('/(?:^|T|\s)(\d{1,2}:\d{2}(?::\d{2})?)/', $text, $timeMatches);
+        $times = $timeMatches[1] ?? [];
+        $time = $times ? end($times) : null;
+
+        if ($date !== null && $time !== null) {
+            return $date . ' ' . (substr_count($time, ':') === 1 ? "{$time}:00" : $time);
+        }
+
+        $fallbackDate = $this->normalizarDataRequest($dateFallback);
+        if (is_string($fallbackDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fallbackDate) && $time !== null) {
+            return $fallbackDate . ' ' . (substr_count($time, ':') === 1 ? "{$time}:00" : $time);
+        }
+
+        try {
+            return (new \DateTimeImmutable(str_replace(' ', 'T', $text)))->format('Y-m-d H:i:s');
+        } catch (\Throwable) {
+            return $value;
+        }
+    }
+
+    private function normalizarDatasRequest(Request $request): void
+    {
+        $data = [];
+        if ($request->has('data')) {
+            $data['data'] = $this->normalizarDataRequest($request->input('data'));
+        }
+        if ($request->has('data_hora')) {
+            $data['data_hora'] = $this->normalizarDataHoraRequest(
+                $request->input('data_hora'),
+                $data['data'] ?? $request->input('data')
+            );
+        }
+        if ($data !== []) {
+            $request->merge($data);
+        }
+    }
+
+    private function calcularValorTotalAbastecimento(float|int|null $litros, float|int|null $valorPorLitro): float
+    {
+        $totalComCentavos = round(
+            ((float) ($litros ?? 0) * (float) ($valorPorLitro ?? 0)),
+            2,
+            PHP_ROUND_HALF_UP
+        );
+
+        return (float) floor($totalComCentavos + 0.5);
+    }
+
+    private function valorCombustivelAtualPorFilial(string $tipoCombustivel, string $local): float
+    {
+        $query = ValoresCombustivel::query()
+            ->where('tipo_combustivel', $tipoCombustivel)
+            ->whereRaw('LOWER(local) = LOWER(?)', [$local])
+            ->orderByDesc('data');
+
+        if ($this->tabelaTemColuna('valores_combustivel', 'sync_token_at')) {
+            $query->orderByDesc('sync_token_at');
+        }
+
+        $valor = $query->orderByDesc('id_valor')->value('valor');
+
+        if ($valor === null) {
+            throw ValidationException::withMessages([
+                'valor_por_litro' => [
+                    "Nenhum preço cadastrado para {$tipoCombustivel} na filial {$local}. Cadastre o preço em Tabela de Preços antes de salvar o abastecimento.",
+                ],
+            ]);
+        }
+
+        return (float) $valor;
     }
 
     private function buildComprovanteDiagnostics(Abastecimento $abastecimento): array
@@ -135,17 +475,28 @@ class AbastecimentoController extends Controller
             ->where('id_veiculo', $idVeiculo)
             ->whereNotNull('odometro');
 
+        if ($this->tabelaTemColuna('abastecimentos', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        if ($this->tabelaTemColuna('abastecimentos', 'status')) {
+            $query->where(function ($q) {
+                $q->whereNull('status')
+                    ->orWhereRaw('LOWER(status) <> ?', ['inativo']);
+            });
+        }
+
         if ($ignoreAbastecimentoId) {
             $query->where('id_abastecimento', '!=', $ignoreAbastecimentoId);
         }
 
-        $ultimoAbastecimentoOdometro = $query
-            ->orderByDesc('data_hora')
-            ->value('odometro');
+        $ultimoAbastecimentoOdometro = $query->max('odometro');
 
-        $odometroVeiculo = Veiculo::query()
-            ->where('id_veiculo', $idVeiculo)
-            ->value('odometro');
+        $odometroVeiculo = $ignoreAbastecimentoId
+            ? null
+            : Veiculo::query()
+                ->where('id_veiculo', $idVeiculo)
+                ->value('odometro');
 
         $candidatos = array_values(array_filter([
             $ultimoAbastecimentoOdometro,
@@ -161,10 +512,6 @@ class AbastecimentoController extends Controller
 
     private function validarOdometroMinimo(array $data, ?string $ignoreAbastecimentoId = null): void
     {
-        if (!array_key_exists('odometro', $data) || $data['odometro'] === null) {
-            return;
-        }
-
         $idVeiculo = $data['id_veiculo'] ?? null;
         if (!$idVeiculo) {
             return;
@@ -175,23 +522,170 @@ class AbastecimentoController extends Controller
             return;
         }
 
-        if ((int) $data['odometro'] < $ultimoOdometro) {
+        if (!array_key_exists('odometro', $data) || $data['odometro'] === null || trim((string) $data['odometro']) === '') {
+            $minimo = $ultimoOdometro + 1;
             throw ValidationException::withMessages([
-                'odometro' => "Odômetro inválido: informe um valor maior ou igual a {$ultimoOdometro} km.",
+                'odometro' => "Odômetro é obrigatório para esta placa porque já existe abastecimento anterior. Próximo mínimo: {$minimo} km.",
             ]);
+        }
+
+        if ((int) $data['odometro'] <= $ultimoOdometro) {
+            $minimo = $ultimoOdometro + 1;
+            throw ValidationException::withMessages([
+                'odometro' => "Odômetro inválido: informe um valor maior que {$ultimoOdometro} km. Próximo mínimo: {$minimo} km.",
+            ]);
+        }
+    }
+
+    private function garantirColunaOdometroObrigatorioProprietario(): void
+    {
+        if ($this->tabelaTemColuna('proprietarios', 'odometro_obrigatorio')) {
+            return;
+        }
+
+        \Illuminate\Support\Facades\DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS odometro_obrigatorio BOOLEAN NOT NULL DEFAULT FALSE');
+    }
+
+    private function proprietarioExigeOdometro(?string $idVeiculo, ?string $idProprietario = null): bool
+    {
+        $this->garantirColunaOdometroObrigatorioProprietario();
+        $obrigatorio = null;
+
+        if ($idVeiculo) {
+            $obrigatorio = Veiculo::query()
+                ->where('veiculos.id_veiculo', $idVeiculo)
+                ->leftJoin('proprietarios', 'proprietarios.id_proprietario', '=', 'veiculos.id_proprietario')
+                ->value('proprietarios.odometro_obrigatorio');
+        }
+
+        if ($obrigatorio === null && $idProprietario) {
+            $obrigatorio = Proprietario::query()
+                ->where('id_proprietario', $idProprietario)
+                ->value('odometro_obrigatorio');
+        }
+
+        return filter_var($obrigatorio, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function validarCamposObrigatoriosAbastecimento(array $data, ?Abastecimento $original = null): void
+    {
+        $resultado = [
+            'data' => $data['data'] ?? $original?->data,
+            'data_hora' => $data['data_hora'] ?? $original?->data_hora,
+            'frentista' => $data['frentista'] ?? $original?->frentista,
+            'id_proprietario' => $data['id_proprietario'] ?? $original?->id_proprietario,
+            'id_veiculo' => $data['id_veiculo'] ?? $original?->id_veiculo,
+            'id_motorista' => $data['id_motorista'] ?? $original?->id_motorista,
+            'local' => $data['local'] ?? $original?->local,
+            'tipo_combustivel' => $data['tipo_combustivel'] ?? $original?->tipo_combustivel,
+            'quantidade_litros' => $data['quantidade_litros'] ?? $original?->quantidade_litros,
+            'status' => $data['status'] ?? $original?->status,
+            'odometro' => array_key_exists('odometro', $data) ? $data['odometro'] : $original?->odometro,
+        ];
+
+        $campos = [
+            'data' => 'Data',
+            'data_hora' => 'Data e hora',
+            'frentista' => 'Frentista',
+            'id_proprietario' => 'Proprietário',
+            'id_veiculo' => 'Veículo',
+            'id_motorista' => 'Motorista',
+            'local' => 'Local',
+            'tipo_combustivel' => 'Tipo de combustível',
+            'status' => 'Status',
+        ];
+
+        $erros = [];
+        foreach ($campos as $campo => $rotulo) {
+            if (trim((string) ($resultado[$campo] ?? '')) === '') {
+                $erros[$campo] = "{$rotulo} é obrigatório.";
+            }
+        }
+
+        if ($resultado['quantidade_litros'] === null || (float) $resultado['quantidade_litros'] <= 0) {
+            $erros['quantidade_litros'] = 'Quantidade de litros é obrigatória.';
+        }
+
+        if ($this->proprietarioExigeOdometro(
+            $resultado['id_veiculo'] ? (string) $resultado['id_veiculo'] : null,
+            $resultado['id_proprietario'] ? (string) $resultado['id_proprietario'] : null,
+        ) && trim((string) ($resultado['odometro'] ?? '')) === '') {
+            $erros['odometro'] = 'Odômetro é obrigatório para este proprietário.';
+        }
+
+        if (!empty($erros)) {
+            throw ValidationException::withMessages($erros);
+        }
+    }
+
+    private function validarAnexoBombaObrigatorio(array $data, ?Abastecimento $original = null): void
+    {
+        $bomba = array_key_exists('bomba', $data) ? $data['bomba'] : $original?->bomba;
+        if (trim((string) $bomba) === '') {
+            throw ValidationException::withMessages([
+                'bomba' => ['Anexe a imagem da bomba antes de salvar o abastecimento.'],
+            ]);
+        }
+
+        if (!$this->anexoOnlineValido($bomba)) {
+            throw ValidationException::withMessages([
+                'bomba' => ['A imagem da bomba ainda não foi enviada online. Aguarde o upload ou anexe a foto novamente.'],
+            ]);
+        }
+
+        $fotoOdometro = array_key_exists('foto_odometro', $data) ? $data['foto_odometro'] : $original?->foto_odometro;
+        if (trim((string) $fotoOdometro) !== '' && !$this->anexoOnlineValido($fotoOdometro)) {
+            throw ValidationException::withMessages([
+                'foto_odometro' => ['A foto do hodômetro ainda não foi enviada online. Aguarde o upload ou anexe a foto novamente.'],
+            ]);
+        }
+    }
+
+    private function anexoOnlineValido(mixed $value): bool
+    {
+        $url = trim((string) $value);
+        if ($url === '' || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        return in_array($scheme, ['http', 'https'], true);
+    }
+
+    private function preencherNomesRelacionados(array &$data, ?Abastecimento $original = null): void
+    {
+        $idProprietario = $data['id_proprietario'] ?? $original?->id_proprietario;
+        if ($idProprietario && empty($data['nome_proprietario'])) {
+            $data['nome_proprietario'] = Proprietario::query()
+                ->where('id_proprietario', $idProprietario)
+                ->value('nome');
+        }
+
+        $idMotorista = $data['id_motorista'] ?? $original?->id_motorista;
+        if ($idMotorista && empty($data['nome_motorista'])) {
+            $data['nome_motorista'] = \App\Models\Motorista::query()
+                ->where('id_motorista', $idMotorista)
+                ->value('nome');
         }
     }
 
     public function index(Request $request)
     {
+        $this->garantirColunasAuditoria('abastecimentos');
+        $this->garantirColunasVerificacaoImagem();
         $query = Abastecimento::with(['veiculo', 'motorista', 'proprietario']);
         $this->aplicarFiltroFiliais($query, $request);
+        $this->aplicarFiltroAtivos($query, 'abastecimentos', $request);
+        $this->aplicarFiltroSyncToken($query, $request, 'abastecimentos');
 
         if ($request->filled('id_proprietario')) {
             $query->where('id_proprietario', $request->id_proprietario);
         }
         if ($request->filled('id_veiculo')) {
             $query->where('id_veiculo', $request->id_veiculo);
+        }
+        if ($request->filled('id_motorista')) {
+            $query->where('id_motorista', $request->id_motorista);
         }
         if ($request->filled('placa')) {
             $query->whereHas('veiculo', fn($q) => $q->where('placa', 'ilike', '%' . $request->placa . '%'));
@@ -203,42 +697,98 @@ class AbastecimentoController extends Controller
             $query->whereDate('data', '<=', $request->data_fim);
         }
         if ($request->filled('status')) {
-            if ($request->status === 'Pago') {
-                $query->where(function ($q) {
-                    $q->where('status', 'Pago')
-                      ->orWhere('baixa_abastecimento', true);
-                });
-            } else {
-                $query->where('status', $request->status);
-            }
+            $query->where('status', $request->status);
         }
         if ($request->filled('tipo_combustivel')) {
             $query->where('tipo_combustivel', $request->tipo_combustivel);
         }
 
         $perPage = $request->get('per_page', 20);
-        return new \Illuminate\Http\JsonResponse($query->orderByDesc('data_hora')->paginate($perPage));
+        if ($this->suportaSyncIncremental($request, 'abastecimentos')) {
+            return new \Illuminate\Http\JsonResponse(
+                $query->orderBy('sync_token_at')->orderBy('id_abastecimento')->paginate($perPage)
+            );
+        }
+
+        $sortBy = (string) $request->get('sort_by', 'data_hora');
+        $sortDir = strtolower((string) $request->get('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $joinedForSort = false;
+
+        switch ($sortBy) {
+            case 'placa':
+                $query->leftJoin('veiculos as sort_veiculos', 'sort_veiculos.id_veiculo', '=', 'abastecimentos.id_veiculo')
+                    ->select('abastecimentos.*')
+                    ->orderByRaw("LOWER(COALESCE(sort_veiculos.placa, '')) {$sortDir}");
+                $joinedForSort = true;
+                break;
+            case 'proprietario':
+                $query->leftJoin('proprietarios as sort_proprietarios', 'sort_proprietarios.id_proprietario', '=', 'abastecimentos.id_proprietario')
+                    ->select('abastecimentos.*')
+                    ->orderByRaw("LOWER(COALESCE(abastecimentos.nome_proprietario, sort_proprietarios.nome, '')) {$sortDir}");
+                $joinedForSort = true;
+                break;
+            case 'motorista':
+                $query->leftJoin('motoristas as sort_motoristas', 'sort_motoristas.id_motorista', '=', 'abastecimentos.id_motorista')
+                    ->select('abastecimentos.*')
+                    ->orderByRaw("LOWER(COALESCE(abastecimentos.nome_motorista, sort_motoristas.nome, '')) {$sortDir}");
+                $joinedForSort = true;
+                break;
+            case 'tipo_combustivel':
+                $query->orderByRaw("LOWER(COALESCE(abastecimentos.tipo_combustivel, '')) {$sortDir}");
+                break;
+            case 'quantidade_litros':
+                $query->orderBy('abastecimentos.quantidade_litros', $sortDir);
+                break;
+            case 'valor_por_litro':
+                $query->orderBy('abastecimentos.valor_por_litro', $sortDir);
+                break;
+            case 'valor_total':
+                $query->orderBy('abastecimentos.valor_total', $sortDir);
+                break;
+            case 'verificado_por':
+                $query->orderByRaw("LOWER(COALESCE(abastecimentos.imagem_verificada_por, '')) {$sortDir}");
+                break;
+            case 'baixa':
+                $query->orderBy('abastecimentos.baixa_abastecimento', $sortDir);
+                break;
+            case 'data_hora':
+            default:
+                $query->orderBy('abastecimentos.data_hora', $sortDir);
+                break;
+        }
+
+        if ($sortBy !== 'data_hora') {
+            $query->orderByDesc('abastecimentos.data_hora');
+        }
+        if (!$joinedForSort) {
+            $query->select('abastecimentos.*');
+        }
+
+        return new \Illuminate\Http\JsonResponse($query->paginate($perPage));
     }
 
     public function store(Request $request)
     {
+        $this->normalizarDatasRequest($request);
+
         $data = $request->validate([
             'id_abastecimento'  => 'nullable|string|max:80',
             'data'              => 'required|date',
             'data_hora'         => 'required|date',
             'frentista'         => 'nullable|string',
             'id_veiculo'        => 'required|exists:veiculos,id_veiculo',
-            'id_motorista'      => 'nullable|exists:motoristas,id_motorista',
+            'id_motorista'      => 'required|exists:motoristas,id_motorista',
             'id_proprietario'   => 'required|exists:proprietarios,id_proprietario',
             'nome_motorista'    => 'nullable|string',
             'nome_proprietario' => 'nullable|string',
-            'local'             => 'nullable|string',
+            'local'             => 'required|string',
             'tipo_combustivel'  => 'required|string',
-            'quantidade_litros' => 'required|numeric|min:0',
-            'odometro'          => 'nullable|integer',
+            'quantidade_litros' => 'required|numeric|min:0.01',
+            'odometro'          => 'nullable|numeric',
             'foto_odometro'     => 'nullable|string',
             'bomba'             => 'nullable|string',
-            'status'            => 'nullable|string',
+            'status'            => 'required|string',
+            'responsavel'       => 'nullable|string',
         ]);
 
         if (!empty($data['id_abastecimento'])) {
@@ -249,38 +799,51 @@ class AbastecimentoController extends Controller
             }
         }
 
-        $data['local'] = trim((string) ($data['local'] ?? '')) ?: 'Garagem';
+        $data['local'] = $this->normalizarLocal($data['local'] ?? null);
         $this->validarAcessoFilial($data['local']);
+        $this->validarEncerranteObrigatorio((string) $data['local']);
         $data['status'] = trim((string) ($data['status'] ?? '')) ?: 'Pendente';
+        $data['frentista'] = trim((string) ($data['frentista'] ?? ''))
+            ?: trim((string) ($data['responsavel'] ?? auth()->user()?->nome ?? auth()->user()?->login ?? ''));
 
-        $proprietario = Proprietario::query()
-            ->select(['id_proprietario', 'nome', 'status', 'observacao'])
-            ->findOrFail($data['id_proprietario']);
+        $this->validarProprietarioPodeAbastecer((string) $data['id_proprietario']);
 
-        if ($proprietario->status === 'Bloqueado') {
-            return new JsonResponse([
-                'message' => 'Proprietário bloqueado. Não é possível registrar abastecimento para este proprietário.',
-                'observacao' => $proprietario->observacao,
-            ], 422);
-        }
+        $this->preencherNomesRelacionados($data);
+        $this->validarCamposObrigatoriosAbastecimento($data);
+        $this->validarAnexoBombaObrigatorio($data);
+        unset($data['responsavel']);
 
-        $this->normalizarStatusBaixa($data);
+        // Buscar valor atual do combustível pela filial selecionada — NÃO pode ser alterado depois
+        $valorAtual = $this->valorCombustivelAtualPorFilial(
+            (string) $data['tipo_combustivel'],
+            (string) $data['local']
+        );
 
-        // Buscar valor atual do combustível — NÃO pode ser alterado depois
-        $valorAtual = ValoresCombustivel::where('tipo_combustivel', $data['tipo_combustivel'])
-            ->orderByDesc('data')
-            ->value('valor');
+        $data['valor_por_litro'] = $valorAtual;
+        $data['valor_total'] = $this->calcularValorTotalAbastecimento(
+            $data['quantidade_litros'] ?? 0,
+            $valorAtual
+        );
 
-        $data['valor_por_litro'] = $valorAtual ?? 0;
-        $data['valor_total'] = round(($data['quantidade_litros'] ?? 0) * ($valorAtual ?? 0), 2);
+        $this->validarLimiteProprietarioAbastecimento(
+            (string) $data['id_proprietario'],
+            (float) $data['quantidade_litros'],
+            (float) $data['valor_total']
+        );
 
         $this->validarOdometroMinimo($data);
 
         // Atualizar odômetro do veículo
         if (!empty($data['odometro'])) {
             Veiculo::where('id_veiculo', $data['id_veiculo'])
-                ->where('odometro', '<', $data['odometro'])
-                ->update(['odometro' => $data['odometro']]);
+                ->where(function ($q) use ($data) {
+                    $q->whereNull('odometro')
+                        ->orWhere('odometro', '<', $data['odometro']);
+                })
+                ->update([
+                    'odometro' => $data['odometro'],
+                    'sync_token_at' => now(),
+                ]);
         }
 
         $abastecimento = Abastecimento::create($data);
@@ -289,6 +852,7 @@ class AbastecimentoController extends Controller
 
     public function show(Request $request, string $id)
     {
+        $this->garantirColunasVerificacaoImagem();
         $abastecimentoQuery = Abastecimento::query()
             ->with([
                 'veiculo:id_veiculo,placa,modelo,tipo_combustivel,id_proprietario',
@@ -325,6 +889,8 @@ class AbastecimentoController extends Controller
             return new \Illuminate\Http\JsonResponse(['message' => 'Somente administradores podem editar registros'], 403);
         }
 
+        $this->normalizarDatasRequest($request);
+
         $abastecimento = Abastecimento::findOrFail($id);
         $this->validarAcessoFilial((string) $abastecimento->local);
 
@@ -333,35 +899,51 @@ class AbastecimentoController extends Controller
             'data_hora'         => 'sometimes|date',
             'frentista'         => 'nullable|string',
             'id_veiculo'        => 'sometimes|exists:veiculos,id_veiculo',
-            'id_motorista'      => 'nullable|exists:motoristas,id_motorista',
+            'id_motorista'      => 'sometimes|required|exists:motoristas,id_motorista',
             'id_proprietario'   => 'sometimes|exists:proprietarios,id_proprietario',
             'nome_motorista'    => 'nullable|string',
             'nome_proprietario' => 'nullable|string',
-            'local'             => 'nullable|string',
+            'local'             => 'sometimes|required|string',
             'tipo_combustivel'  => 'sometimes|string',
-            'quantidade_litros' => 'sometimes|numeric|min:0',
-            'odometro'          => 'nullable|integer',
+            'quantidade_litros' => 'sometimes|numeric|min:0.01',
+            'odometro'          => 'nullable|numeric',
             'foto_odometro'     => 'nullable|string',
             'bomba'             => 'nullable|string',
-            'status'            => 'nullable|string',
+            'status'            => 'sometimes|required|string',
+            'responsavel'       => 'nullable|string',
         ]);
 
         // REGRA: valor_por_litro NÃO é recalculado na edição
         // Apenas recalcular valor_total se quantidade mudar, usando o valor já gravado
         if (isset($data['quantidade_litros'])) {
-            $data['valor_total'] = round(
-                $data['quantidade_litros'] * $abastecimento->valor_por_litro,
-                2
+            $data['valor_total'] = $this->calcularValorTotalAbastecimento(
+                $data['quantidade_litros'],
+                $abastecimento->valor_por_litro
             );
         }
 
         // Remover campos protegidos caso venham no request
         unset($data['valor_por_litro']);
         if (array_key_exists('local', $data)) {
-            $data['local'] = trim((string) ($data['local'] ?? '')) ?: $abastecimento->local;
+            $data['local'] = $this->normalizarLocal($data['local'] ?? $abastecimento->local);
             $this->validarAcessoFilial($data['local']);
         }
-        $this->normalizarStatusBaixa($data, $abastecimento);
+        if (array_key_exists('frentista', $data) && trim((string) ($data['frentista'] ?? '')) !== '') {
+            $data['frentista'] = trim((string) $data['frentista']);
+        } elseif (empty($abastecimento->frentista)) {
+            $data['frentista'] = trim((string) ($data['responsavel'] ?? auth()->user()?->nome ?? auth()->user()?->login ?? ''));
+        } else {
+            unset($data['frentista']);
+        }
+        if (array_key_exists('id_proprietario', $data)) {
+            $this->validarProprietarioPodeAbastecer((string) $data['id_proprietario']);
+        }
+        $this->preencherNomesRelacionados($data, $abastecimento);
+        $this->validarCamposObrigatoriosAbastecimento($data, $abastecimento);
+        $this->validarAnexoBombaObrigatorio($data, $abastecimento);
+        unset($data['responsavel']);
+        $data = $this->manterSomenteAlteracoesReais($abastecimento, $data);
+        $this->registrarAlteracoes($abastecimento, $data);
 
         $dataParaValidacaoOdometro = [
             'id_veiculo' => $data['id_veiculo'] ?? $abastecimento->id_veiculo,
@@ -382,10 +964,7 @@ class AbastecimentoController extends Controller
 
         $abastecimento = Abastecimento::findOrFail($id);
         $this->validarAcessoFilial((string) $abastecimento->local);
-        // Remover baixas vinculadas primeiro
-        $abastecimento->baixas()->delete();
-        $abastecimento->delete();
-        return new \Illuminate\Http\JsonResponse(['message' => 'Abastecimento excluído com sucesso']);
+        return $this->inativarRegistro($abastecimento, 'Abastecimento inativado');
     }
 
     public function forceDelete(string $id)
@@ -393,37 +972,100 @@ class AbastecimentoController extends Controller
         return $this->destroy($id);
     }
 
+    public function restore(string $id)
+    {
+        $currentUser = auth()->user();
+        if (!$currentUser || $currentUser->tipo !== 'admin') {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Somente administradores podem restaurar abastecimentos'], 403);
+        }
+
+        $abastecimento = Abastecimento::findOrFail($id);
+        $this->validarAcessoFilial((string) $abastecimento->local);
+        return $this->restaurarRegistro($abastecimento, 'Abastecimento restaurado');
+    }
+
+    public function verificarInconsistencia(string $id): JsonResponse
+    {
+        $currentUser = auth()->user();
+        if (!$currentUser || !in_array($currentUser->tipo, ['admin', 'operador'], true)) {
+            return new JsonResponse(['message' => 'Somente administradores e operadores podem marcar abastecimentos como consistentes'], 403);
+        }
+
+        $this->garantirColunasVerificacaoImagem();
+        $abastecimento = Abastecimento::findOrFail($id);
+        $this->validarAcessoFilial((string) $abastecimento->local);
+
+        if ($abastecimento->status === 'Inconsistente') {
+            $abastecimento->status = 'Confirmado';
+        }
+        $abastecimento->imagem_verificada_por_id = (string) $currentUser->getAuthIdentifier();
+        $abastecimento->imagem_verificada_por = $currentUser->nome ?? $currentUser->login ?? 'Sistema';
+        $abastecimento->imagem_verificada_em = now();
+        $abastecimento->save();
+
+        return new JsonResponse($abastecimento->fresh(['veiculo', 'motorista', 'proprietario']));
+    }
+
+    public function analisarInconsistencias(string $id): JsonResponse
+    {
+        $currentUser = auth()->user();
+        if (!$currentUser || !in_array($currentUser->tipo, ['admin', 'operador'], true)) {
+            return new JsonResponse(['message' => 'Somente administradores e operadores podem verificar inconsistências'], 403);
+        }
+
+        $abastecimento = Abastecimento::with(['veiculo', 'motorista', 'proprietario'])->findOrFail($id);
+        $this->validarAcessoFilial((string) $abastecimento->local);
+
+        return new JsonResponse([
+            'abastecimento' => $abastecimento,
+            'analysis' => [
+                'skipped' => true,
+                'inconsistent' => $abastecimento->status === 'Inconsistente',
+                'message' => 'A análise por IA só é executada no lançamento do abastecimento. Use marcar consistente para resolver a pendência.',
+            ],
+        ]);
+    }
+
     public function pendenteBaixa(Request $request)
     {
         $limit = (int) $request->get('limit', 120);
         $limit = max(1, min($limit, 300));
 
+        $abastecimentoColumns = [
+            'id_abastecimento',
+            'data',
+            'data_hora',
+            'id_veiculo',
+            'id_motorista',
+            'id_proprietario',
+            'quantidade_litros',
+            'valor_total',
+        ];
+
+        foreach (['nome_motorista', 'nome_proprietario', 'baixa_abastecimento', 'local', 'status'] as $column) {
+            if ($this->tabelaTemColuna('abastecimentos', $column)) {
+                $abastecimentoColumns[] = $column;
+            }
+        }
+
+        $veiculoColumns = ['id_veiculo', 'placa'];
+        if ($this->tabelaTemColuna('veiculos', 'modelo')) {
+            $veiculoColumns[] = 'modelo';
+        }
+
         $query = Abastecimento::query()
-            ->select([
-                'id_abastecimento',
-                'data',
-                'data_hora',
-                'id_veiculo',
-                'id_motorista',
-                'id_proprietario',
-                'nome_motorista',
-                'nome_proprietario',
-                'quantidade_litros',
-                'valor_total',
-                'baixa_abastecimento',
-                'local',
-            ])
+            ->select($abastecimentoColumns)
             ->with([
-                'veiculo:id_veiculo,placa,modelo',
-            ])
-            ->where(function ($q) {
-                $q->where('baixa_abastecimento', false)
+                'veiculo:' . implode(',', $veiculoColumns),
+            ]);
+
+        if ($this->tabelaTemColuna('abastecimentos', 'baixa_abastecimento')) {
+            $query->where(function ($q) {
+                $q->whereRaw('baixa_abastecimento = false')
                     ->orWhereNull('baixa_abastecimento');
-            })
-            ->where(function ($q) {
-                $q->whereNull('status')
-                    ->orWhere('status', '!=', 'Pago');
             });
+        }
+
         $this->aplicarFiltroFiliais($query, $request);
 
         if ($request->filled('id_proprietario')) {

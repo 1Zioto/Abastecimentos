@@ -2,9 +2,18 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, FormBuilder, ReactiveFormsModule } from '@angular/forms';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { forkJoin } from 'rxjs';
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
-import { Abastecimento, Proprietario } from '../../shared/models';
+import { Abastecimento, Proprietario, Veiculo } from '../../shared/models';
+
+type AnexoTipo = 'image' | 'pdf' | 'file';
+
+interface AnexoBaixaView {
+  url: string;
+  tipo: AnexoTipo;
+}
 
 @Component({
   selector: 'app-baixa',
@@ -40,23 +49,54 @@ import { Abastecimento, Proprietario } from '../../shared/models';
                   <th class="sortable" (click)="sortBy('forma_pagamento')">Forma Pgto <span>{{ sortIcon('forma_pagamento') }}</span></th>
                   <th class="sortable" (click)="sortBy('data_pagamento')">Data Pgto <span>{{ sortIcon('data_pagamento') }}</span></th>
                   <th class="text-right sortable" (click)="sortBy('valor')">Valor <span>{{ sortIcon('valor') }}</span></th>
-                  <th>Anexo</th>
+                  <th>Comprovantes</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                @for (b of sortedBaixas(); track b.id_baixa) {
-                  <tr>
+                @for (b of sortedBaixas(); track baixaGroupId(b)) {
+                  <tr
+                    class="clickable-row"
+                    [class.active-row]="selectedBaixa() && baixaGroupId(selectedBaixa()) === baixaGroupId(b)"
+                    title="Clique para ver os detalhes da baixa"
+                    (click)="openBaixaDetails(b)"
+                  >
                     <td>{{ b.data_hora | date:'dd/MM/yyyy HH:mm' }}</td>
-                    <td>{{ b.abastecimento?.nome_proprietario || b.abastecimento?.proprietario?.nome || '—' }}</td>
-                    <td>{{ b.abastecimento?.veiculo?.placa || '—' }}</td>
-                    <td>{{ b.abastecimento?.nome_motorista || b.abastecimento?.motorista?.nome || '—' }}</td>
+                    <td>{{ baixaEmpresa(b) }}</td>
+                    <td>{{ baixaPlacas(b) }}</td>
+                    <td>{{ baixaMotoristas(b) }}</td>
                     <td>{{ b.forma_pagamento || '—' }}</td>
                     <td>{{ b.data_pagamento ? (b.data_pagamento | date:'dd/MM/yyyy') : '—' }}</td>
-                    <td class="text-right val-green">{{ b.abastecimento?.valor_total | currency:'BRL':'symbol':'1.2-2' }}</td>
+                    <td class="text-right val-green">
+                      {{ baixaTotal(b) | currency:'BRL':'symbol':'1.2-2' }}
+                      @if (baixaItems(b).length > 1) {
+                        <small class="row-count">{{ baixaItems(b).length }} abastecimentos</small>
+                      }
+                    </td>
                     <td>
-                      @if (resolveImageUrl(b.abastecimento?.anexo); as anexoUrl) {
-                        <button class="btn-link" (click)="openImagePreview(anexoUrl)">Ver imagem</button>
+                      @if (getAnexos(baixaAnexo(b)).length > 0) {
+                        <div class="anexo-gallery">
+                          @for (anexo of getAnexos(baixaAnexo(b)); track anexo.url; let idx = $index) {
+                            <button class="anexo-thumb" type="button" (click)="$event.stopPropagation(); openAnexoPreview(anexo.url, idx)">
+                              <span class="anexo-thumb-media">
+                                @if (anexo.tipo === 'image') {
+                                  <img [src]="anexo.url" [alt]="anexoLabel(idx, anexo.url)" loading="lazy" />
+                                } @else if (anexo.tipo === 'pdf') {
+                                  @if (anexoThumbUrl(anexo.url); as thumbUrl) {
+                                    <img [src]="thumbUrl" [alt]="anexoLabel(idx, anexo.url)" loading="lazy" />
+                                  } @else {
+                                    <span class="anexo-file-icon">📎</span>
+                                  }
+                                  <span class="anexo-type-chip">PDF</span>
+                                } @else {
+                                  <span class="anexo-file-icon">📎</span>
+                                  <span class="anexo-type-chip">Arquivo</span>
+                                }
+                              </span>
+                              <span class="anexo-thumb-label">{{ anexoLabel(idx, anexo.url) }}</span>
+                            </button>
+                          }
+                        </div>
                       } @else {
                         <span class="muted">Sem anexo</span>
                       }
@@ -65,10 +105,10 @@ import { Abastecimento, Proprietario } from '../../shared/models';
                       <button
                         class="btn-danger-sm"
                         type="button"
-                        [disabled]="deletingBaixaId() === b.id_baixa"
-                        (click)="deleteBaixa(b.id_baixa)"
+                        [disabled]="deletingBaixaId() === baixaGroupId(b)"
+                        (click)="$event.stopPropagation(); deleteBaixaGroup(b)"
                       >
-                        {{ deletingBaixaId() === b.id_baixa ? 'Excluindo...' : 'Excluir' }}
+                        {{ deletingBaixaId() === baixaGroupId(b) ? 'Excluindo...' : 'Excluir' }}
                       </button>
                     </td>
                   </tr>
@@ -91,20 +131,65 @@ import { Abastecimento, Proprietario } from '../../shared/models';
               <button class="btn-close" (click)="closeNovaBaixa()">✕</button>
             </div>
 
+            <div class="acerto-summary">
+              <div>
+                <span>Valor do acerto</span>
+                <strong>{{ totalSelecionado() | currency:'BRL':'symbol':'1.2-2' }}</strong>
+              </div>
+              <small>{{ selected().size }} selecionado(s)</small>
+            </div>
+
             <div class="filters-card">
               <div class="filters-grid">
                 <div class="filter-field">
                   <label>Empresa</label>
-                  <select [(ngModel)]="filters.id_proprietario" (change)="loadPendentes()">
-                    <option value="">Todas</option>
-                    @for (p of proprietarios(); track p.id_proprietario) {
-                      <option [value]="p.id_proprietario">{{ p.nome }}</option>
+                  <div class="autocomplete-field">
+                    <input
+                      type="text"
+                      [value]="empresaBusca()"
+                      placeholder="Digite a empresa..."
+                      (input)="onEmpresaBuscaChange($event)"
+                      (focus)="showEmpresaOptions.set(true)"
+                      (blur)="closeEmpresaOptions()"
+                    />
+                    @if (empresaBusca()) {
+                      <button type="button" class="btn-clear-field" (mousedown)="clearEmpresa()">×</button>
                     }
-                  </select>
+                    @if (showEmpresaOptions() && filteredEmpresas().length > 0) {
+                      <div class="autocomplete-list">
+                        @for (p of filteredEmpresas(); track p.id_proprietario) {
+                          <button type="button" class="autocomplete-item" (mousedown)="selectEmpresa(p)">
+                            {{ p.nome }}
+                          </button>
+                        }
+                      </div>
+                    }
+                  </div>
                 </div>
                 <div class="filter-field">
                   <label>Placa</label>
-                  <input type="text" [(ngModel)]="filters.placa" placeholder="ABC-1234" (input)="loadPendentes()" />
+                  <div class="autocomplete-field">
+                    <input
+                      type="text"
+                      [value]="placaBusca()"
+                      placeholder="Digite a placa..."
+                      (input)="onPlacaBuscaChange($event)"
+                      (focus)="showPlacaOptions.set(true)"
+                      (blur)="closePlacaOptions()"
+                    />
+                    @if (placaBusca()) {
+                      <button type="button" class="btn-clear-field" (mousedown)="clearPlaca()">×</button>
+                    }
+                    @if (showPlacaOptions() && filteredPlacas().length > 0) {
+                      <div class="autocomplete-list">
+                        @for (placa of filteredPlacas(); track placa) {
+                          <button type="button" class="autocomplete-item placa-option" (mousedown)="selectPlaca(placa)">
+                            {{ placa }}
+                          </button>
+                        }
+                      </div>
+                    }
+                  </div>
                 </div>
                 <div class="filter-field">
                   <label>Data Início</label>
@@ -159,16 +244,10 @@ import { Abastecimento, Proprietario } from '../../shared/models';
                         </div>
                       </div>
                     } @empty {
-                      <div class="empty-state">Sem abastecimentos pendentes para o filtro.</div>
+                      <div class="empty-state">{{ filters.id_proprietario ? 'Sem abastecimentos pendentes para o filtro.' : 'Selecione uma empresa para carregar os abastecimentos pendentes.' }}</div>
                     }
                   </div>
 
-                  @if (selected().size > 0) {
-                    <div class="selection-summary">
-                      <span>{{ selected().size }} selecionado(s)</span>
-                      <span class="summary-val">Total: {{ totalSelecionado() | currency:'BRL':'symbol':'1.2-2' }}</span>
-                    </div>
-                  }
                 }
               </div>
 
@@ -216,10 +295,6 @@ import { Abastecimento, Proprietario } from '../../shared/models';
                     </div>
                   </div>
                   <div class="field">
-                    <label>Status</label>
-                    <input type="text" formControlName="status" readonly class="readonly-field" />
-                  </div>
-                  <div class="field">
                     <label>Recebedor</label>
                     <select formControlName="recebedor">
                       <option value="Vipe Transportes">Vipe Transportes</option>
@@ -237,17 +312,49 @@ import { Abastecimento, Proprietario } from '../../shared/models';
                     <label>Observação</label>
                     <textarea formControlName="observacao" rows="2" placeholder="Observações"></textarea>
                   </div>
-                  <div class="field">
-                    <label>Anexo (Imagem)</label>
-                    <input type="file" accept="image/*" (change)="onUploadAnexo($event)" />
-                    @if (uploadingAnexo()) {
-                      <small class="upload-hint">Enviando imagem...</small>
-                    } @else if (resolveImageUrl(form.value.anexo); as anexoFormUrl) {
-                      <small class="upload-hint">Imagem enviada ✓</small>
-                      <div class="preview-box">
-                        <img class="preview-img" [src]="anexoFormUrl" alt="Anexo" />
+                  <div class="field anexos-panel">
+                    <div class="anexos-header">
+                      <div>
+                        <strong>Comprovantes da baixa</strong>
+                        <span>{{ formAnexos().length }}/4 anexos</span>
                       </div>
-                      <button type="button" class="btn-preview" (click)="openImagePreview(anexoFormUrl)">Expandir</button>
+                      <label class="btn-add-anexo" [class.disabled]="uploadingAnexo() || formAnexos().length >= 4">
+                        + Adicionar comprovantes
+                        <input type="file" accept="image/*,application/pdf" multiple (change)="onUploadAnexo($event)" [disabled]="uploadingAnexo() || formAnexos().length >= 4" />
+                      </label>
+                    </div>
+                    @if (uploadingAnexo()) {
+                      <small class="upload-hint">Enviando anexo...</small>
+                    } @else {
+                      <small class="upload-hint">Selecione imagens ou PDFs. O limite é de 4 comprovantes por baixa.</small>
+                    }
+                    @if (formAnexos().length > 0) {
+                      <div class="preview-grid">
+                        @for (anexoFormUrl of formAnexos(); track anexoFormUrl; let idx = $index) {
+                          <div class="preview-card">
+                            <button type="button" class="preview-media-btn" (click)="openAnexoPreview(anexoFormUrl, idx)">
+                              @if (anexoKind(anexoFormUrl) === 'image') {
+                                <img class="preview-img" [src]="anexoFormUrl" [alt]="anexoLabel(idx, anexoFormUrl)" />
+                              } @else if (anexoKind(anexoFormUrl) === 'pdf') {
+                                @if (anexoThumbUrl(anexoFormUrl); as thumbUrl) {
+                                  <img class="preview-img" [src]="thumbUrl" [alt]="anexoLabel(idx, anexoFormUrl)" />
+                                } @else {
+                                  <span class="preview-file-icon">📎</span>
+                                }
+                                <span class="anexo-type-chip">PDF</span>
+                              } @else {
+                                <span class="preview-file-icon">📎</span>
+                                <span class="anexo-type-chip">Arquivo</span>
+                              }
+                            </button>
+                            <strong class="preview-name">{{ anexoLabel(idx, anexoFormUrl) }}</strong>
+                            <div class="preview-actions">
+                              <button type="button" class="btn-preview" (click)="openAnexoPreview(anexoFormUrl, idx)">Expandir</button>
+                              <button type="button" class="btn-remove-preview" (click)="removeAnexo(idx)">Remover</button>
+                            </div>
+                          </div>
+                        }
+                      </div>
                     }
                   </div>
 
@@ -265,18 +372,158 @@ import { Abastecimento, Proprietario } from '../../shared/models';
         </div>
       }
 
+      @if (selectedBaixa(); as baixaDetalhe) {
+        <div class="modal-overlay" (click)="closeBaixaDetails()">
+          <div class="modal-shell baixa-detail-modal" (click)="$event.stopPropagation()">
+            <div class="modal-header baixa-detail-header">
+              <div>
+                <h2>Detalhes da baixa</h2>
+                <p>{{ baixaDetailItems().length }} abastecimento(s) neste pagamento</p>
+              </div>
+              <button class="btn-close" type="button" (click)="closeBaixaDetails()">✕</button>
+            </div>
+
+            <div class="detail-summary-grid">
+              <div class="detail-summary-card">
+                <span>Empresa</span>
+                <strong>{{ baixaEmpresa(baixaDetalhe) }}</strong>
+              </div>
+              <div class="detail-summary-card">
+                <span>Total baixado</span>
+                <strong>{{ baixaDetailTotal() | currency:'BRL':'symbol':'1.2-2' }}</strong>
+              </div>
+              <div class="detail-summary-card">
+                <span>Litros</span>
+                <strong>{{ baixaDetailLitros() | number:'1.2-2' }} L</strong>
+              </div>
+              <div class="detail-summary-card">
+                <span>Pagamento</span>
+                <strong>{{ baixaDetalhe.forma_pagamento || '—' }}</strong>
+              </div>
+            </div>
+
+            <div class="detail-meta-grid">
+              <div>
+                <span>Data da baixa</span>
+                <strong>{{ baixaDetalhe.data_hora | date:'dd/MM/yyyy HH:mm' }}</strong>
+              </div>
+              <div>
+                <span>Data do pagamento</span>
+                <strong>{{ baixaDetalhe.data_pagamento ? (baixaDetalhe.data_pagamento | date:'dd/MM/yyyy') : '—' }}</strong>
+              </div>
+              <div>
+                <span>Usuário</span>
+                <strong>{{ baixaDetalhe.usuario || '—' }}</strong>
+              </div>
+              <div>
+                <span>Recebedor</span>
+                <strong>{{ baixaDetalhe.abastecimento?.recebedor || '—' }}</strong>
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <h3>Abastecimentos baixados</h3>
+              <div class="detail-table-wrap">
+                <table class="data-table detail-table">
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>Placa</th>
+                      <th>Motorista</th>
+                      <th>Combustível</th>
+                      <th class="text-right">Litros</th>
+                      <th class="text-right">Valor/L</th>
+                      <th class="text-right">Valor total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (item of baixaDetailItems(); track item.id_baixa) {
+                      <tr>
+                        <td>{{ item.abastecimento?.data_hora ? (item.abastecimento?.data_hora | date:'dd/MM/yyyy HH:mm') : '—' }}</td>
+                        <td><span class="placa-badge">{{ item.abastecimento?.veiculo?.placa || item.abastecimento?.id_veiculo || '—' }}</span></td>
+                        <td>{{ item.abastecimento?.nome_motorista || item.abastecimento?.motorista?.nome || '—' }}</td>
+                        <td>{{ item.abastecimento?.tipo_combustivel || '—' }}</td>
+                        <td class="text-right">{{ item.abastecimento?.quantidade_litros | number:'1.2-2' }}</td>
+                        <td class="text-right">{{ item.abastecimento?.valor_por_litro | currency:'BRL':'symbol':'1.2-2' }}</td>
+                        <td class="text-right val-green">{{ item.abastecimento?.valor_total | currency:'BRL':'symbol':'1.2-2' }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="detail-bottom-grid">
+              <div class="detail-section">
+                <h3>Dados registrados</h3>
+                <div class="detail-list">
+                  <div><span>Tipo</span><strong>{{ baixaDetalhe.abastecimento?.tipo_despesa || 'Combustível' }}</strong></div>
+                  <div><span>Descrição</span><strong>{{ baixaDetalhe.abastecimento?.descricao || '—' }}</strong></div>
+                  <div><span>Observação</span><strong>{{ baixaDetalhe.abastecimento?.observacao || '—' }}</strong></div>
+                  <div><span>ID da baixa</span><strong class="mono">{{ baixaDetalhe.id_baixa }}</strong></div>
+                </div>
+              </div>
+
+              <div class="detail-section">
+                <h3>Comprovantes</h3>
+                @if (getAnexos(baixaAnexo(baixaDetalhe)).length > 0) {
+                  <div class="detail-anexo-grid">
+                    @for (anexo of getAnexos(baixaAnexo(baixaDetalhe)); track anexo.url; let idx = $index) {
+                      <button class="anexo-thumb detail-anexo-thumb" type="button" (click)="openAnexoPreview(anexo.url, idx)">
+                        <span class="anexo-thumb-media">
+                          @if (anexo.tipo === 'image') {
+                            <img [src]="anexo.url" [alt]="anexoLabel(idx, anexo.url)" loading="lazy" />
+                          } @else if (anexo.tipo === 'pdf') {
+                            @if (anexoThumbUrl(anexo.url); as thumbUrl) {
+                              <img [src]="thumbUrl" [alt]="anexoLabel(idx, anexo.url)" loading="lazy" />
+                            } @else {
+                              <span class="anexo-file-icon">📎</span>
+                            }
+                            <span class="anexo-type-chip">PDF</span>
+                          } @else {
+                            <span class="anexo-file-icon">📎</span>
+                            <span class="anexo-type-chip">Arquivo</span>
+                          }
+                        </span>
+                        <span class="anexo-thumb-label">{{ anexoLabel(idx, anexo.url) }}</span>
+                      </button>
+                    }
+                  </div>
+                } @else {
+                  <span class="muted">Sem comprovante anexado</span>
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+
       @if (previewImageUrl()) {
         <div class="image-overlay" (click)="closeImagePreview()">
-          <div class="image-modal" (click)="$event.stopPropagation()">
-            <img [src]="previewImageUrl()" alt="Imagem ampliada" />
-            <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+          <div class="image-modal attachment-modal" (click)="$event.stopPropagation()">
+            <div class="attachment-modal-header">
+              <div>
+                <strong>{{ previewTitle() }}</strong>
+                <span>{{ previewKindLabel() }}</span>
+              </div>
+              <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+            </div>
+            <div class="attachment-viewer">
+              @if (previewKind() === 'image') {
+                <img [src]="previewImageUrl()" [alt]="previewTitle()" />
+              } @else {
+                @if (previewSafeResourceUrl(); as safeUrl) {
+                  <iframe [src]="safeUrl" [title]="previewTitle()"></iframe>
+                }
+              }
+            </div>
+            <a class="btn-open-external" [href]="previewImageUrl()" target="_blank" rel="noopener noreferrer">Abrir em nova guia</a>
           </div>
         </div>
       }
     </div>
   `,
   styles: [`
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     * { box-sizing:border-box; }
     .page { padding:28px; font-family:'Inter',sans-serif; color:#e2e8f0; }
     .page-header { margin-bottom:20px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
@@ -299,10 +546,77 @@ import { Abastecimento, Proprietario } from '../../shared/models';
     .data-table thead th.sortable span { display:inline-block; min-width:12px; color:#38bdf8; }
     .data-table tbody td { padding:10px 12px; border-bottom:1px solid #1e2d4a20; }
     .data-table tbody tr:hover td { background:#1e2d4a15; }
+    .clickable-row { cursor:pointer; }
+    .clickable-row:hover td { background:#0ea5e912 !important; }
+    .active-row td { background:#0ea5e918; }
     .text-right { text-align:right; }
     .val-green { color:#4ade80; font-weight:600; }
-    .btn-link { background:none; border:none; color:#38bdf8; cursor:pointer; font-size:12px; }
-    .btn-link:hover { text-decoration:underline; }
+    .row-count { display:block; margin-top:3px; color:#94a3b8; font-size:10px; font-weight:600; white-space:nowrap; }
+    .anexo-gallery { display:flex; flex-wrap:wrap; gap:8px; min-width:220px; max-width:360px; }
+    .anexo-thumb {
+      width:86px;
+      border:1px solid #1e2d4a;
+      border-radius:8px;
+      background:#0a0f1e;
+      color:#cbd5e1;
+      padding:5px;
+      cursor:pointer;
+      text-align:left;
+      transition:border-color 0.15s, transform 0.15s, background 0.15s;
+    }
+    .anexo-thumb:hover { border-color:#38bdf8; background:#0f172a; transform:translateY(-1px); }
+    .anexo-thumb-media {
+      position:relative;
+      display:block;
+      width:100%;
+      height:58px;
+      border-radius:6px;
+      overflow:hidden;
+      background:#111827;
+      border:1px solid #1e2d4a;
+    }
+    .anexo-thumb-media img,
+    .anexo-thumb-media iframe {
+      display:block;
+      width:100%;
+      height:100%;
+      border:0;
+      object-fit:cover;
+      background:#f8fafc;
+      pointer-events:none;
+    }
+    .anexo-thumb-label {
+      display:block;
+      margin-top:5px;
+      color:#e2e8f0;
+      font-size:10px;
+      font-weight:700;
+      line-height:1.15;
+      white-space:normal;
+    }
+    .anexo-type-chip {
+      position:absolute;
+      right:4px;
+      bottom:4px;
+      z-index:2;
+      background:#0f172a;
+      border:1px solid #334155;
+      color:#f8fafc;
+      border-radius:999px;
+      padding:2px 5px;
+      font-size:9px;
+      font-weight:800;
+      letter-spacing:0.2px;
+    }
+    .anexo-file-icon,
+    .preview-file-icon {
+      display:grid;
+      place-items:center;
+      width:100%;
+      height:100%;
+      color:#94a3b8;
+      font-size:24px;
+    }
     .btn-danger-sm {
       background:#3f1d22;
       border:1px solid #7f1d1d;
@@ -336,12 +650,129 @@ import { Abastecimento, Proprietario } from '../../shared/models';
     .modal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
     .modal-header h2 { margin:0; font-size:18px; color:#f8fafc; }
     .btn-close { background:transparent; border:1px solid #1e2d4a; color:#94a3b8; border-radius:8px; width:34px; height:34px; cursor:pointer; }
+    .baixa-detail-modal { width:min(1180px,94vw); }
+    .baixa-detail-header p { margin:4px 0 0; color:#94a3b8; font-size:12px; }
+    .detail-summary-grid {
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:10px;
+      margin-bottom:12px;
+    }
+    .detail-summary-card {
+      border:1px solid #1e2d4a;
+      border-radius:12px;
+      padding:12px;
+      background:#0d1427;
+      min-width:0;
+    }
+    .detail-summary-card span,
+    .detail-meta-grid span,
+    .detail-list span {
+      display:block;
+      color:#94a3b8;
+      font-size:10px;
+      font-weight:800;
+      letter-spacing:0.4px;
+      text-transform:uppercase;
+      margin-bottom:4px;
+    }
+    .detail-summary-card strong {
+      display:block;
+      color:#f8fafc;
+      font-size:18px;
+      line-height:1.2;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .detail-summary-card:nth-child(2) strong,
+    .detail-summary-card:nth-child(3) strong { color:#4ade80; }
+    .detail-meta-grid {
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:10px;
+      margin-bottom:12px;
+    }
+    .detail-meta-grid > div {
+      border:1px solid #1e2d4a;
+      border-radius:10px;
+      padding:10px 12px;
+      background:#0a0f1e;
+      min-width:0;
+    }
+    .detail-meta-grid strong,
+    .detail-list strong {
+      display:block;
+      color:#e2e8f0;
+      font-size:12px;
+      line-height:1.35;
+      overflow-wrap:anywhere;
+    }
+    .detail-section {
+      border:1px solid #1e2d4a;
+      border-radius:12px;
+      background:#0d1427;
+      padding:14px;
+      min-width:0;
+    }
+    .detail-section h3 {
+      margin:0 0 10px;
+      color:#f8fafc;
+      font-size:14px;
+    }
+    .detail-table-wrap { overflow:auto; }
+    .detail-table tbody td { background:#0a0f1e; }
+    .detail-bottom-grid {
+      display:grid;
+      grid-template-columns:minmax(0,1.15fr) minmax(280px,0.85fr);
+      gap:12px;
+      margin-top:12px;
+    }
+    .detail-list {
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:10px;
+    }
+    .detail-list > div {
+      border:1px solid #1e2d4a;
+      border-radius:9px;
+      padding:10px;
+      background:#0a0f1e;
+      min-width:0;
+    }
+    .mono { font-family:Consolas, 'Courier New', monospace; font-size:11px !important; }
+    .detail-anexo-grid { display:flex; flex-wrap:wrap; gap:8px; }
+    .detail-anexo-thumb { width:112px; }
+    .detail-anexo-thumb .anexo-thumb-media { height:76px; }
+    .acerto-summary { background:#4ade8015; border:1px solid #4ade8030; border-radius:12px; padding:14px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .acerto-summary span { display:block; color:#94a3b8; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
+    .acerto-summary strong { display:block; color:#4ade80; font-size:22px; line-height:1.2; margin-top:2px; }
+    .acerto-summary small { color:#cbd5e1; font-size:12px; white-space:nowrap; }
 
     .filters-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:12px; margin-bottom:12px; }
     .filters-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
     .filter-field { display:flex; flex-direction:column; gap:4px; }
     .filter-field label { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
     .filter-field input, .filter-field select { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:8px 10px; color:#e2e8f0; font-size:12px; outline:none; }
+    .autocomplete-field { position:relative; }
+    .autocomplete-field input { width:100%; padding-right:34px; }
+    .btn-clear-field {
+      position:absolute; right:6px; top:50%; transform:translateY(-50%);
+      width:22px; height:22px; border:none; border-radius:5px; background:#1e2d4a;
+      color:#cbd5e1; cursor:pointer; line-height:1; font-size:15px;
+    }
+    .btn-clear-field:hover { background:#334155; color:#fff; }
+    .autocomplete-list {
+      position:absolute; z-index:30; top:calc(100% + 4px); left:0; right:0;
+      max-height:220px; overflow:auto; background:#0a0f1e; border:1px solid #1e2d4a;
+      border-radius:8px; box-shadow:0 16px 40px rgba(2,6,23,0.35); padding:4px;
+    }
+    .autocomplete-item {
+      width:100%; border:none; background:transparent; color:#e2e8f0; text-align:left;
+      padding:8px 9px; border-radius:6px; font-size:12px; cursor:pointer;
+    }
+    .autocomplete-item:hover { background:#1e2d4a; }
+    .placa-option { font-family:monospace; font-weight:700; color:#38bdf8; }
 
     .content-grid { display:grid; grid-template-columns:1fr 380px; gap:12px; }
     .list-card, .form-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:14px; }
@@ -362,8 +793,6 @@ import { Abastecimento, Proprietario } from '../../shared/models';
     .pendente-date { font-size:11px; color:#64748b; }
     .pendente-bottom { display:flex; gap:12px; font-size:11px; color:#94a3b8; margin-bottom:4px; }
     .pendente-vals { display:flex; gap:12px; font-size:11px; color:#64748b; }
-    .selection-summary { background:#4ade8015; border:1px solid #4ade8030; border-radius:8px; padding:10px 14px; margin-top:10px; display:flex; justify-content:space-between; font-size:13px; }
-    .summary-val { color:#4ade80; font-weight:700; }
     .empty-state { text-align:center; padding:20px; color:#64748b; }
 
     .form-card h3 { margin:0 0 12px; color:#f8fafc; font-size:14px; }
@@ -380,36 +809,135 @@ import { Abastecimento, Proprietario } from '../../shared/models';
     .btn-date:hover { border-color:#38bdf8; color:#38bdf8; }
 
     .upload-hint { color:#94a3b8; font-size:11px; }
-    .preview-box { margin-top:6px; border:1px solid #1e2d4a; border-radius:10px; padding:6px; background:#0a0f1e; width:100%; max-width:220px; }
-    .preview-img { display:block; width:100%; height:140px; object-fit:cover; border-radius:8px; background:#0d1427; }
-    .btn-preview { margin-top:6px; background:#0a0f1e; border:1px solid #1e2d4a; color:#38bdf8; padding:6px 10px; border-radius:8px; font-size:12px; cursor:pointer; width:fit-content; }
+    .anexos-panel { border:1px solid #1e2d4a; border-radius:12px; padding:12px; background:#0a0f1e; }
+    .anexos-header { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .anexos-header strong { display:block; color:#f8fafc; font-size:13px; }
+    .anexos-header span { display:block; color:#94a3b8; font-size:11px; margin-top:2px; }
+    .btn-add-anexo {
+      display:inline-flex; align-items:center; justify-content:center; gap:6px;
+      background:#e0f2fe; border:1px solid #38bdf8; color:#0f172a;
+      border-radius:8px; padding:8px 12px; font-size:12px; font-weight:700;
+      cursor:pointer; white-space:nowrap;
+    }
+    .btn-add-anexo input { display:none; }
+    .btn-add-anexo.disabled { opacity:0.55; cursor:not-allowed; }
+    .preview-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:8px; }
+    .preview-card { border:1px solid #1e2d4a; border-radius:10px; padding:6px; background:#0a0f1e; min-width:0; }
+    .preview-media-btn {
+      position:relative;
+      display:block;
+      width:100%;
+      height:96px;
+      padding:0;
+      border:0;
+      border-radius:8px;
+      overflow:hidden;
+      background:#0d1427;
+      cursor:pointer;
+    }
+    .preview-img,
+    .preview-frame {
+      display:block;
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      border:0;
+      background:#f8fafc;
+      pointer-events:none;
+    }
+    .preview-name {
+      display:block;
+      margin-top:6px;
+      color:#e2e8f0;
+      font-size:11px;
+      line-height:1.2;
+    }
+    .preview-actions { display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
+    .btn-preview { background:#0a0f1e; border:1px solid #1e2d4a; color:#38bdf8; padding:5px 8px; border-radius:8px; font-size:11px; cursor:pointer; width:fit-content; }
     .btn-preview:hover { border-color:#38bdf8; }
+    .btn-remove-preview { background:#3f1d22; border:1px solid #7f1d1d; color:#fecaca; padding:5px 8px; border-radius:8px; font-size:11px; cursor:pointer; }
 
     .image-overlay { position:fixed; inset:0; background:rgba(2,6,23,0.9); display:flex; align-items:center; justify-content:center; z-index:1100; padding:20px; }
-    .image-modal { max-width:min(92vw,1100px); max-height:90vh; display:flex; flex-direction:column; gap:12px; align-items:center; }
-    .image-modal img { width:auto; max-width:100%; max-height:calc(90vh - 56px); object-fit:contain; border-radius:12px; border:1px solid #1e2d4a; background:#0a0f1e; }
+    .image-modal { width:min(94vw,1120px); max-height:92vh; display:flex; flex-direction:column; gap:12px; align-items:stretch; }
+    .attachment-modal {
+      background:#0a0f1e;
+      border:1px solid #1e2d4a;
+      border-radius:14px;
+      padding:14px;
+      box-shadow:0 28px 80px rgba(0,0,0,0.45);
+    }
+    .attachment-modal-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .attachment-modal-header strong { display:block; color:#f8fafc; font-size:15px; }
+    .attachment-modal-header span { display:block; color:#94a3b8; font-size:12px; margin-top:2px; }
+    .attachment-viewer {
+      width:100%;
+      height:min(78vh,760px);
+      border:1px solid #1e2d4a;
+      border-radius:12px;
+      overflow:hidden;
+      background:#020617;
+      display:grid;
+      place-items:center;
+    }
+    .attachment-viewer img { width:auto; max-width:100%; max-height:100%; object-fit:contain; }
+    .attachment-viewer iframe { width:100%; height:100%; border:0; background:#fff; }
     .btn-close-image { background:#0a0f1e; border:1px solid #1e2d4a; color:#e2e8f0; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:12px; }
+    .btn-close-image:hover { border-color:#38bdf8; color:#38bdf8; }
+    .btn-open-external {
+      align-self:flex-end;
+      color:#38bdf8;
+      text-decoration:none;
+      font-size:12px;
+      font-weight:700;
+      border:1px solid #1e2d4a;
+      border-radius:8px;
+      padding:7px 12px;
+      background:#0f172a;
+    }
+    .btn-open-external:hover { border-color:#38bdf8; }
+
+    @media (max-width: 900px) {
+      .detail-summary-grid,
+      .detail-meta-grid,
+      .detail-bottom-grid,
+      .detail-list { grid-template-columns:1fr; }
+      .baixa-detail-modal { width:96vw; }
+    }
   `]
 })
 export class BaixaComponent implements OnInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
+  private sanitizer = inject(DomSanitizer);
 
   baixas = signal<any[]>([]);
   sortColumn = signal<string>('data_hora');
   sortDirection = signal<'asc' | 'desc'>('desc');
   loadingBaixas = signal(true);
   showNovaBaixaModal = signal(false);
+  selectedBaixa = signal<any | null>(null);
 
   pendentes = signal<Abastecimento[]>([]);
   proprietarios = signal<Proprietario[]>([]);
+  veiculos = signal<Veiculo[]>([]);
   selected = signal<Set<string>>(new Set());
   loadingPendentes = signal(false);
   saving = signal(false);
   deletingBaixaId = signal<string | null>(null);
   uploadingAnexo = signal(false);
   previewImageUrl = signal('');
+  previewKind = signal<AnexoTipo>('image');
+  previewTitle = signal('');
+  empresaBusca = signal('');
+  placaBusca = signal('');
+  showEmpresaOptions = signal(false);
+  showPlacaOptions = signal(false);
+
+  previewSafeResourceUrl = computed<SafeResourceUrl | null>(() => {
+    const url = this.previewImageUrl();
+    return url ? this.sanitizer.bypassSecurityTrustResourceUrl(url) : null;
+  });
 
   totalSelecionado = computed(() =>
     this.pendentes()
@@ -417,10 +945,29 @@ export class BaixaComponent implements OnInit {
       .reduce((acc, a) => acc + this.toNumber(a.valor_total), 0)
   );
 
+  baixaGroups = computed(() => {
+    const groups = new Map<string, any[]>();
+    for (const baixa of this.baixas()) {
+      const key = this.baixaBatchKey(baixa);
+      const items = groups.get(key) ?? [];
+      items.push(baixa);
+      groups.set(key, items);
+    }
+
+    return Array.from(groups.entries()).map(([key, items]) => {
+      const ordered = this.sortBaixaItems(items);
+      return {
+        ...ordered[0],
+        __group_id: key,
+        __items: ordered,
+      };
+    });
+  });
+
   sortedBaixas = computed(() => {
     const column = this.sortColumn();
     const direction = this.sortDirection() === 'asc' ? 1 : -1;
-    return [...this.baixas()].sort((a, b) => {
+    return [...this.baixaGroups()].sort((a, b) => {
       const left = this.sortValue(a, column);
       const right = this.sortValue(b, column);
       if (typeof left === 'number' && typeof right === 'number') {
@@ -430,7 +977,49 @@ export class BaixaComponent implements OnInit {
     });
   });
 
+  baixaDetailItems = computed(() => {
+    const selected = this.selectedBaixa();
+    if (!selected) return [];
+    if (Array.isArray(selected.__items)) return this.sortBaixaItems(selected.__items);
+    const key = this.baixaBatchKey(selected);
+    return this.baixas()
+      .filter((baixa) => this.baixaBatchKey(baixa) === key)
+      .sort((a, b) => this.baixaItemTime(a) - this.baixaItemTime(b));
+  });
+
+  baixaDetailTotal = computed(() =>
+    this.baixaDetailItems().reduce((total, baixa) => total + this.toNumber(baixa?.abastecimento?.valor_total), 0)
+  );
+
+  baixaDetailLitros = computed(() =>
+    this.baixaDetailItems().reduce((total, baixa) => total + this.toNumber(baixa?.abastecimento?.quantidade_litros), 0)
+  );
+
   filters: any = { id_proprietario: '', placa: '', data_inicio: '', data_fim: '' };
+
+  filteredEmpresas = computed(() => {
+    const term = this.normalizeText(this.empresaBusca());
+    const list = this.proprietarios();
+    if (!term) return list.slice(0, 40);
+    return list
+      .filter((p) => this.normalizeText(p.nome).includes(term))
+      .slice(0, 40);
+  });
+
+  filteredPlacas = computed(() => {
+    const term = this.normalizePlate(this.placaBusca());
+    const placas = new Set<string>();
+    for (const v of this.veiculos()) {
+      if (v.placa) placas.add(this.normalizePlate(v.placa));
+    }
+    for (const a of this.pendentes()) {
+      const placa = a.veiculo?.placa;
+      if (placa) placas.add(this.normalizePlate(placa));
+    }
+    const list = Array.from(placas).filter(Boolean).sort();
+    if (!term) return list.slice(0, 40);
+    return list.filter((placa) => placa.includes(term)).slice(0, 40);
+  });
 
   form = this.fb.group({
     data_baixa: [new Date().toISOString().slice(0, 10)],
@@ -438,15 +1027,16 @@ export class BaixaComponent implements OnInit {
     descricao: [''],
     forma_pagamento: [''],
     data_pagamento: [''],
-    status: ['Pago'],
     recebedor: ['Vipe Transportes'],
     recebedor_outros: [''],
     observacao: [''],
     anexo: [''],
+    anexos: [[] as string[]],
   });
 
   ngOnInit() {
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
+    this.api.getVeiculos({ per_page: 500 }).subscribe(r => this.veiculos.set(r.data));
     this.loadBaixas();
   }
 
@@ -482,17 +1072,17 @@ export class BaixaComponent implements OnInit {
       case 'data_hora':
         return baixa?.data_hora ? new Date(baixa.data_hora).getTime() : 0;
       case 'empresa':
-        return baixa?.abastecimento?.nome_proprietario || baixa?.abastecimento?.proprietario?.nome || '';
+        return this.baixaEmpresa(baixa);
       case 'placa':
-        return baixa?.abastecimento?.veiculo?.placa || '';
+        return this.baixaPlacas(baixa);
       case 'motorista':
-        return baixa?.abastecimento?.nome_motorista || baixa?.abastecimento?.motorista?.nome || '';
+        return this.baixaMotoristas(baixa);
       case 'forma_pagamento':
         return baixa?.forma_pagamento || '';
       case 'data_pagamento':
         return baixa?.data_pagamento ? new Date(baixa.data_pagamento).getTime() : 0;
       case 'valor':
-        return this.toNumber(baixa?.abastecimento?.valor_total);
+        return this.baixaTotal(baixa);
       default:
         return '';
     }
@@ -500,7 +1090,9 @@ export class BaixaComponent implements OnInit {
 
   openNovaBaixa() {
     this.showNovaBaixaModal.set(true);
-    this.loadPendentes();
+    this.syncBuscaFromFilters();
+    this.pendentes.set([]);
+    this.selected.set(new Set());
   }
 
   closeNovaBaixa() {
@@ -508,7 +1100,81 @@ export class BaixaComponent implements OnInit {
     this.selected.set(new Set());
   }
 
+  openBaixaDetails(baixa: any) {
+    this.selectedBaixa.set(baixa);
+  }
+
+  closeBaixaDetails() {
+    this.selectedBaixa.set(null);
+  }
+
+  baixaEmpresa(baixa: any): string {
+    return baixa?.abastecimento?.nome_proprietario
+      || baixa?.abastecimento?.proprietario?.nome
+      || '—';
+  }
+
+  baixaItems(baixa: any): any[] {
+    if (!baixa) return [];
+    return Array.isArray(baixa.__items) ? baixa.__items : [baixa];
+  }
+
+  baixaGroupId(baixa: any): string {
+    return baixa?.__group_id || this.baixaBatchKey(baixa);
+  }
+
+  baixaPlacas(baixa: any): string {
+    return this.uniqueBaixaTexts(
+      this.baixaItems(baixa).map((item) => item?.abastecimento?.veiculo?.placa)
+    );
+  }
+
+  baixaMotoristas(baixa: any): string {
+    return this.uniqueBaixaTexts(
+      this.baixaItems(baixa).map((item) => item?.abastecimento?.nome_motorista || item?.abastecimento?.motorista?.nome)
+    );
+  }
+
+  baixaTotal(baixa: any): number {
+    return this.baixaItems(baixa).reduce(
+      (total, item) => total + this.toNumber(item?.abastecimento?.valor_total),
+      0
+    );
+  }
+
+  baixaAnexo(baixa: any): string | string[] | null {
+    const item = this.baixaItems(baixa).find((candidate) => this.getAnexos(candidate?.abastecimento?.anexo).length > 0);
+    return item?.abastecimento?.anexo ?? null;
+  }
+
+  private baixaBatchKey(baixa: any): string {
+    const abastecimento = baixa?.abastecimento ?? {};
+    const explicitBatch = String(baixa?.nota_entrada ?? '').trim();
+    if (explicitBatch) {
+      return `batch:${explicitBatch}`;
+    }
+
+    return [
+      this.minuteKey(baixa?.data_hora),
+      this.minuteKey(abastecimento?.data_baixa),
+      baixa?.usuario,
+      baixa?.forma_pagamento,
+      this.minuteKey(baixa?.data_pagamento),
+      this.baixaEmpresa(baixa),
+      abastecimento?.anexo,
+      abastecimento?.observacao,
+      abastecimento?.descricao,
+      abastecimento?.recebedor,
+    ].map((value) => String(value ?? '').trim()).join('|');
+  }
+
   loadPendentes() {
+    if (!this.filters.id_proprietario) {
+      this.pendentes.set([]);
+      this.selected.set(new Set());
+      this.loadingPendentes.set(false);
+      return;
+    }
     this.loadingPendentes.set(true);
     this.api.getAbastecimentosPendenteBaixa({ ...this.filters, limit: 120 }).subscribe({
       next: r => {
@@ -520,6 +1186,107 @@ export class BaixaComponent implements OnInit {
         this.toastr.error('Erro ao carregar pendentes');
       }
     });
+  }
+
+  private normalizeText(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  private normalizePlate(value: unknown): string {
+    return String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  private uniqueBaixaTexts(values: unknown[]): string {
+    const unique = Array.from(new Set(
+      values
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+    ));
+    if (unique.length === 0) return '—';
+    if (unique.length <= 2) return unique.join(', ');
+    return `${unique.length} itens`;
+  }
+
+  private minuteKey(value: unknown): string {
+    const raw = String(value ?? '').trim();
+    if (!raw) return '';
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return raw.slice(0, 16);
+    parsed.setSeconds(0, 0);
+    return parsed.toISOString().slice(0, 16);
+  }
+
+  private baixaItemTime(baixa: any): number {
+    const raw = baixa?.abastecimento?.data_hora || baixa?.data_hora || baixa?.abastecimento?.data || '';
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+  }
+
+  private sortBaixaItems(items: any[]): any[] {
+    return [...items].sort((a, b) => this.baixaItemTime(a) - this.baixaItemTime(b));
+  }
+
+  private syncBuscaFromFilters() {
+    const empresa = this.proprietarios().find((p) => p.id_proprietario === this.filters.id_proprietario);
+    this.empresaBusca.set(empresa?.nome ?? '');
+    this.placaBusca.set(this.filters.placa ?? '');
+  }
+
+  onEmpresaBuscaChange(event: Event) {
+    const value = (event.target as HTMLInputElement).value;
+    this.empresaBusca.set(value);
+    this.showEmpresaOptions.set(true);
+
+    const exact = this.proprietarios().find((p) => this.normalizeText(p.nome) === this.normalizeText(value));
+    this.filters.id_proprietario = exact?.id_proprietario ?? '';
+    this.selected.set(new Set());
+    this.loadPendentes();
+  }
+
+  selectEmpresa(proprietario: Proprietario) {
+    this.filters.id_proprietario = proprietario.id_proprietario;
+    this.empresaBusca.set(proprietario.nome);
+    this.showEmpresaOptions.set(false);
+    this.selected.set(new Set());
+    this.loadPendentes();
+  }
+
+  clearEmpresa() {
+    this.filters.id_proprietario = '';
+    this.empresaBusca.set('');
+    this.showEmpresaOptions.set(false);
+    this.pendentes.set([]);
+    this.selected.set(new Set());
+  }
+
+  closeEmpresaOptions() {
+    setTimeout(() => this.showEmpresaOptions.set(false), 120);
+  }
+
+  onPlacaBuscaChange(event: Event) {
+    const value = (event.target as HTMLInputElement).value.toUpperCase();
+    this.placaBusca.set(value);
+    this.filters.placa = value.trim();
+    this.showPlacaOptions.set(true);
+    this.loadPendentes();
+  }
+
+  selectPlaca(placa: string) {
+    this.placaBusca.set(placa);
+    this.filters.placa = placa;
+    this.showPlacaOptions.set(false);
+    this.loadPendentes();
+  }
+
+  clearPlaca() {
+    this.placaBusca.set('');
+    this.filters.placa = '';
+    this.showPlacaOptions.set(false);
+    this.loadPendentes();
+  }
+
+  closePlacaOptions() {
+    setTimeout(() => this.showPlacaOptions.set(false), 120);
   }
 
   isSelected(id: string): boolean { return this.selected().has(id); }
@@ -552,6 +1319,7 @@ export class BaixaComponent implements OnInit {
       normalized.startsWith('http://') ||
       normalized.startsWith('https://') ||
       normalized.startsWith('data:image/') ||
+      normalized.startsWith('data:application/pdf') ||
       normalized.startsWith('blob:')
     ) {
       return normalized;
@@ -559,9 +1327,117 @@ export class BaixaComponent implements OnInit {
     return null;
   }
 
+  safeResourceUrl(url?: string | null): SafeResourceUrl | null {
+    const resolved = this.resolveImageUrl(url);
+    return resolved ? this.sanitizer.bypassSecurityTrustResourceUrl(resolved) : null;
+  }
+
+  anexoThumbUrl(url?: string | null): string | null {
+    const resolved = this.resolveImageUrl(url);
+    if (!resolved) return null;
+    if (this.anexoKind(resolved) === 'image') return resolved;
+    if (this.anexoKind(resolved) !== 'pdf') return null;
+    return this.cloudinaryPdfPreviewUrl(resolved);
+  }
+
+  anexoKind(url?: string | null): AnexoTipo {
+    const resolved = this.resolveImageUrl(url);
+    if (!resolved) return 'file';
+    if (resolved.startsWith('data:image/')) return 'image';
+    if (resolved.startsWith('data:application/pdf')) return 'pdf';
+
+    const path = this.urlPath(resolved);
+    if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(path)) return 'image';
+    if (/\.pdf$/i.test(path)) return 'pdf';
+    return 'file';
+  }
+
+  getAnexos(value?: string | string[] | null): AnexoBaixaView[] {
+    return this.getAnexoUrls(value).map((url) => ({
+      url,
+      tipo: this.anexoKind(url),
+    }));
+  }
+
+  anexoLabel(index: number, url?: string | null): string {
+    const kind = this.anexoKind(url);
+    const suffix = kind === 'pdf' ? 'PDF' : kind === 'image' ? 'imagem' : 'arquivo';
+    return `Comprovante ${index + 1} (${suffix})`;
+  }
+
+  previewKindLabel(): string {
+    const kind = this.previewKind();
+    if (kind === 'pdf') return 'Documento PDF';
+    if (kind === 'image') return 'Imagem';
+    return 'Arquivo';
+  }
+
+  private urlPath(url: string): string {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return url.split('?')[0].split('#')[0].toLowerCase();
+    }
+  }
+
+  private cloudinaryPdfPreviewUrl(url: string): string | null {
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname.endsWith('res.cloudinary.com')) return null;
+
+      const uploadMarker = '/image/upload/';
+      const markerIndex = parsed.pathname.indexOf(uploadMarker);
+      if (markerIndex === -1) return null;
+
+      const prefix = parsed.pathname.slice(0, markerIndex + uploadMarker.length);
+      const assetPath = parsed.pathname
+        .slice(markerIndex + uploadMarker.length)
+        .replace(/\.pdf$/i, '.jpg');
+
+      parsed.pathname = `${prefix}pg_1/c_fill,h_220,w_320/f_jpg/q_auto/${assetPath}`;
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  getAnexoUrls(value?: string | string[] | null): string[] {
+    if (Array.isArray(value)) {
+      return value.map((url) => this.resolveImageUrl(url)).filter((url): url is string => !!url).slice(0, 4);
+    }
+    const raw = String(value ?? '').trim();
+    if (!raw) return [];
+    if (raw.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.map((url) => this.resolveImageUrl(url)).filter((url): url is string => !!url).slice(0, 4);
+        }
+      } catch {}
+    }
+    const single = this.resolveImageUrl(raw);
+    return single ? [single] : [];
+  }
+
+  formAnexos(): string[] {
+    return this.getAnexoUrls(this.form.value.anexos as string[] | undefined);
+  }
+
+  private setFormAnexos(anexos: string[]) {
+    const normalized = anexos.map((url) => this.resolveImageUrl(url)).filter((url): url is string => !!url).slice(0, 4);
+    this.form.patchValue({
+      anexos: normalized,
+      anexo: normalized[0] ?? '',
+    });
+  }
+
   onSubmit() {
     if (this.selected().size === 0) {
       this.toastr.warning('Selecione ao menos um abastecimento');
+      return;
+    }
+    if (!this.filters.id_proprietario) {
+      this.toastr.warning('Selecione a empresa antes de registrar a baixa');
       return;
     }
 
@@ -572,6 +1448,8 @@ export class BaixaComponent implements OnInit {
         ? (this.form.value.recebedor_outros || '').trim()
         : this.form.value.recebedor,
       ids: Array.from(this.selected()),
+      anexos: this.formAnexos(),
+      anexo: this.formAnexos()[0] ?? '',
     };
 
     this.api.createBaixaLote(payload).subscribe({
@@ -581,11 +1459,11 @@ export class BaixaComponent implements OnInit {
         this.form.patchValue({
           data_baixa: new Date().toISOString().slice(0, 10),
           tipo_despesa: 'Combustível',
-          status: 'Pago',
           recebedor: 'Vipe Transportes',
           recebedor_outros: '',
           observacao: '',
           anexo: '',
+          anexos: [],
         });
         this.saving.set(false);
         this.loadPendentes();
@@ -599,31 +1477,65 @@ export class BaixaComponent implements OnInit {
   }
 
   onUploadAnexo(event: Event) {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) return;
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    if (files.length === 0) return;
+    const current = this.formAnexos();
+    const slots = Math.max(0, 4 - current.length);
+    const selectedFiles = files.slice(0, slots);
+    if (selectedFiles.length === 0) {
+      this.toastr.warning('Limite de 4 comprovantes atingido');
+      input.value = '';
+      return;
+    }
     this.uploadingAnexo.set(true);
-    this.api.uploadToDrive(file).subscribe({
-      next: (res) => {
-        const url = res?.file?.downloadUrl || res?.file?.webViewLink || '';
-        this.form.patchValue({ anexo: url });
+    const uploaded = [...current];
+    const uploadNext = (index: number) => {
+      if (index >= selectedFiles.length) {
+        this.setFormAnexos(uploaded);
         this.uploadingAnexo.set(false);
-        this.toastr.success('Imagem de anexo enviada');
-      },
-      error: (err) => {
-        this.toastr.error(err.error?.message ?? 'Erro no upload do anexo');
-        this.uploadingAnexo.set(false);
+        input.value = '';
+        this.toastr.success(`${selectedFiles.length} comprovante(s) enviado(s)`);
+        return;
       }
-    });
+      this.api.uploadToDrive(selectedFiles[index]).subscribe({
+        next: (res) => {
+          const url = res?.file?.downloadUrl || res?.file?.webViewLink || '';
+          if (url) uploaded.push(url);
+          uploadNext(index + 1);
+        },
+        error: (err) => {
+          this.toastr.error(err.error?.message ?? 'Erro no upload do anexo');
+          this.uploadingAnexo.set(false);
+          input.value = '';
+        }
+      });
+    };
+    uploadNext(0);
+  }
+
+  removeAnexo(index: number) {
+    const anexos = this.formAnexos();
+    anexos.splice(index, 1);
+    this.setFormAnexos(anexos);
   }
 
   openImagePreview(url?: string | null) {
+    this.openAnexoPreview(url);
+  }
+
+  openAnexoPreview(url?: string | null, index = 0) {
     const imageUrl = this.resolveImageUrl(url);
     if (!imageUrl) return;
     this.previewImageUrl.set(imageUrl);
+    this.previewKind.set(this.anexoKind(imageUrl));
+    this.previewTitle.set(this.anexoLabel(index, imageUrl));
   }
 
   closeImagePreview() {
     this.previewImageUrl.set('');
+    this.previewTitle.set('');
+    this.previewKind.set('image');
   }
 
   openDatePicker(input: HTMLInputElement) {
@@ -638,13 +1550,32 @@ export class BaixaComponent implements OnInit {
   }
 
   deleteBaixa(idBaixa: string) {
-    const ok = confirm('Deseja realmente excluir esta baixa? O abastecimento voltará para Pendente.');
+    const baixa = this.baixas().find((item) => item.id_baixa === idBaixa);
+    this.deleteBaixaGroup(baixa ?? { id_baixa: idBaixa });
+  }
+
+  deleteBaixaGroup(baixa: any) {
+    const ids = this.baixaItems(baixa)
+      .map((item) => String(item?.id_baixa ?? '').trim())
+      .filter(Boolean);
+    if (ids.length === 0) return;
+
+    const ok = confirm(
+      ids.length > 1
+        ? `Deseja realmente excluir esta baixa completa? ${ids.length} abastecimentos voltarão para pendente de baixa.`
+        : 'Deseja realmente excluir esta baixa? O abastecimento voltará para pendente de baixa.'
+    );
     if (!ok) return;
 
-    this.deletingBaixaId.set(idBaixa);
-    this.api.deleteBaixa(idBaixa).subscribe({
+    const groupId = this.baixaGroupId(baixa);
+    this.deletingBaixaId.set(groupId);
+    forkJoin(ids.map((id) => this.api.deleteBaixa(id))).subscribe({
       next: () => {
-        this.toastr.success('Baixa excluída e status revertido para Pendente');
+        this.toastr.success(
+          ids.length > 1
+            ? 'Baixa excluída e abastecimentos voltaram para pendente de baixa'
+            : 'Baixa excluída e abastecimento voltou para pendente de baixa'
+        );
         this.loadBaixas();
         this.loadPendentes();
         this.deletingBaixaId.set(null);

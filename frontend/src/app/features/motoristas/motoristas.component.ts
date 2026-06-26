@@ -1,16 +1,17 @@
 // src/app/features/motoristas/motoristas.component.ts
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Motorista, Proprietario } from '../../shared/models';
 import { AuthService } from '../../core/services/auth.service';
+import { LinkedEntityContext, VinculosEntidadeModalComponent } from '../../shared/components/vinculos-entidade-modal/vinculos-entidade-modal.component';
 
 @Component({
   selector: 'app-motoristas',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, VinculosEntidadeModalComponent],
   template: `
     <div class="page">
       <div class="page-header">
@@ -20,13 +21,31 @@ import { AuthService } from '../../core/services/auth.service';
         }
       </div>
       <div class="filters-row">
-        <input type="text" [(ngModel)]="search" (input)="load()" placeholder="🔍 Nome ou documento..." class="search-input" />
-        <select [(ngModel)]="filtroProprietario" (change)="load()" class="filter-select">
-          <option value="">Todos os proprietários</option>
-          @for (p of proprietarios(); track p.id_proprietario) {
-            <option [value]="p.id_proprietario">{{ p.nome }}</option>
+        <input type="text" [(ngModel)]="search" (input)="load()" placeholder="🔍 Nome, apelido ou documento..." class="search-input" />
+        <div class="autocomplete-field filter-owner">
+          <input
+            type="text"
+            [value]="proprietarioFiltroBusca()"
+            placeholder="Digite a empresa responsável..."
+            class="search-input"
+            (input)="onFiltroProprietarioBuscaChange($event)"
+            (focus)="showFiltroProprietarioOptions.set(true)"
+            (blur)="closeFiltroProprietarioOptions()"
+          />
+          @if (proprietarioFiltroBusca()) {
+            <button type="button" class="btn-clear-field" (mousedown)="selectFiltroProprietario(null)">×</button>
           }
-        </select>
+          @if (showFiltroProprietarioOptions() && proprietariosFiltradosFiltro().length > 0) {
+            <div class="autocomplete-list">
+              <button type="button" class="autocomplete-item" (mousedown)="selectFiltroProprietario(null)">Todas as empresas responsáveis</button>
+              @for (p of proprietariosFiltradosFiltro(); track p.id_proprietario) {
+                <button type="button" class="autocomplete-item" (mousedown)="selectFiltroProprietario(p)">
+                  {{ p.nome }}
+                </button>
+              }
+            </div>
+          }
+        </div>
       </div>
 
       @if (canShowForm()) {
@@ -39,13 +58,30 @@ import { AuthService } from '../../core/services/auth.service';
                 <input type="text" formControlName="nome" placeholder="Nome completo" />
               </div>
               <div class="field">
-                <label>Proprietário *</label>
-                <select formControlName="id_proprietario">
-                  <option value="">Selecione...</option>
-                  @for (p of proprietarios(); track p.id_proprietario) {
-                    <option [value]="p.id_proprietario">{{ p.nome }}</option>
+                <label>Apelido</label>
+                <input type="text" formControlName="apelido" placeholder="Ex: Pézão" />
+              </div>
+              <div class="field">
+                <label>Empresa responsável *</label>
+                <div class="autocomplete-field">
+                  <input
+                    type="text"
+                    [value]="proprietarioFormBusca()"
+                    placeholder="Digite a empresa responsável..."
+                    (input)="onFormProprietarioBuscaChange($event)"
+                    (focus)="showFormProprietarioOptions.set(true)"
+                    (blur)="closeFormProprietarioOptions()"
+                  />
+                  @if (showFormProprietarioOptions() && proprietariosFiltradosForm().length > 0) {
+                    <div class="autocomplete-list">
+                      @for (p of proprietariosFiltradosForm(); track p.id_proprietario) {
+                        <button type="button" class="autocomplete-item" (mousedown)="selectFormProprietario(p)">
+                          {{ p.nome }}
+                        </button>
+                      }
+                    </div>
                   }
-                </select>
+                </div>
               </div>
               <div class="field">
                 <label>Documento (CPF/CNH)</label>
@@ -71,24 +107,26 @@ import { AuthService } from '../../core/services/auth.service';
           <thead>
             <tr>
               <th>Nome</th>
+              <th>Apelido</th>
               <th>Documento</th>
               <th>Celular</th>
-              <th>Proprietário</th>
+              <th>Empresa responsável</th>
               <th>Ações</th>
             </tr>
           </thead>
           <tbody>
             @for (m of items(); track m.id_motorista) {
-              <tr>
+              <tr class="click-row" (click)="openLinks(m)">
                 <td><strong>{{ m.nome }}</strong></td>
+                <td>{{ m.apelido || '—' }}</td>
                 <td><code class="code-badge">{{ m.documento ?? '—' }}</code></td>
                 <td>{{ m.celular ?? '—' }}</td>
                 <td>{{ m.proprietario?.nome ?? '—' }}</td>
                 <td>
                   <div class="actions">
                     @if (isAdmin()) {
-                      <button class="action-btn" (click)="edit(m)">✏️</button>
-                      <button class="action-btn" (click)="confirmDelete(m)">🗑️</button>
+                      <button class="action-btn" (click)="$event.stopPropagation(); edit(m)">✏️</button>
+                      <button class="action-btn" (click)="$event.stopPropagation(); confirmDelete(m)">🗑️</button>
                     } @else {
                       <span style="color:#64748b;font-size:12px;">Somente leitura</span>
                     }
@@ -97,7 +135,7 @@ import { AuthService } from '../../core/services/auth.service';
               </tr>
             }
             @empty {
-              <tr><td colspan="5" class="empty-cell">Nenhum motorista cadastrado</td></tr>
+              <tr><td colspan="6" class="empty-cell">Nenhum motorista cadastrado</td></tr>
             }
           </tbody>
         </table>
@@ -115,6 +153,7 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
         </div>
       }
+      <app-vinculos-entidade-modal [context]="linksContext()" (closed)="linksContext.set(null)" />
     </div>
   `,
   styles: [`
@@ -132,6 +171,26 @@ import { AuthService } from '../../core/services/auth.service';
     .filter-select { min-width: 220px; }
     .search-input:focus, .filter-select:focus { border-color: #0ea5e9; }
     .filter-select option { background: #0d1427; }
+    .filter-owner { width: 300px; max-width: 100%; }
+    .filter-owner .search-input { width: 100%; max-width: none; }
+    .autocomplete-field { position: relative; }
+    .autocomplete-field input { width: 100%; padding-right: 34px; }
+    .btn-clear-field {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      width: 22px; height: 22px; border: none; border-radius: 5px; background: #1e2d4a;
+      color: #cbd5e1; cursor: pointer; line-height: 1; font-size: 15px;
+    }
+    .btn-clear-field:hover { background: #334155; color: #fff; }
+    .autocomplete-list {
+      position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0;
+      max-height: 240px; overflow: auto; background: #0a0f1e; border: 1px solid #1e2d4a;
+      border-radius: 8px; box-shadow: 0 16px 40px rgba(2,6,23,0.35); padding: 4px;
+    }
+    .autocomplete-item {
+      width: 100%; border: none; background: transparent; color: #e2e8f0; text-align: left;
+      padding: 8px 9px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .autocomplete-item:hover { background: #1e2d4a; }
     .form-card { background: #0d1427; border: 1px solid #1e2d4a; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
     .form-card h3 { font-size: 14px; font-weight: 700; color: #f8fafc; margin: 0 0 14px; }
     .form-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin-bottom: 14px; }
@@ -147,6 +206,7 @@ import { AuthService } from '../../core/services/auth.service';
     .data-table thead th { padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; border-bottom: 1px solid #1e2d4a; background: #080e1c; text-align: left; }
     .data-table tbody td { padding: 12px 14px; border-bottom: 1px solid #1e2d4a15; }
     .data-table tbody tr:hover td { background: #1e2d4a15; }
+    .click-row { cursor: pointer; }
     .code-badge { background: #0a0f1e; color: #a78bfa; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
     .actions { display: flex; gap: 6px; }
     .action-btn { background: transparent; border: none; cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 5px; }
@@ -173,11 +233,20 @@ export class MotoristasComponent implements OnInit {
   editItem = signal<Motorista | null>(null);
   deleteTarget = signal<Motorista | null>(null);
   saving = signal(false);
+  linksContext = signal<LinkedEntityContext | null>(null);
   search = '';
   filtroProprietario = '';
+  proprietarioFiltroBusca = signal('');
+  proprietarioFormBusca = signal('');
+  showFiltroProprietarioOptions = signal(false);
+  showFormProprietarioOptions = signal(false);
+
+  proprietariosFiltradosFiltro = computed(() => this.filtrarProprietarios(this.proprietarioFiltroBusca()));
+  proprietariosFiltradosForm = computed(() => this.filtrarProprietarios(this.proprietarioFormBusca()));
 
   form = this.fb.group({
     nome:             ['', Validators.required],
+    apelido:          [''],
     id_proprietario:  ['', Validators.required],
     documento:        [''],
     celular:          [''],
@@ -196,11 +265,66 @@ export class MotoristasComponent implements OnInit {
       .subscribe(r => { this.items.set(r.data); this.total.set(r.total); });
   }
 
-  newItem() { this.editItem.set(null); this.form.reset(); this.showForm.set(true); }
+  newItem() { this.editItem.set(null); this.proprietarioFormBusca.set(''); this.form.reset(); this.showForm.set(true); }
 
-  edit(m: Motorista) { this.editItem.set(m); this.form.patchValue(m as any); this.showForm.set(true); }
+  edit(m: Motorista) {
+    this.editItem.set(m);
+    this.form.patchValue(m as any);
+    this.proprietarioFormBusca.set(m.proprietario?.nome ?? this.proprietarios().find(p => p.id_proprietario === m.id_proprietario)?.nome ?? '');
+    this.showForm.set(true);
+  }
 
-  cancelForm() { this.showForm.set(false); this.editItem.set(null); this.form.reset(); }
+  openLinks(m: Motorista) { this.linksContext.set({ type: 'motorista', entity: m }); }
+
+  cancelForm() { this.showForm.set(false); this.editItem.set(null); this.proprietarioFormBusca.set(''); this.form.reset(); }
+
+  private normalizeText(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  private filtrarProprietarios(termRaw: string) {
+    const term = this.normalizeText(termRaw);
+    const list = this.proprietarios();
+    if (!term) return list.slice(0, 40);
+    return list.filter(p => this.normalizeText(p.nome).includes(term)).slice(0, 40);
+  }
+
+  onFiltroProprietarioBuscaChange(event: Event) {
+    const value = (event.target as HTMLInputElement).value;
+    this.proprietarioFiltroBusca.set(value);
+    this.showFiltroProprietarioOptions.set(true);
+    const exact = this.proprietarios().find(p => this.normalizeText(p.nome) === this.normalizeText(value));
+    this.filtroProprietario = exact?.id_proprietario ?? '';
+    this.load();
+  }
+
+  selectFiltroProprietario(p: Proprietario | null) {
+    this.filtroProprietario = p?.id_proprietario ?? '';
+    this.proprietarioFiltroBusca.set(p?.nome ?? '');
+    this.showFiltroProprietarioOptions.set(false);
+    this.load();
+  }
+
+  closeFiltroProprietarioOptions() {
+    setTimeout(() => this.showFiltroProprietarioOptions.set(false), 120);
+  }
+
+  onFormProprietarioBuscaChange(event: Event) {
+    const value = (event.target as HTMLInputElement).value;
+    this.proprietarioFormBusca.set(value);
+    this.showFormProprietarioOptions.set(true);
+    this.form.patchValue({ id_proprietario: '' });
+  }
+
+  selectFormProprietario(p: Proprietario) {
+    this.form.patchValue({ id_proprietario: p.id_proprietario });
+    this.proprietarioFormBusca.set(p.nome);
+    this.showFormProprietarioOptions.set(false);
+  }
+
+  closeFormProprietarioOptions() {
+    setTimeout(() => this.showFormProprietarioOptions.set(false), 120);
+  }
 
   onSubmit() {
     if (this.form.invalid) { this.form.markAllAsTouched(); return; }
