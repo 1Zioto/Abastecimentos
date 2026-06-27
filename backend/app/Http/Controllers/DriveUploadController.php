@@ -125,7 +125,7 @@ class DriveUploadController extends Controller
                 ->header('Content-Type', $contentType)
                 ->header('Cache-Control', 'public, max-age=864000');
         } catch (\Throwable $e) {
-            return response('Erro ao buscar imagem', 500);
+            return response('Erro ao buscar imagem: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine(), 500);
         }
     }
 
