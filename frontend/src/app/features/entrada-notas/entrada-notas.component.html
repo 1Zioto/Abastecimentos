@@ -1,0 +1,294 @@
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1>Entrada de Notas</h1>
+      <p>Registre as notas fiscais de abastecimento</p>
+    </div>
+    @if (canCreate()) {
+      <button class="btn-primary" (click)="newItem()">+ Nova Nota</button>
+    }
+  </div>
+
+  <!-- Filtros -->
+  <app-entrada-notas-filters
+    [tiposCombustivel]="tiposCombustivel()"
+    [fornecedoresDisponiveis]="fornecedoresDisponiveis()"
+    (filterChanged)="onFilterChange($event)">
+  </app-entrada-notas-filters>
+
+  <!-- Resumos e Totais -->
+  <app-entrada-notas-summary
+    [fornecedoresResumo]="fornecedoresResumo()"
+    [notasLength]="notas().length"
+    [totalLitros]="totalLitros()"
+    [totalValor]="totalValor()"
+    [totalTransporte]="totalTransporte()"
+    [totalCompraFinal]="totalCompraFinal()">
+  </app-entrada-notas-summary>
+
+  <!-- Tabela -->
+  <div class="table-card">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Data/Hora</th>
+            <th>Nº NF</th>
+            <th>Tipo</th>
+            <th class="text-right">Qtd (L)</th>
+            <th class="text-right">R$/L</th>
+            <th class="text-right">Valor Fiscal</th>
+            <th class="text-right">Transporte</th>
+            <th class="text-right">Custo Final</th>
+            <th>Responsável</th>
+            <th>Fornecedor</th>
+            <th>Verificação</th>
+            <th>Status</th>
+            <th>Anexo</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (n of notas(); track n.id_financeiro) {
+            <tr>
+              <td>
+                <div class="date-time-cell">
+                  <span>{{ notaDataLabel(n) }}</span>
+                  <small>{{ notaHoraLabel(n) }}</small>
+                </div>
+              </td>
+              <td><code class="code-badge">{{ n.numero_nota_fiscal ?? '—' }}</code></td>
+              <td><span class="fuel-badge">{{ n.tipo ?? '—' }}</span></td>
+              <td class="text-right">{{ n.quantidade ? (n.quantidade | number:'1.2-2') : '—' }}</td>
+              <td class="text-right">{{ n.valor_litro ? (n.valor_litro | number:'1.3-3') : '—' }}</td>
+              <td class="text-right val-green">
+                {{ n.valor ? (n.valor | currency:'BRL':'symbol':'1.2-2') : '—' }}
+              </td>
+              <td class="text-right val-amber">
+                {{ custoTransporteTotal(n) | currency:'BRL':'symbol':'1.2-2' }}
+              </td>
+              <td class="text-right val-purple">
+                {{ valorCompraFinal(n) | currency:'BRL':'symbol':'1.2-2' }}
+              </td>
+              <td>{{ n.responsavel ?? '—' }}</td>
+              <td>
+                <div class="fornecedor-cell">
+                  <span>{{ n.fornecedor ?? '—' }}</span>
+                  @if (fornecedorIaLabel(n)) {
+                    <span class="verify-badge" [class.ok]="n.fornecedor_ia_status === 'coerente' || n.fornecedor_confirmado" [class.warn]="fornecedorDivergente(n)">
+                      {{ fornecedorIaLabel(n) }}
+                    </span>
+                  }
+                  @if (n.fornecedor_ia_mensagem && !n.fornecedor_confirmado) {
+                    <small class="verify-message">{{ n.fornecedor_ia_mensagem }}</small>
+                  }
+                  @if (fornecedorDivergente(n)) {
+                    <button type="button" class="link-btn" [disabled]="confirmandoFornecedor() === n.id_financeiro" (click)="confirmarFornecedor(n)">
+                      {{ confirmandoFornecedor() === n.id_financeiro ? 'Confirmando...' : 'Verificado' }}
+                    </button>
+                  }
+                </div>
+              </td>
+              <td>
+                <span class="verify-badge" [class.ok]="n.nota_verificacao_status === 'validada'" [class.warn]="n.nota_verificacao_status === 'suspeita'">
+                  {{ notaVerificacaoLabel(n) }}
+                </span>
+                @if (n.nota_verificacao_mensagem) {
+                  <small class="verify-message">{{ n.nota_verificacao_mensagem }}</small>
+                }
+              </td>
+              <td>
+                @if (n.paga) {
+                  <span class="verify-badge ok">Pago</span>
+                } @else {
+                  <span class="verify-badge warn">Pendente</span>
+                }
+              </td>
+              <td>
+                @if (resolveImageUrl(n.foto_nota); as fotoNotaListUrl) {
+                  <div class="note-image-cell">
+                    <button type="button" class="note-thumb-btn" (click)="openImagePreview(fotoNotaListUrl)" title="Ver foto da nota">
+                      <img [src]="displayImageUrl(fotoNotaListUrl)" alt="Foto da nota" />
+                    </button>
+                    <button type="button" class="link-btn" (click)="openImagePreview(fotoNotaListUrl)">Ver imagem</button>
+                  </div>
+                } @else { — }
+              </td>
+              <td>
+                <div class="actions">
+                  @if (canCreate() && !n.paga) {
+                    <button type="button" class="btn-baixar" (click)="baixarNota(n)" title="Baixar Nota">💵 Baixar</button>
+                  }
+                  @if (isAdmin()) {
+                    <button class="action-btn" (click)="edit(n)" title="Editar">✏️</button>
+                    <button class="action-btn" (click)="confirmDelete(n)" title="Excluir">🗑️</button>
+                  } @else if (!canCreate()) {
+                    <span style="color:#64748b;font-size:12px;">Somente leitura</span>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+          @empty {
+            <tr><td colspan="14" class="empty-cell">Nenhuma nota registrada</td></tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: Nova Nota / Editar Nota ===== -->
+  @if (canShowForm()) {
+    <div class="modal-overlay" (click)="cancelForm()" id="nota-modal-overlay">
+      <div class="nota-modal" (click)="$event.stopPropagation()" role="dialog" aria-modal="true">
+
+        <!-- Header do Modal -->
+        <div class="nota-modal__header">
+          <div class="nota-modal__title-group">
+            <span class="nota-modal__icon">{{ editItem() ? '✏️' : '📄' }}</span>
+            <div>
+              <h2 class="nota-modal__title">{{ editItem() ? 'Editar Nota Fiscal' : 'Nova Nota Fiscal' }}</h2>
+              <p class="nota-modal__subtitle">{{ editItem() ? 'Altere os dados da nota selecionada' : 'Preencha os dados da nota de entrada' }}</p>
+            </div>
+          </div>
+          <button type="button" class="nota-modal__close" (click)="cancelForm()" title="Fechar">✕</button>
+        </div>
+
+        <!-- Body do Modal -->
+        <div class="nota-modal__body">
+          <form [formGroup]="form" (ngSubmit)="onSubmit()" id="nota-form">
+            <div class="modal-form-grid">
+
+              <!-- Data -->
+              <div class="field">
+                <label>Data *</label>
+                <div class="date-row">
+                  <input #dataNotaInput type="date" formControlName="data" />
+                  <button type="button" class="btn-date" (click)="openDatePicker(dataNotaInput)">📅</button>
+                </div>
+              </div>
+
+              <!-- Hora -->
+              <div class="field">
+                <label>Hora *</label>
+                <input type="time" formControlName="hora" />
+              </div>
+
+              <!-- Número NF -->
+              <div class="field">
+                <label>Número da NF</label>
+                <input type="text" formControlName="numero_nota_fiscal" placeholder="000000" />
+              </div>
+
+              <!-- Fornecedor -->
+              <div class="field">
+                <label>Fornecedor</label>
+                <input type="text" formControlName="fornecedor" placeholder="Nome do fornecedor" list="fornecedores-list-modal" />
+                <datalist id="fornecedores-list-modal">
+                  @for (f of fornecedoresDisponiveis(); track f) {
+                    <option [value]="f"></option>
+                  }
+                </datalist>
+              </div>
+
+              <!-- Tipo -->
+              <div class="field">
+                <label>Tipo</label>
+                <select formControlName="tipo">
+                  <option value="">Selecione...</option>
+                  @for (t of tiposCombustivel(); track t) {
+                    <option [value]="t">{{ t }}</option>
+                  }
+                </select>
+              </div>
+
+              <!-- Quantidade -->
+              <div class="field">
+                <label>Quantidade (L)</label>
+                <input type="number" formControlName="quantidade" placeholder="0.00" step="0.01" />
+              </div>
+
+              <!-- Valor por Litro -->
+              <div class="field">
+                <label>Valor por Litro (compra)</label>
+                <input type="number" formControlName="valor_litro" placeholder="0.000" step="0.001" />
+              </div>
+
+              <!-- Valor Total -->
+              <div class="field">
+                <label>Valor Total *</label>
+                <input type="number" formControlName="valor" placeholder="0.00" step="0.01" class="highlight-field" />
+              </div>
+
+              <!-- Responsável -->
+              <div class="field">
+                <label>Responsável</label>
+                <input type="text" formControlName="responsavel" readonly class="readonly-field" />
+              </div>
+
+              <!-- Foto / Anexo (ocupa 2 colunas) -->
+              <div class="field field--wide">
+                <label>Foto / Anexo (Imagem)</label>
+                <input type="file" accept="image/*,application/pdf" (change)="onUploadFotoNota($event)" />
+                @if (uploadingFotoNota()) {
+                  <small class="upload-hint upload-hint--loading">⏳ Enviando imagem para o Google Drive, aguarde...</small>
+                } @else if (resolveImageUrl(form.value.foto_nota); as fotoNotaUrl) {
+                  <small class="upload-hint upload-hint--ok">✅ Imagem enviada com sucesso!</small>
+                  <div class="preview-box">
+                    <img class="preview-img" [src]="displayImageUrl(fotoNotaUrl)" alt="Anexo da nota" />
+                  </div>
+                  <button type="button" class="btn-preview" (click)="openImagePreview(fotoNotaUrl)">Expandir</button>
+                }
+              </div>
+
+            </div>
+          </form>
+        </div>
+
+        <!-- Footer do Modal -->
+        <div class="nota-modal__footer">
+          @if (uploadingFotoNota()) {
+            <small class="upload-warn">⚠️ Aguarde o envio da imagem antes de salvar.</small>
+          }
+          <div class="nota-modal__footer-actions">
+            <button type="button" class="btn-cancel" (click)="cancelForm()">Cancelar</button>
+            <button type="submit" form="nota-form" class="btn-primary sm" [disabled]="saving() || uploadingFotoNota()">
+              @if (uploadingFotoNota()) { ⏳ Aguardando upload... }
+              @else if (saving()) { Salvando... }
+              @else { {{ editItem() ? '💾 Salvar Alterações' : '✅ Registrar Nota' }} }
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  }
+
+  <!-- Modal: Confirmar Exclusão -->
+  @if (deleteTarget() && isAdmin()) {
+    <div class="modal-overlay" (click)="deleteTarget.set(null)">
+      <div class="modal" (click)="$event.stopPropagation()">
+        <h3>Confirmar Exclusão</h3>
+        <p>Excluir a nota fiscal <strong>{{ deleteTarget()?.numero_nota_fiscal ?? deleteTarget()?.id_financeiro }}</strong>?</p>
+        <div class="modal-actions">
+          <button class="btn-cancel" (click)="deleteTarget.set(null)">Cancelar</button>
+          <button class="btn-danger" (click)="executeDelete()">Excluir</button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Modal: Preview de Imagem -->
+  @if (previewImageUrl()) {
+    <div class="image-overlay" (click)="closeImagePreview()">
+      <div class="image-modal" (click)="$event.stopPropagation()">
+        <img [src]="displayImageUrl(previewImageUrl())" alt="Imagem ampliada" />
+        <div class="image-actions">
+          <button type="button" class="btn-close-image" (click)="openExternalImage(previewImageUrl())">Abrir em nova aba</button>
+          <button type="button" class="btn-close-image" (click)="closeImagePreview()">Fechar</button>
+        </div>
+      </div>
+    </div>
+  }
+
+</div>

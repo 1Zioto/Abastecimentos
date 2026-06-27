@@ -1,7 +1,8 @@
 // src/app/core/services/api.service.ts
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { EMPTY, Observable } from 'rxjs';
+import { expand, map, reduce } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
 import { AuthService } from './auth.service';
 import {
@@ -9,7 +10,8 @@ import {
   ValorCombustivel, Proprietario, Veiculo, Motorista,
   Usuario, DashboardData, PaginatedResponse, EncerranteBomba, DespesaAvulsa,
   BalancetePrivadoData, TanqueHistoricoData, AbastecimentoAuditoriaData,
-  GraficosGerenciaisData
+  GraficosGerenciaisData, ExtratoBancario, ConciliacaoBancariaResumo,
+  ConciliacaoSugestaoGrupo, ConciliacaoBaixaItem
 } from '../../shared/models';
 
 @Injectable({ providedIn: 'root' })
@@ -35,6 +37,14 @@ export class ApiService {
         ? local
         : this.auth.getGaragem();
     return { ...rest, local: localFiltrado };
+  }
+
+  // Portal público do proprietário
+  getPortalProprietario(token: string): Observable<any> {
+    return this.http.get(this.url(`portal/${token}`));
+  }
+  gerarPortalToken(id: string, regenerar = false): Observable<any> {
+    return this.http.post(this.url(`proprietarios/${id}/portal-token`), { regenerar });
   }
 
   // Dashboard
@@ -132,6 +142,9 @@ export class ApiService {
   verificarInconsistencia(id: string): Observable<Abastecimento> {
     return this.http.post<Abastecimento>(this.url(`abastecimentos/${id}/verificar-inconsistencia`), {});
   }
+  lancarSofit(id: string, data: { trip_id?: string | null; odometro?: number | null; motorista_sofit?: string | null; data_hora?: string | null } = {}): Observable<any> {
+    return this.http.post(this.url(`abastecimentos/${id}/lancar-sofit`), data);
+  }
   deleteAbastecimento(id: string): Observable<any> {
     return this.http.delete(this.url(`abastecimentos/${id}`));
   }
@@ -153,6 +166,21 @@ export class ApiService {
   getBaixas(filters: any = {}): Observable<PaginatedResponse<BaixaAbastecimento>> {
     return this.http.get<PaginatedResponse<BaixaAbastecimento>>(this.url('baixas'), { params: this.toParams(this.withGaragem(filters)) });
   }
+  getBaixasAll(filters: any = {}): Observable<BaixaAbastecimento[]> {
+    const pageSize = 200;
+    const requestPage = (page: number) => this.getBaixas({
+      ...filters,
+      page,
+      per_page: pageSize,
+    });
+
+    return requestPage(1).pipe(
+      expand(response => response.current_page < response.last_page
+        ? requestPage(response.current_page + 1)
+        : EMPTY),
+      reduce((items, response) => [...items, ...response.data], [] as BaixaAbastecimento[]),
+    );
+  }
   createBaixa(data: any): Observable<BaixaAbastecimento> {
     return this.http.post<BaixaAbastecimento>(this.url('baixas'), data);
   }
@@ -161,6 +189,12 @@ export class ApiService {
   }
   deleteBaixa(id: string): Observable<any> {
     return this.http.delete(this.url(`baixas/${id}`));
+  }
+  updateBaixa(id: string, data: any): Observable<any> {
+    return this.http.put(this.url(`baixas/${id}`), data);
+  }
+  removerComprovanteBaixa(id: string, url: string): Observable<any> {
+    return this.http.post(this.url(`baixas/${id}/remover-comprovante`), { url });
   }
 
   // Entrada de Notas
@@ -176,6 +210,20 @@ export class ApiService {
   deleteEntradaNota(id: string): Observable<any> {
     return this.http.delete(this.url(`entrada-notas/${id}`));
   }
+  getFornecedoresEntradaNotas(local?: string): Observable<{ data: string[] }> {
+    return this.http.get<{ data: string[] }>(this.url('entrada-notas/fornecedores'), {
+      params: this.toParams({ local: local || this.auth.getGaragem() })
+    });
+  }
+  confirmarFornecedorEntradaNota(id: string): Observable<EntradaNota> {
+    return this.http.post<{ ok: boolean; entrada_nota: EntradaNota }>(this.url(`entrada-notas/${id}/confirmar-fornecedor`), {})
+      .pipe(map(res => res.entrada_nota));
+  }
+
+  baixarEntradaNota(id: string): Observable<EntradaNota> {
+    return this.http.post<{ ok: boolean; entrada_nota: EntradaNota }>(this.url(`entrada-notas/${id}/baixar`), {})
+      .pipe(map(res => res.entrada_nota));
+  }
 
   // Valores Combustível
   getValoresCombustivel(filters: any = {}): Observable<PaginatedResponse<ValorCombustivel>> {
@@ -183,6 +231,11 @@ export class ApiService {
   }
   getValorAtual(tipo: string, local?: string): Observable<ValorCombustivel> {
     return this.http.get<ValorCombustivel>(this.url(`valores-combustivel/atual/${tipo}`), {
+      params: this.toParams({ local: local || this.auth.getGaragem() })
+    });
+  }
+  getPrecoCustoAutomatico(tipo: string, local?: string): Observable<{ tipo_combustivel: string; local: string; valor: number }> {
+    return this.http.get<{ tipo_combustivel: string; local: string; valor: number }>(this.url(`abastecimentos/preco-custo-automatico/${tipo}`), {
       params: this.toParams({ local: local || this.auth.getGaragem() })
     });
   }
@@ -233,7 +286,7 @@ export class ApiService {
 
   getBalancetePrivado(filters: any = {}): Observable<BalancetePrivadoData> {
     return this.http.get<BalancetePrivadoData>(this.url('balancete-privado'), {
-      params: this.toParams(filters),
+      params: this.toParams(this.withGaragem(filters)),
     });
   }
 
@@ -316,10 +369,17 @@ export class ApiService {
   }
 
   // Uploads
-  uploadToDrive(file: File): Observable<any> {
+  uploadToDrive(file: File, destino?: string): Observable<any> {
     const fd = new FormData();
     fd.append('file', file);
+    if (destino) fd.append('destino', destino);
     return this.http.post(this.url('uploads/drive'), fd);
+  }
+  downloadCloudinaryMedia(url: string): Observable<Blob> {
+    return this.http.get(this.url('media/cloudinary'), {
+      params: this.toParams({ url }),
+      responseType: 'blob',
+    });
   }
 
   // Nova Baixa por Comprovante
@@ -327,6 +387,14 @@ export class ApiService {
     const fd = new FormData();
     fd.append('arquivo', file);
     return this.http.post(this.url('comprovantes-pagamento'), fd);
+  }
+
+  uploadComprovantesPagamento(files: File[]): Observable<any> {
+    const fd = new FormData();
+    for (const file of files) {
+      fd.append('arquivos[]', file);
+    }
+    return this.http.post(this.url('comprovantes-pagamento/lote'), fd);
   }
 
   listarComprovantes(filters: any = {}): Observable<any> {
@@ -337,8 +405,16 @@ export class ApiService {
     return this.http.patch(this.url(`comprovantes-pagamento/${id}`), data);
   }
 
+  verificarComprovantePagamento(id: string): Observable<any> {
+    return this.http.post(this.url(`comprovantes-pagamento/${id}/verificar`), {});
+  }
+
   confirmarBaixaComprovante(id: string, data: any): Observable<any> {
     return this.http.post(this.url(`comprovantes-pagamento/${id}/confirmar`), data);
+  }
+
+  confirmarBaixaComprovanteGrupo(data: any): Observable<any> {
+    return this.http.post(this.url('comprovantes-pagamento/confirmar-grupo'), data);
   }
 
   cancelarComprovante(id: string): Observable<any> {
@@ -356,6 +432,35 @@ export class ApiService {
 
   deletarAliasProprietario(id: string): Observable<any> {
     return this.http.delete(this.url(`alias-proprietarios/${id}`));
+  }
+
+  // Conciliação bancária
+  listarExtratosBancarios(filters: any = {}): Observable<{ data: ExtratoBancario[]; resumo?: ConciliacaoBancariaResumo }> {
+    return this.http.get<{ data: ExtratoBancario[]; resumo?: ConciliacaoBancariaResumo }>(this.url('conciliacao-bancaria/extratos'), { params: this.toParams(filters) });
+  }
+  importarExtratoBancario(payload: any): Observable<{ message: string; importados: number; duplicados: number }> {
+    return this.http.post<{ message: string; importados: number; duplicados: number }>(this.url('conciliacao-bancaria/extratos/importar'), payload);
+  }
+  ignorarExtratoBancario(id: string): Observable<{ message: string; status: string }> {
+    return this.http.post<{ message: string; status: string }>(this.url(`conciliacao-bancaria/extratos/${id}/ignorar`), {});
+  }
+  sugestoesExtratoBancario(id: string, dias = 10): Observable<{ data: ConciliacaoSugestaoGrupo[] }> {
+    return this.http.get<{ data: ConciliacaoSugestaoGrupo[] }>(this.url(`conciliacao-bancaria/extratos/${id}/sugestoes`), { params: this.toParams({ dias }) });
+  }
+  detalhesExtratoBancario(id: string): Observable<{ extrato: ExtratoBancario; baixas: ConciliacaoBaixaItem[] }> {
+    return this.http.get<{ extrato: ExtratoBancario; baixas: ConciliacaoBaixaItem[] }>(this.url(`conciliacao-bancaria/extratos/${id}/detalhes`));
+  }
+  conciliarExtratoBancario(id: string, ids_baixa: string[]): Observable<{ message: string; soma_baixas: number; diferenca: number; aviso: string | null }> {
+    return this.http.post<{ message: string; soma_baixas: number; diferenca: number; aviso: string | null }>(this.url(`conciliacao-bancaria/extratos/${id}/conciliar`), { ids_baixa });
+  }
+  desconciliarExtratoBancario(id: string): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(this.url(`conciliacao-bancaria/extratos/${id}/desconciliar`), {});
+  }
+  excluirExtratoBancario(id: string): Observable<any> {
+    return this.http.delete(this.url(`conciliacao-bancaria/extratos/${id}`));
+  }
+  baixasDisponiveisConciliacao(filters: any = {}): Observable<{ data: ConciliacaoBaixaItem[] }> {
+    return this.http.get<{ data: ConciliacaoBaixaItem[] }>(this.url('conciliacao-bancaria/baixas-disponiveis'), { params: this.toParams(filters) });
   }
 
   // API Keys (admin)

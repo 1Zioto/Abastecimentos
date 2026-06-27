@@ -1,7 +1,7 @@
 // src/app/features/abastecimentos/form/abastecimento-form.component.ts
 import { Component, OnInit, inject, signal, Input, computed } from '@angular/core';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
@@ -19,7 +19,7 @@ import { OcrCheck, OcrVerificationResult, OcrVerifierService } from '../../../co
       <div class="page-header">
         <div>
           <a routerLink="/abastecimentos" class="back-link">← Abastecimentos</a>
-          <h1>{{ isSofitMode() ? 'Lançar no Sofit' : (isEdit() ? 'Editar Abastecimento' : 'Novo Abastecimento') }}</h1>
+          <h1>{{ isEdit() ? 'Editar Abastecimento' : 'Novo Abastecimento' }}</h1>
         </div>
       </div>
 
@@ -126,17 +126,6 @@ import { OcrCheck, OcrVerificationResult, OcrVerifierService } from '../../../co
             }
           </div>
 
-          @if (isSofitMode()) {
-            <div class="field">
-              <label>VGM vinculado</label>
-              <input
-                type="text"
-                formControlName="vgm_vinculado"
-                placeholder="Informe o VGM vinculado"
-              />
-            </div>
-          }
-
           <!-- Local -->
           <div class="field">
             <label>Local <span class="req">*</span></label>
@@ -160,7 +149,7 @@ import { OcrCheck, OcrVerificationResult, OcrVerifierService } from '../../../co
 
           <!-- Valor por Litro (somente leitura) -->
           <div class="field">
-            <label>Valor por Litro <span class="badge-info">Tabela</span></label>
+            <label>Valor por Litro <span class="badge-info">{{ proprietarioSelecionadoUsaPrecoCusto() ? 'Custo' : 'Tabela' }}</span></label>
             <input type="number" formControlName="valor_por_litro" readonly class="readonly-field" step="0.001" />
           </div>
 
@@ -293,9 +282,9 @@ import { OcrCheck, OcrVerificationResult, OcrVerifierService } from '../../../co
           <a routerLink="/abastecimentos" class="btn-cancel">Cancelar</a>
           <button type="submit" class="btn-primary" [disabled]="saving() || uploadingBomba()">
             @if (saving()) {
-              <span class="spinner"></span> {{ isSofitMode() ? 'Preparando...' : 'Salvando...' }}
+              <span class="spinner"></span> Salvando...
             } @else {
-              {{ isSofitMode() ? 'Lançar no sistema' : (isEdit() ? 'Salvar Alterações' : 'Registrar Abastecimento') }}
+              {{ isEdit() ? 'Salvar Alterações' : 'Registrar Abastecimento' }}
             }
           </button>
         </div>
@@ -395,7 +384,7 @@ import { OcrCheck, OcrVerificationResult, OcrVerifierService } from '../../../co
     .page-header { margin-bottom: 24px; }
     .back-link { font-size: 12px; color: #38bdf8; text-decoration: none; display: block; margin-bottom: 6px; }
     .back-link:hover { text-decoration: underline; }
-    .page-header h1 { font-size: 24px; font-weight: 700; color: #111827; margin: 0; }
+    .page-header h1 { font-size: 24px; font-weight: 700; color: #f8fafc; margin: 0; }
 
     .form-card {
       background: #0d1427;
@@ -697,7 +686,6 @@ export class AbastecimentoFormComponent implements OnInit {
   private fb = inject(FormBuilder);
   private api = inject(ApiService);
   private router = inject(Router);
-  private route = inject(ActivatedRoute);
   private toastr = inject(ToastrService);
   private auth = inject(AuthService);
   private ocrVerifier = inject(OcrVerifierService);
@@ -713,7 +701,6 @@ export class AbastecimentoFormComponent implements OnInit {
   ocrFotoOdometro = signal<OcrVerificationResult | null>(null);
   ocrBomba = signal<OcrVerificationResult | null>(null);
   isEdit = signal(false);
-  isSofitMode = signal(false);
   proprietarios = signal<Proprietario[]>([]);
   veiculos = signal<Veiculo[]>([]);
   motoristas = signal<Motorista[]>([]);
@@ -798,11 +785,9 @@ export class AbastecimentoFormComponent implements OnInit {
     bomba:             ['', Validators.required],
     status:            ['Pendente', Validators.required],
     observacao:        [''],
-    vgm_vinculado:     [''],
   });
 
   ngOnInit() {
-    this.isSofitMode.set(this.route.snapshot.routeConfig?.path === 'lancar-sofit');
     if (!this.id && !this.auth.canCreateOperationalRecords()) {
       this.toastr.error('Perfil somente visualização: sem permissão para criar abastecimentos');
       this.router.navigate(['/abastecimentos']);
@@ -927,6 +912,7 @@ export class AbastecimentoFormComponent implements OnInit {
     this.motoristaBusca.set('');
     this.ultimoOdometroReferencia.set(null);
     this.form.patchValue({ odometro: null });
+    this.onCombustivelChange();
   }
 
   onVeiculoChange() {
@@ -966,6 +952,15 @@ export class AbastecimentoFormComponent implements OnInit {
     return flag === true || flag === 1 || flag === '1' || String(flag).toLowerCase() === 'true';
   }
 
+  proprietarioSelecionadoUsaPrecoCusto() {
+    const raw = this.form.getRawValue();
+    const veiculo = this.veiculos().find(v => v.id_veiculo === raw.id_veiculo);
+    const idProprietario = veiculo?.id_proprietario || raw.id_proprietario;
+    const proprietario = veiculo?.proprietario || this.proprietarios().find(p => p.id_proprietario === idProprietario);
+    const flag = (proprietario as any)?.preco_custo_automatico;
+    return flag === true || flag === 1 || flag === '1' || String(flag).toLowerCase() === 'true';
+  }
+
   private odometroEstaPreenchido(valor: unknown) {
     return valor !== null && valor !== undefined && String(valor).trim() !== '';
   }
@@ -974,6 +969,24 @@ export class AbastecimentoFormComponent implements OnInit {
     const tipo = this.form.value.tipo_combustivel;
     if (!tipo || this.isEdit()) return;
     const local = this.form.getRawValue().local || this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz';
+
+    if (this.proprietarioSelecionadoUsaPrecoCusto()) {
+      this.api.getPrecoCustoAutomatico(tipo, local).subscribe({
+        next: v => {
+          this.form.patchValue({ valor_por_litro: v?.valor ?? 0 } as any);
+          this.calcTotal();
+        },
+        error: (err) => {
+          this.form.patchValue({ valor_por_litro: 0 } as any);
+          this.calcTotal();
+          const msg = err?.error?.errors?.valor_por_litro?.[0]
+            ?? `Não foi possível calcular o preço de custo automático para ${tipo} em ${local}.`;
+          this.toastr.warning(msg);
+        }
+      });
+      return;
+    }
+
     this.api.getValorAtual(tipo, local).subscribe({
       next: v => {
         if (v) {
@@ -1085,11 +1098,6 @@ export class AbastecimentoFormComponent implements OnInit {
     this.saving.set(true);
 
     const raw = this.form.getRawValue() as any;
-    if (this.isSofitMode()) {
-      this.saving.set(false);
-      this.toastr.info('Tela preparada. A integração com o Sofit será conectada na próxima etapa.');
-      return;
-    }
 
     const payload = { ...raw, frentista: this.auth.currentUser()?.nome ?? raw.frentista };
 
@@ -1331,8 +1339,16 @@ export class AbastecimentoFormComponent implements OnInit {
 
   resolveImageUrl(url?: string | null): string | null {
     if (!url) return null;
-    const normalized = String(url).trim();
+    let normalized = String(url).trim();
     if (!normalized) return null;
+
+    if (normalized.includes('drive.google.com/uc?id=')) {
+      const match = normalized.match(/id=([^&]+)/);
+      if (match && match[1]) {
+        normalized = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+      }
+    }
+
     if (
       normalized.startsWith('http://') ||
       normalized.startsWith('https://') ||

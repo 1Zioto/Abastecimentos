@@ -14,6 +14,16 @@ export const routes: Routes = [
     loadComponent: () => import('./features/auth/garagem/garagem.component').then(m => m.GaragemComponent)
   },
   {
+    // Portal público do proprietário (acesso por link com token, sem login)
+    path: 'portal/:token',
+    loadComponent: () => import('./features/portal-proprietario/portal-proprietario.component').then(m => m.PortalProprietarioComponent)
+  },
+  {
+    // Política de privacidade externa (acessível sem login)
+    path: 'politica-privacidade',
+    loadComponent: () => import('./features/politica-privacidade/politica-privacidade.component').then(m => m.PoliticaPrivacidadeComponent)
+  },
+  {
     path: '',
     loadComponent: () => import('./layout/shell/shell.component').then(m => m.ShellComponent),
     canActivate: [authGuard, garagemGuard],
@@ -39,7 +49,7 @@ export const routes: Routes = [
       },
       {
         path: 'lancar-sofit',
-        loadComponent: () => import('./features/abastecimentos/form/abastecimento-form.component').then(m => m.AbastecimentoFormComponent)
+        loadComponent: () => import('./features/lancar-sofit/lancar-sofit.component').then(m => m.LancarSofitComponent)
       },
       {
         path: 'abastecimentos/:id/editar',
@@ -79,6 +89,11 @@ export const routes: Routes = [
         path: 'despesas-avulsas',
         canActivate: [adminGuard],
         loadComponent: () => import('./features/despesas-avulsas/despesas-avulsas.component').then(m => m.DespesasAvulsasComponent)
+      },
+      {
+        path: 'conciliacao-bancaria',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/conciliacao-bancaria/conciliacao-bancaria.component').then(m => m.ConciliacaoBancariaComponent)
       },
       {
         path: 'proprietarios',

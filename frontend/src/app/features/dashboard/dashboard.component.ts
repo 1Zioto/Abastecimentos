@@ -55,6 +55,34 @@ interface BeforeInstallPromptEvent extends Event {
           </section>
         }
 
+        @if (alertaEmAberto(d).length > 0) {
+          <section class="aberto-alert">
+            <div class="aberto-alert-header">
+              <span class="aberto-alert-icon">💸</span>
+              <div>
+                <h3>Valores em aberto há mais de 30 dias</h3>
+                <p>{{ alertaEmAberto(d).length }} cliente(s) · total
+                  <strong>{{ totalEmAberto(d) | currency:'BRL':'symbol':'1.2-2' }}</strong>
+                </p>
+              </div>
+              <button type="button" class="aberto-toggle" (click)="showAbertoList.set(!showAbertoList())">
+                {{ showAbertoList() ? 'Ocultar' : 'Ver clientes' }}
+              </button>
+            </div>
+            @if (showAbertoList()) {
+              <div class="aberto-list">
+                @for (c of alertaEmAberto(d); track c.id_proprietario) {
+                  <div class="aberto-item">
+                    <span class="aberto-nome">{{ c.nome_proprietario }}</span>
+                    <span class="aberto-meta">{{ c.total }} abast. · mais antigo há {{ c.dias_mais_antigo }} dias ({{ c.mais_antigo | date:'dd/MM/yyyy' }})</span>
+                    <span class="aberto-valor">{{ c.valor | currency:'BRL':'symbol':'1.2-2' }}</span>
+                  </div>
+                }
+              </div>
+            }
+          </section>
+        }
+
         <section class="kpi-board">
           <div class="kpi-group group-period">
             <div class="kpi-group-title">
@@ -75,6 +103,22 @@ interface BeforeInstallPromptEvent extends Event {
                 <div class="kpi-content">
                   <span class="kpi-value">{{ kpiValorVendido(d) | currency:'BRL':'symbol':'1.2-2' }}</span>
                   <span class="kpi-label">Valor Total Vendido</span>
+                </div>
+              </article>
+
+              <article class="kpi-card">
+                <div class="kpi-icon icon-buy">🛢️</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiLitrosComprado(d) | number:'1.2-2' }} L</span>
+                  <span class="kpi-label">Quantidade Total Comprada</span>
+                </div>
+              </article>
+
+              <article class="kpi-card">
+                <div class="kpi-icon icon-success">⛽</div>
+                <div class="kpi-content">
+                  <span class="kpi-value">{{ kpiLitrosVendido(d) | number:'1.2-2' }} L</span>
+                  <span class="kpi-label">Quantidade Total Vendida</span>
                 </div>
               </article>
             </div>
@@ -497,6 +541,34 @@ interface BeforeInstallPromptEvent extends Event {
       white-space: nowrap;
     }
 
+    .aberto-alert {
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-left: 5px solid #DC2626;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+    .aberto-alert-header { display: flex; align-items: center; gap: 14px; }
+    .aberto-alert-icon { font-size: 26px; }
+    .aberto-alert-header h3 { margin: 0; font-size: 15px; color: #7F1D1D; }
+    .aberto-alert-header p { margin: 3px 0 0; font-size: 12px; color: #991B1B; }
+    .aberto-alert-header > div { flex: 1; }
+    .aberto-toggle {
+      background: #DC2626; border: none; color: #fff; border-radius: 8px;
+      padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+    }
+    .aberto-toggle:hover { background: #B91C1C; }
+    .aberto-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow: auto; }
+    .aberto-item {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      background: #fff; border: 1px solid #FECACA; border-radius: 10px; padding: 9px 12px;
+    }
+    .aberto-nome { font-weight: 700; color: #111827; font-size: 13px; flex: 1; min-width: 140px; }
+    .aberto-meta { color: #6B7280; font-size: 11px; }
+    .aberto-valor { color: #DC2626; font-weight: 800; font-size: 14px; margin-left: auto; }
+
     .inconsistency-log {
       display: flex;
       align-items: center;
@@ -918,13 +990,14 @@ interface BeforeInstallPromptEvent extends Event {
       display: flex;
       align-items: center;
       gap: 12px;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
 
     .kpi-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 25px rgba(37, 99, 235, 0.08);
+      border-color: rgba(37, 99, 235, 0.25);
     }
 
     .kpi-icon {
@@ -936,15 +1009,16 @@ interface BeforeInstallPromptEvent extends Event {
       justify-content: center;
       font-size: 20px;
       background: #F1F5F9;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
     }
 
-    .icon-primary { background: #FEF3C7; }
-    .icon-success { background: #DCFCE7; }
-    .icon-info { background: #FEE2E2; }
-    .icon-pending { background: #DBEAFE; }
-    .icon-liters { background: #E0F2FE; }
-    .icon-tank { background: #E0F2FE; }
-    .icon-buy { background: #FFEDD5; }
+    .icon-primary { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; }
+    .icon-success { background: linear-gradient(135deg, #dcfce7, #bbf7d0); color: #15803d; }
+    .icon-info { background: linear-gradient(135deg, #fee2e2, #fecaca); color: #991b1b; }
+    .icon-pending { background: linear-gradient(135deg, #dbeafe, #bfdbfe); color: #1d4ed8; }
+    .icon-liters { background: linear-gradient(135deg, #e0f2fe, #bae6fd); color: #0369a1; }
+    .icon-tank { background: linear-gradient(135deg, #e0f2fe, #bae6fd); color: #0369a1; }
+    .icon-buy { background: linear-gradient(135deg, #ffedd5, #fed7aa); color: #c2410c; }
 
     .tank-kpi {
       align-items: center;
@@ -977,6 +1051,41 @@ interface BeforeInstallPromptEvent extends Event {
       background: linear-gradient(180deg, #F8CD63, #C9770D);
       border-top: 2px solid #F8DD85;
       transition: height 0.2s ease;
+    }
+
+    .mini-liquid::before {
+      content: "";
+      position: absolute;
+      width: 140px;
+      height: 140px;
+      background: rgba(255, 255, 255, 0.35);
+      top: -132px;
+      left: 50%;
+      margin-left: -70px;
+      border-radius: 43%;
+      animation: wave-rot 6s infinite linear;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .mini-liquid::after {
+      content: "";
+      position: absolute;
+      width: 144px;
+      height: 144px;
+      background: rgba(254, 243, 199, 0.15);
+      top: -134px;
+      left: 50%;
+      margin-left: -72px;
+      border-radius: 40%;
+      animation: wave-rot 10s infinite linear;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    @keyframes wave-rot {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
 
     .mini-line {
@@ -1148,10 +1257,10 @@ interface BeforeInstallPromptEvent extends Event {
       opacity: 0.9;
     }
 
-    .bar-comprado { background: #2563EB; }
-    .bar-vendido { background: #22C55E; }
-    .bar-pendente { background: #F59E0B; }
-    .bar-pago { background: #16A34A; }
+    .bar-comprado { background: linear-gradient(180deg, #3b82f6, #2563eb); }
+    .bar-vendido { background: linear-gradient(180deg, #4ade80, #22c55e); }
+    .bar-pendente { background: linear-gradient(180deg, #fbbf24, #d97706); }
+    .bar-pago { background: linear-gradient(180deg, #4ade80, #16a34a); }
 
     .bar-value {
       position: absolute;
@@ -1333,12 +1442,18 @@ interface BeforeInstallPromptEvent extends Event {
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      gap: 8px;
+      gap: 12px;
       color: #9CA3AF;
       text-align: center;
-      border: 1px dashed #E5E7EB;
-      border-radius: 12px;
-      background: #FAFAFA;
+      border: 1px dashed #D1D5DB;
+      border-radius: 16px;
+      background: #F9FAFB;
+      transition: border-color 0.2s ease, background-color 0.2s ease;
+      padding: 20px;
+    }
+    .empty-state:hover {
+      border-color: #93C5FD;
+      background-color: #F8FAFC;
     }
     .empty-state small {
       color: #9CA3AF;
@@ -1352,8 +1467,14 @@ interface BeforeInstallPromptEvent extends Event {
     }
 
     .empty-icon {
-      font-size: 26px;
+      font-size: 32px;
+      filter: grayscale(0.2);
+      animation: pulse-icon 2.5s infinite ease-in-out;
       line-height: 1;
+    }
+    @keyframes pulse-icon {
+      0%, 100% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 1; }
     }
 
     .loading-state {
@@ -1431,6 +1552,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
   inconsistencias = signal<Abastecimento[]>([]);
   loadingInconsistencias = signal(false);
   showInconsistenciasModal = signal(false);
+  showAbertoList = signal(false);
+
+  alertaEmAberto(d: DashboardData): any[] {
+    return (d as any)?.alerta_em_aberto_30_dias ?? [];
+  }
+
+  totalEmAberto(d: DashboardData): number {
+    return this.alertaEmAberto(d).reduce((s, c) => s + Number(c?.valor ?? 0), 0);
+  }
+
   previewImageUrl = signal('');
   selectedMesRef = signal<string | null>(null);
   selectedStatus = signal<'Pendente' | 'Pago' | null>(null);
@@ -1528,8 +1659,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   resolveImageUrl(url?: string | null): string | null {
     if (!url) return null;
-    const normalized = String(url).trim();
+    let normalized = String(url).trim();
     if (!normalized) return null;
+
+    if (normalized.includes('drive.google.com/uc?id=')) {
+      const match = normalized.match(/id=([^&]+)/);
+      if (match && match[1]) {
+        normalized = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+      }
+    }
+
     if (
       normalized.startsWith('http://') ||
       normalized.startsWith('https://') ||
@@ -1756,6 +1895,34 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (totalApi > 0) return totalApi;
 
     return (d?.comparativo_12_meses ?? []).reduce((sum, item) => sum + Number(item.comprado_valor ?? 0), 0);
+  }
+
+  kpiLitrosComprado(d: DashboardData): number {
+    const selectedMes = this.selectedMesRef();
+    if (selectedMes) {
+      return (d?.comparativo_12_meses ?? [])
+        .filter((item) => item.mes_ref === selectedMes)
+        .reduce((sum, item) => sum + this.getCompradoLitros(item), 0);
+    }
+
+    const totalApi = Number(d?.totais?.combustivel_comprado_litros ?? 0);
+    if (totalApi > 0) return totalApi;
+
+    return (d?.comparativo_12_meses ?? []).reduce((sum, item) => sum + this.getCompradoLitros(item), 0);
+  }
+
+  kpiLitrosVendido(d: DashboardData): number {
+    const selectedMes = this.selectedMesRef();
+    if (selectedMes) {
+      return (d?.comparativo_12_meses ?? [])
+        .filter((item) => item.mes_ref === selectedMes)
+        .reduce((sum, item) => sum + this.getVendidoLitros(item), 0);
+    }
+
+    const totalApi = Number(d?.totais?.combustivel_vendido_litros ?? d?.totais?.litros ?? 0);
+    if (totalApi > 0) return totalApi;
+
+    return (d?.comparativo_12_meses ?? []).reduce((sum, item) => sum + this.getVendidoLitros(item), 0);
   }
 
   kpiValorVendidoHoje(d: DashboardData): number {

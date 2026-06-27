@@ -25,7 +25,8 @@ import { Proprietario, Veiculo } from '../../shared/models';
             <span>Buscar veículo</span>
             <input
               type="text"
-              [(ngModel)]="veiculoBusca"
+              [ngModel]="veiculoBusca()"
+              (ngModelChange)="veiculoBusca.set($event)"
               placeholder="Digite placa, marca ou modelo..."
             />
           </label>
@@ -34,7 +35,8 @@ import { Proprietario, Veiculo } from '../../shared/models';
             <span>Novo proprietário</span>
             <input
               type="text"
-              [(ngModel)]="proprietarioBusca"
+              [ngModel]="proprietarioBusca()"
+              (ngModelChange)="proprietarioBusca.set($event)"
               placeholder="Digite o novo proprietário..."
             />
           </label>
@@ -156,13 +158,13 @@ export class TransferenciaVeiculoComponent implements OnInit {
   novoProprietario = signal<Proprietario | null>(null);
   salvando = signal(false);
 
-  veiculoBusca = '';
-  proprietarioBusca = '';
+  veiculoBusca = signal('');
+  proprietarioBusca = signal('');
   dataTransferencia = new Date().toISOString().slice(0, 10);
   observacao = '';
 
   veiculosFiltrados = computed(() => {
-    const term = this.normalizar(this.veiculoBusca);
+    const term = this.normalizar(this.veiculoBusca());
     const list = this.veiculos();
     if (!term) return list.slice(0, 80);
     return list.filter(v =>
@@ -174,7 +176,7 @@ export class TransferenciaVeiculoComponent implements OnInit {
   });
 
   proprietariosFiltrados = computed(() => {
-    const term = this.normalizar(this.proprietarioBusca);
+    const term = this.normalizar(this.proprietarioBusca());
     const list = this.proprietarios();
     if (!term) return list.slice(0, 80);
     return list.filter(p =>
@@ -191,12 +193,12 @@ export class TransferenciaVeiculoComponent implements OnInit {
 
   selecionarVeiculo(v: Veiculo) {
     this.veiculoSelecionado.set(v);
-    this.veiculoBusca = `${v.placa} ${v.modelo || v.marca || ''}`.trim();
+    this.veiculoBusca.set(`${v.placa} ${v.modelo || v.marca || ''}`.trim());
   }
 
   selecionarProprietario(p: Proprietario) {
     this.novoProprietario.set(p);
-    this.proprietarioBusca = p.nome;
+    this.proprietarioBusca.set(p.nome);
   }
 
   podeTransferir() {
@@ -233,6 +235,6 @@ export class TransferenciaVeiculoComponent implements OnInit {
   }
 
   private normalizar(value: unknown) {
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   }
 }

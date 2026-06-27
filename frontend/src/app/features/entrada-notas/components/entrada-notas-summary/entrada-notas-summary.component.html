@@ -1,0 +1,49 @@
+<!-- Cards de Fornecedores -->
+@if (fornecedoresResumo.length > 0) {
+  <div class="suppliers-grid">
+    @for (f of fornecedoresResumo; track f.nome) {
+      <div class="supplier-card">
+        <div class="supplier-info">
+          <span class="supplier-name">{{ f.nome }}</span>
+          <span class="supplier-count">{{ f.notas }} nota(s)</span>
+        </div>
+        <div class="supplier-stats">
+          <div class="stat">
+            <span class="stat-label">Volume</span>
+            <span class="stat-value">{{ f.litros | number:'1.2-2' }} L</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Valor Fiscal</span>
+            <span class="stat-value val-green">{{ f.valor | currency:'BRL':'symbol':'1.2-2' }}</span>
+          </div>
+        </div>
+      </div>
+    }
+  </div>
+}
+
+<!-- Totais rápidos -->
+@if (notasLength > 0) {
+  <div class="summary-row">
+    <div class="summary-item">
+      <span class="s-label">Registros</span>
+      <span class="s-value">{{ notasLength }}</span>
+    </div>
+    <div class="summary-item">
+      <span class="s-label">Total Litros</span>
+      <span class="s-value blue">{{ totalLitros | number:'1.2-2' }} L</span>
+    </div>
+    <div class="summary-item">
+      <span class="s-label">Valor Fiscal</span>
+      <span class="s-value green">{{ totalValor | currency:'BRL':'symbol':'1.2-2' }}</span>
+    </div>
+    <div class="summary-item">
+      <span class="s-label">Transporte</span>
+      <span class="s-value amber">{{ totalTransporte | currency:'BRL':'symbol':'1.2-2' }}</span>
+    </div>
+    <div class="summary-item">
+      <span class="s-label">Custo Final</span>
+      <span class="s-value purple">{{ totalCompraFinal | currency:'BRL':'symbol':'1.2-2' }}</span>
+    </div>
+  </div>
+}

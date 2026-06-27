@@ -7,6 +7,7 @@ import { ApiService } from '../../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Abastecimento, Proprietario } from '../../../shared/models';
 import { AuthService } from '../../../core/services/auth.service';
+import { ExcelExportService } from '../../../core/services/excel-export.service';
 
 type AbastecimentoSortField =
   | 'data_hora'
@@ -32,9 +33,14 @@ type SortDirection = 'asc' | 'desc';
           <h1>Abastecimentos</h1>
           <p>{{ pagination().total }} registros encontrados</p>
         </div>
-        @if (canCreate()) {
-          <a routerLink="/abastecimentos/novo" class="btn-primary">+ Novo Abastecimento</a>
-        }
+        <div class="header-btns">
+          <button class="btn-excel" (click)="exportExcel()" [disabled]="exporting()">
+            {{ exporting() ? 'Gerando...' : '📊 Excel' }}
+          </button>
+          @if (canCreate()) {
+            <a routerLink="/abastecimentos/novo" class="btn-primary">+ Novo Abastecimento</a>
+          }
+        </div>
       </div>
 
       <!-- Filtros -->
@@ -93,6 +99,24 @@ type SortDirection = 'asc' | 'desc';
               }
             </select>
           </div>
+          <div class="filter-field">
+            <label>Status</label>
+            <select [(ngModel)]="filters.baixa" (change)="load()">
+              <option value="">Todos</option>
+              <option value="baixado">Baixado</option>
+              <option value="pendente">Pendente</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label>Valor Total (exato)</label>
+            <input
+              type="text"
+              [(ngModel)]="filters.valor_total"
+              placeholder="Ex.: 1500 ou 1500,50"
+              inputmode="decimal"
+              (input)="load()"
+            />
+          </div>
         </div>
         <button class="btn-clear" (click)="clearFilters()">Limpar Filtros</button>
       </div>
@@ -102,6 +126,23 @@ type SortDirection = 'asc' | 'desc';
         @if (loading()) {
           <div class="loading-state"><div class="spinner-lg"></div> Carregando...</div>
         } @else {
+          <!-- Paginação (topo) -->
+          <div class="pagination pagination-top">
+            <span class="page-info">
+              Exibindo {{ pagination().from }}–{{ pagination().to }} de {{ pagination().total }}
+            </span>
+            <div class="page-btns">
+              <button [disabled]="pagination().current_page === 1"
+                      (click)="goToPage(pagination().current_page - 1)">‹</button>
+              @for (p of pages(); track p) {
+                <button [class.active]="p === pagination().current_page"
+                        (click)="goToPage(p)">{{ p }}</button>
+              }
+              <button [disabled]="pagination().current_page === pagination().last_page"
+                      (click)="goToPage(pagination().current_page + 1)">›</button>
+            </div>
+          </div>
+
           <div class="table-wrap">
             <table class="data-table">
               <thead>
@@ -220,6 +261,12 @@ type SortDirection = 'asc' | 'desc';
                         }
                         <button class="action-btn print" title="Comprovante"
                                 (click)="printComprovante(a, $event)">🖨️</button>
+                        <button class="action-btn whatsapp" title="Enviar pelo WhatsApp"
+                                (click)="compartilharWhatsapp(a, $event)">
+                          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+                            <path d="M.057 24l1.687-6.163a11.867 11.867 0 01-1.587-5.946C.16 5.335 5.495 0 12.05 0a11.817 11.817 0 018.413 3.488 11.824 11.824 0 013.48 8.414c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 01-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.86 9.86 0 001.59 5.317l-.999 3.648 3.908-1.024zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.612-.916-2.207-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                          </svg>
+                        </button>
                         @if (canResolveInconsistency() && isInconsistent(a)) {
                           <button class="action-btn verify" title="Marcar consistente"
                                   (click)="verificarInconsistencia(a, $event)">OK</button>
@@ -332,6 +379,12 @@ type SortDirection = 'asc' | 'desc';
 
             <div class="details-actions">
               <button type="button" class="btn-secondary" (click)="printComprovante(detail, $event)">Comprovante</button>
+              <button type="button" class="btn-whatsapp" (click)="compartilharWhatsapp(detail, $event)">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <path d="M.057 24l1.687-6.163a11.867 11.867 0 01-1.587-5.946C.16 5.335 5.495 0 12.05 0a11.817 11.817 0 018.413 3.488 11.824 11.824 0 013.48 8.414c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 01-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.86 9.86 0 001.59 5.317l-.999 3.648 3.908-1.024zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.612-.916-2.207-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                </svg>
+                WhatsApp
+              </button>
               @if (canResolveInconsistency() && isInconsistent(detail)) {
                 <button type="button" class="btn-secondary" (click)="verificarInconsistencia(detail, $event)">Marcar consistente</button>
               }
@@ -358,11 +411,15 @@ type SortDirection = 'asc' | 'desc';
     * { box-sizing: border-box; }
     .page { padding: 28px; font-family: 'Inter', sans-serif; color: #e2e8f0; }
     .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
     .page-header p { font-size:12px; color:#64748b; margin-top:4px; }
 
     .btn-primary { background:linear-gradient(135deg,#0ea5e9,#6366f1); border:none; border-radius:8px; padding:10px 20px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all 0.2s; }
     .btn-primary:hover { opacity:0.9; }
+    .header-btns { display:flex; gap:10px; align-items:center; }
+    .btn-excel { background:#0d1427; border:1px solid #16a34a60; border-radius:8px; padding:10px 16px; color:#4ade80; font-size:13px; font-weight:600; cursor:pointer; }
+    .btn-excel:hover { border-color:#4ade80; }
+    .btn-excel:disabled { opacity:0.5; cursor:wait; }
 
     .filters-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:18px; margin-bottom:16px; }
     .filters-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; margin-bottom:12px; }
@@ -524,10 +581,15 @@ type SortDirection = 'asc' | 'desc';
     }
     .action-btn.analyze:hover { background:#38bdf8; }
     .action-btn:disabled { opacity:0.55; cursor:wait; }
+    .action-btn.whatsapp { color:#25D366; }
+    .action-btn.whatsapp:hover { background:#25D36622; color:#25D366; }
+    .btn-whatsapp { display:inline-flex; align-items:center; gap:6px; background:#25D366; border:none; border-radius:8px; padding:8px 16px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; transition:opacity 0.2s; }
+    .btn-whatsapp:hover { opacity:0.9; }
 
     .empty-cell { text-align:center; padding:32px; color:#475569; }
 
-    .pagination { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-top:1px solid #1e2d4a; }
+    .pagination { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-top:1px solid #1e2d4a; flex-wrap:wrap; gap:10px; }
+    .pagination-top { border-top:none; border-bottom:1px solid #1e2d4a; }
     .page-info { font-size:12px; color:#64748b; }
     .page-btns { display:flex; gap:4px; }
     .page-btns button { background:#0a0f1e; border:1px solid #1e2d4a; color:#64748b; padding:4px 10px; border-radius:5px; cursor:pointer; font-size:12px; transition:all 0.2s; }
@@ -539,7 +601,7 @@ type SortDirection = 'asc' | 'desc';
     .modal { background:#0d1427; border:1px solid #1e2d4a; border-radius:14px; padding:28px; max-width:420px; width:90%; }
     .modal h3 { font-size:16px; font-weight:700; color:#f8fafc; margin:0 0 12px; }
     .modal p { font-size:13px; color:#94a3b8; margin-bottom:10px; }
-    .warning-text { color:#fbbf24 !important; }
+    .warning-text { color: #b91c1c !important; font-weight: 600; background: #fef2f2; border: 1px solid #fca5a5; padding: 8px 12px; border-radius: 8px; margin-top: 10px; display: block; }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:20px; }
     .btn-cancel { background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; }
     .btn-danger { background:#dc2626; border:none; color:#fff; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-weight:600; }
@@ -548,7 +610,8 @@ type SortDirection = 'asc' | 'desc';
     .details-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
     .details-header h3 { margin:0; color:#111827; font-size:22px; }
     .details-header p { margin:4px 0 0; color:#64748b; font-size:12px; }
-    .btn-icon-close { width:34px; height:34px; border-radius:8px; border:1px solid #cbd5e1; background:#fff; color:#334155; cursor:pointer; font-size:20px; }
+    .btn-icon-close { width:34px; height:34px; border-radius:8px; border:1px solid #cbd5e1; background:#fff; color:#334155; cursor:pointer; font-size:20px; transition: all 0.2s ease; }
+    .btn-icon-close:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
     .details-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
     .details-grid div, .details-note { background:#f8fafc; border:1px solid #dbe4f0; border-radius:10px; padding:10px 12px; }
     .details-grid span, .details-note span { display:block; color:#64748b; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px; }
@@ -556,12 +619,15 @@ type SortDirection = 'asc' | 'desc';
     .details-note { margin-top:10px; }
     .details-note p { margin:0; color:#334155; font-size:13px; }
     .details-images { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
-    .details-images button { width:132px; border:1px solid #dbe4f0; background:#fff; color:#334155; border-radius:10px; padding:8px; cursor:pointer; text-align:left; }
+    .details-images button { width:132px; border:1px solid #dbe4f0; background:#fff; color:#334155; border-radius:10px; padding:8px; cursor:pointer; text-align:left; transition: all 0.2s ease; }
+    .details-images button:hover { border-color: #38bdf8; background: #f0f9ff; }
     .details-images img { width:100%; height:92px; object-fit:cover; border-radius:8px; display:block; margin-bottom:6px; }
     .details-images span { font-size:12px; color:#64748b; }
     .details-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; margin-top:18px; }
-    .btn-secondary, .btn-edit { background:#fff; border:1px solid #cbd5e1; color:#334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; text-decoration:none; }
+    .btn-secondary, .btn-edit { background:#fff; border:1px solid #cbd5e1; color:#334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; text-decoration:none; transition: all 0.2s ease; }
+    .btn-secondary:hover { border-color: #38bdf8; color: #38bdf8; }
     .btn-edit { border-color:#0ea5e9; color:#0369a1; }
+    .btn-edit:hover { background: #e0f2fe; }
     .image-overlay {
       position: fixed;
       inset: 0;
@@ -604,6 +670,43 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
   private auth = inject(AuthService);
+  private excel = inject(ExcelExportService);
+
+  exporting = signal(false);
+
+  exportExcel() {
+    this.exporting.set(true);
+    this.api.getAbastecimentos({ ...this.filters, page: 1, per_page: 5000 }).subscribe({
+      next: (r) => {
+        const rows = (r.data ?? []).map((a: any) => ({
+          'Data': a.data ? String(a.data).slice(0, 10).split('-').reverse().join('/') : '',
+          'Hora': a.data_hora ? String(a.data_hora).slice(11, 16) : '',
+          'Placa': a.veiculo?.placa ?? '',
+          'Proprietário': a.nome_proprietario || a.proprietario?.nome || '',
+          'Motorista': a.nome_motorista || a.motorista?.nome || '',
+          'Combustível': a.tipo_combustivel ?? '',
+          'Qtd (L)': Number(a.quantidade_litros ?? 0),
+          'R$/L': Number(a.valor_por_litro ?? 0),
+          'Total (R$)': Number(a.valor_total ?? 0),
+          'Hodômetro': a.odometro ?? '',
+          'Baixa': a.baixa_abastecimento ? 'Baixado' : 'Pendente',
+          'Local': a.local ?? '',
+          'Observação': a.observacao ?? '',
+        }));
+        if (!rows.length) {
+          this.toastr.warning('Nada para exportar com os filtros atuais.');
+        } else {
+          this.excel.export(`abastecimentos_${new Date().toISOString().slice(0, 10)}`, rows, 'Abastecimentos');
+          this.toastr.success(`${rows.length} registro(s) exportado(s).`);
+        }
+        this.exporting.set(false);
+      },
+      error: () => {
+        this.toastr.error('Erro ao exportar.');
+        this.exporting.set(false);
+      },
+    });
+  }
 
   abastecimentos = signal<Abastecimento[]>([]);
   proprietarios = signal<Proprietario[]>([]);
@@ -625,6 +728,8 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
     data_inicio: '',
     data_fim: '',
     tipo_combustivel: '',
+    baixa: '',
+    valor_total: '',
     page: 1,
     sort_by: 'data_hora' as AbastecimentoSortField,
     sort_dir: 'desc' as SortDirection,
@@ -684,7 +789,7 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
 
   load() {
     this.loading.set(true);
-    this.api.getAbastecimentos({ ...this.filters, per_page: 20 }).subscribe({
+    this.api.getAbastecimentos({ ...this.filters, per_page: 200 }).subscribe({
       next: r => {
         this.abastecimentos.set(r.data);
         this.pagination.set({ current_page: r.current_page, last_page: r.last_page, per_page: r.per_page, total: r.total, from: r.from ?? 0, to: r.to ?? 0 });
@@ -697,7 +802,7 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
   clearFilters() {
     const sort_by = this.filters.sort_by;
     const sort_dir = this.filters.sort_dir;
-    this.filters = { id_proprietario:'',placa:'',data_inicio:'',data_fim:'',tipo_combustivel:'',page:1,sort_by,sort_dir };
+    this.filters = { id_proprietario:'',placa:'',data_inicio:'',data_fim:'',tipo_combustivel:'',baixa:'',valor_total:'',page:1,sort_by,sort_dir };
     this.proprietarioBusca.set('');
     this.load();
   }
@@ -723,7 +828,7 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
   }
 
   private normalizeText(value: unknown): string {
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   }
 
   onProprietarioBuscaChange(event: Event) {
@@ -803,8 +908,16 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
 
   resolveImageUrl(url?: string | null): string | null {
     if (!url) return null;
-    const normalized = String(url).trim();
+    let normalized = String(url).trim();
     if (!normalized) return null;
+
+    if (normalized.includes('drive.google.com/uc?id=')) {
+      const match = normalized.match(/id=([^&]+)/);
+      if (match && match[1]) {
+        normalized = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+      }
+    }
+
     if (
       normalized.startsWith('http://') ||
       normalized.startsWith('https://') ||
@@ -866,6 +979,82 @@ export class AbastecimentosListComponent implements OnInit, OnDestroy {
         this.toastr.error(msg || 'Não foi possível exportar o comprovante em PDF.');
       },
     });
+  }
+
+  // ── Compartilhar pelo WhatsApp (mesma mensagem do APK) ──────────
+  compartilharWhatsapp(a: Abastecimento, event?: Event) {
+    event?.stopPropagation();
+
+    const telefone = this.telefoneWhatsapp(this.resolverCelular(a));
+    const dataHora = this.dataHoraWhatsapp(a.data_hora ?? a.data);
+    const motorista = a.nome_motorista || a.motorista?.nome || '-';
+    const placa = a.veiculo?.placa || a.placa1 || '-';
+    const odometro = (a.odometro === null || a.odometro === undefined)
+      ? '-'
+      : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(a.odometro);
+    const litros = this.numeroWhatsapp(a.quantidade_litros);
+    const valorBase = (a.valor_total !== null && a.valor_total !== undefined)
+      ? a.valor_total
+      : Math.floor(((a.valor_por_litro || 0) * (a.quantidade_litros || 0)) + 0.000001);
+    const valorTotal = this.numeroWhatsapp(valorBase);
+
+    const msg = [
+      'Prezado',
+      'Segue os dados do abastecimento.',
+      `Data/Hora: ${dataHora}`,
+      `Motorista: ${motorista}`,
+      `Placa: ${placa}`,
+      `KM do Veiculo: ${odometro}`,
+      `Quantidade abastecida: ${litros} Litros`,
+      `*Valor Total:${valorTotal}*`,
+    ].join('\n');
+
+    if (!telefone) {
+      this.toastr.warning('Proprietário sem telefone cadastrado. Abrindo sem destinatário.');
+    }
+
+    const url = telefone
+      ? `https://wa.me/${telefone}?text=${encodeURIComponent(msg)}`
+      : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(url, '_blank');
+  }
+
+  private resolverCelular(a: Abastecimento): string | null {
+    const direto = a.proprietario?.celular;
+    if (direto) return direto;
+
+    const lista = this.proprietarios();
+    let p = a.id_proprietario
+      ? lista.find(x => x.id_proprietario === a.id_proprietario)
+      : undefined;
+    if (!p) {
+      const nome = (a.nome_proprietario || a.proprietario?.nome || '').trim().toLowerCase();
+      if (nome) p = lista.find(x => (x.nome || '').trim().toLowerCase() === nome);
+    }
+    return p?.celular ?? null;
+  }
+
+  private telefoneWhatsapp(raw?: string | null): string | null {
+    const digits = (raw ?? '').replace(/\D/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('55')) return digits;
+    if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+    return digits;
+  }
+
+  private dataHoraWhatsapp(iso?: string | null): string {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const two = (n: number) => String(n).padStart(2, '0');
+    return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  }
+
+  private numeroWhatsapp(value?: number | null): string {
+    if (value === null || value === undefined) return '0';
+    const rounded = Math.round(value);
+    if (Math.abs(value - rounded) < 0.001) return String(rounded);
+    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
   }
 
   private filenameFromDisposition(disposition: string | null): string | null {

@@ -1,0 +1,49 @@
+<div class="filters-card">
+  <form [formGroup]="filterForm" class="filters-grid">
+    <div class="filter-field">
+      <label>Tipo</label>
+      <select formControlName="tipo">
+        <option value="">Todos</option>
+        @for (t of tiposCombustivel; track t) {
+          <option [value]="t">{{ t }}</option>
+        }
+      </select>
+    </div>
+    <div class="filter-field">
+      <label>Número da NF</label>
+      <input
+        type="text"
+        formControlName="numero_nota_fiscal"
+        placeholder="Ex.: 1673273"
+      />
+    </div>
+    <div class="filter-field">
+      <label>Data Início</label>
+      <div class="date-row">
+        <input #dataInicioInput type="date" formControlName="data_inicio" />
+        <button type="button" class="btn-date" (click)="openDatePicker(dataInicioInput)">📅</button>
+      </div>
+    </div>
+    <div class="filter-field">
+      <label>Data Fim</label>
+      <div class="date-row">
+        <input #dataFimInput type="date" formControlName="data_fim" />
+        <button type="button" class="btn-date" (click)="openDatePicker(dataFimInput)">📅</button>
+      </div>
+    </div>
+    <div class="filter-field">
+      <label>Fornecedor</label>
+      <input
+        type="text"
+        formControlName="fornecedor"
+        placeholder="Todos"
+        list="fornecedores-filtro-list"
+      />
+      <datalist id="fornecedores-filtro-list">
+        @for (f of fornecedoresDisponiveis; track f) {
+          <option [value]="f"></option>
+        }
+      </datalist>
+    </div>
+  </form>
+</div>

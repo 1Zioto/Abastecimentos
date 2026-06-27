@@ -1,7 +1,7 @@
 // src/app/features/auth/login/login.component.ts
 import { Component, signal, inject } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../core/services/auth.service';
 import { ToastrService } from 'ngx-toastr';
@@ -9,7 +9,7 @@ import { ToastrService } from 'ngx-toastr';
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [ReactiveFormsModule, CommonModule],
+  imports: [ReactiveFormsModule, CommonModule, RouterLink],
   template: `
     <div class="login-page">
       <div class="login-bg">
@@ -61,6 +61,12 @@ import { ToastrService } from 'ngx-toastr';
             }
           </button>
         </form>
+
+        <div class="login-footer">
+          <a routerLink="/politica-privacidade" class="privacy-link" id="link-politica-privacidade">
+            Política de Privacidade
+          </a>
+        </div>
       </div>
     </div>
   `,
@@ -184,6 +190,21 @@ import { ToastrService } from 'ngx-toastr';
       animation: spin 0.7s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .login-footer {
+      margin-top: 24px;
+      text-align: center;
+    }
+    .privacy-link {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .privacy-link:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
   `]
 })
 export class LoginComponent {

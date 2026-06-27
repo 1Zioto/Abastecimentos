@@ -1,0 +1,11 @@
+.filters-card { background: #0d1427; border: 1px solid #1e2d4a; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+.filters-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.filter-field { display: flex; flex-direction: column; gap: 4px; }
+.filter-field label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+.filter-field input, .filter-field select { background: #0a0f1e; border: 1px solid #1e2d4a; border-radius: 7px; padding: 8px 10px; color: #e2e8f0; font-size: 12px; outline: none; }
+.filter-field input:focus, .filter-field select:focus { border-color: #0ea5e9; }
+.filter-field select option { background: #0d1427; }
+.date-row { display: flex; gap: 8px; align-items: center; }
+.date-row input { flex: 1; min-width: 0; }
+.btn-date { height: 34px; min-width: 40px; padding: 0 10px; background: #0a0f1e; border: 1px solid #1e2d4a; border-radius: 7px; color: #94a3b8; cursor: pointer; font-size: 14px; }
+.btn-date:hover { border-color: #38bdf8; color: #38bdf8; }

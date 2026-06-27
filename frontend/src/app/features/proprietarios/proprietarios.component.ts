@@ -58,6 +58,10 @@ import { LinkedEntityContext, VinculosEntidadeModalComponent } from '../../share
                     <input type="checkbox" formControlName="bloqueio_automatico" />
                     <span>Bloquear automaticamente ao exceder limite</span>
                   </label>
+                  <label class="check-field">
+                    <input type="checkbox" formControlName="preco_custo_automatico" />
+                    <span>Vender sempre a preço de custo (última nota fiscal de entrada)</span>
+                  </label>
                 </div>
               </div>
             }
@@ -100,6 +104,7 @@ import { LinkedEntityContext, VinculosEntidadeModalComponent } from '../../share
                     <button class="action-btn" (click)="$event.stopPropagation(); edit(p)">✏️</button>
                   }
                   @if (isAdmin()) {
+                    <button class="action-btn" title="Copiar link do portal do proprietário" (click)="$event.stopPropagation(); copiarLinkPortal(p)">🔗</button>
                     <button class="action-btn" [title]="p.status === 'Bloqueado' ? 'Desbloquear' : 'Bloquear'" (click)="$event.stopPropagation(); toggleBloqueio(p)">
                       {{ p.status === 'Bloqueado' ? '🔓' : '🔒' }}
                     </button>
@@ -188,6 +193,20 @@ import { LinkedEntityContext, VinculosEntidadeModalComponent } from '../../share
 export class ProprietariosComponent implements OnInit {
   private api = inject(ApiService); private toastr = inject(ToastrService); private fb = inject(FormBuilder); private auth = inject(AuthService);
   items = signal<Proprietario[]>([]); total = signal(0);
+
+  copiarLinkPortal(p: Proprietario) {
+    this.api.gerarPortalToken(p.id_proprietario).subscribe({
+      next: (r) => {
+        const link = `${window.location.origin}/portal/${r.token}`;
+        navigator.clipboard?.writeText(link)
+          .then(() => this.toastr.success(`Link do portal de ${p.nome} copiado! Envie pelo WhatsApp.`))
+          .catch(() => {
+            window.prompt('Copie o link do portal:', link);
+          });
+      },
+      error: (err) => this.toastr.error(err?.error?.message ?? 'Erro ao gerar link do portal'),
+    });
+  }
   showForm = signal(false); editItem = signal<Proprietario | null>(null); deleteTarget = signal<Proprietario | null>(null); saving = signal(false);
   linksContext = signal<LinkedEntityContext | null>(null);
   search = '';
@@ -202,6 +221,7 @@ export class ProprietariosComponent implements OnInit {
     limite_litros:[null as number | null],
     bloqueio_automatico:[false],
     alerta_limite_percentual:[80],
+    preco_custo_automatico:[false],
   });
   isAdmin() { return this.auth.isAdmin(); }
   canCreate() { return this.auth.canCreateOperationalRecords(); }
@@ -209,7 +229,7 @@ export class ProprietariosComponent implements OnInit {
   canShowForm() { return this.showForm() && (this.canEdit() || !this.editItem()); }
   ngOnInit() { this.load(); }
   load() { this.api.getProprietarios({search:this.search,per_page:100,with_limites:this.isAdmin() ? 1 : undefined}).subscribe(r=>{this.items.set(r.data);this.total.set(r.total)}); }
-  newItem() { this.editItem.set(null);this.form.reset({status:'Ativo', odometro_obrigatorio:false, bloqueio_automatico:false, alerta_limite_percentual:80});this.showForm.set(true); }
+  newItem() { this.editItem.set(null);this.form.reset({status:'Ativo', odometro_obrigatorio:false, bloqueio_automatico:false, alerta_limite_percentual:80, preco_custo_automatico:false});this.showForm.set(true); }
   edit(p:Proprietario) { this.editItem.set(p);this.form.patchValue({ ...p, odometro_obrigatorio: !!p.odometro_obrigatorio } as any);this.showForm.set(true); }
   openLinks(p: Proprietario) { this.linksContext.set({ type: 'proprietario', entity: p }); }
   cancelForm() { this.showForm.set(false);this.editItem.set(null);this.form.reset(); }
@@ -226,6 +246,7 @@ export class ProprietariosComponent implements OnInit {
       delete payload.limite_litros;
       delete payload.bloqueio_automatico;
       delete payload.alerta_limite_percentual;
+      delete payload.preco_custo_automatico;
     }
     const obs = this.editItem() ? this.api.updateProprietario(this.editItem()!.id_proprietario,payload) : this.api.createProprietario(payload);
     obs.subscribe({next:()=>{this.toastr.success('Salvo');this.cancelForm();this.load();this.saving.set(false);},error:()=>{this.toastr.error('Erro');this.saving.set(false);}});

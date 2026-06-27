@@ -14,6 +14,7 @@ export interface Proprietario {
   limite_litros?: number | null;
   bloqueio_automatico?: boolean;
   alerta_limite_percentual?: number | null;
+  preco_custo_automatico?: boolean;
   limites_resumo?: ProprietarioLimitesResumo;
 }
 
@@ -91,6 +92,12 @@ export interface Abastecimento {
   observacao?: string;
   anexo?: string;
   created_at?: string;
+  // Integração Sofit
+  sofit_id?: string | null;
+  sofit_status?: string | null;
+  sofit_retorno?: string | null;
+  sofit_trip_id?: string | null;
+  sofit_lancado_em?: string | null;
   veiculo?: Veiculo;
   motorista?: Motorista;
   proprietario?: Proprietario;
@@ -122,6 +129,12 @@ export interface EntradaNota {
   foto_nota?: string;
   tipo?: string;
   local?: string;
+  fornecedor?: string;
+  fornecedor_ia_status?: string;
+  fornecedor_ia_mensagem?: string;
+  fornecedor_ia_extraido?: string;
+  fornecedor_confirmado?: boolean;
+  paga?: boolean;
   nota_verificacao_status?: string;
   nota_verificacao_mensagem?: string;
   nota_verificacao_tipo?: string;
@@ -327,6 +340,10 @@ export interface BalanceteLocal {
   top_pendentes?: { nome_proprietario: string; valor: number }[];
   estoque_periodo_litros: number;
   saldo_a_receber?: number;
+  custo_medio_compra_litro?: number;
+  custo_vendido_estimado?: number;
+  diferenca_bruta_estimada?: number;
+  resultado_operacional_estimado?: number;
   resultado_competencia: number;
   resultado_caixa: number;
   movimento_financeiro?: BalanceteMovimentoFinanceiro;
@@ -398,4 +415,49 @@ export interface AbastecimentoAuditoriaData {
     por_tipo: Record<string, number>;
   };
   data: AbastecimentoAuditoriaItem[];
+}
+
+export interface ExtratoBancario {
+  id: string;
+  data: string;
+  descricao?: string | null;
+  valor: number;
+  tipo: 'credito' | 'debito';
+  documento?: string | null;
+  banco?: string | null;
+  local?: string | null;
+  status: 'pendente' | 'conciliado' | 'ignorado';
+  conciliado_em?: string | null;
+  conciliado_por?: string | null;
+  arquivo_origem?: string | null;
+  created_at?: string;
+}
+
+export interface ConciliacaoBancariaResumo {
+  total: number;
+  pendentes: number;
+  conciliados: number;
+  ignorados: number;
+  valor_pendente_credito: number;
+}
+
+export interface ConciliacaoBaixaItem {
+  id_baixa: string;
+  id_abastecimento: string;
+  id_proprietario?: string;
+  nome_proprietario?: string;
+  valor: number;
+  data_abastecimento?: string;
+  data_pagamento?: string;
+  forma_pagamento?: string;
+  placa1?: string;
+}
+
+export interface ConciliacaoSugestaoGrupo {
+  id_proprietario: string;
+  nome_proprietario?: string;
+  data_pagamento: string;
+  valor_total: number;
+  diferenca: number;
+  baixas: ConciliacaoBaixaItem[];
 }

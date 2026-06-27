@@ -28,9 +28,11 @@
     "ng2-charts": "^6.0.0",
     "ngx-mask": "^17.0.0",
     "ngx-toastr": "^19.0.0",
+    "pdfjs-dist": "^5.6.205",
     "rxjs": "~7.8.0",
     "tesseract.js": "^7.0.0",
     "tslib": "^2.3.0",
+    "xlsx": "^0.18.5",
     "zone.js": "~0.16.0"
   },
   "devDependencies": {

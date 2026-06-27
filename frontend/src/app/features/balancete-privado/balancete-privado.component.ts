@@ -55,7 +55,7 @@ interface TrendChartData {
       <header class="page-header">
         <div>
           <span>Privado</span>
-          <h1>Balancete Matriz x Filial</h1>
+          <h1>Balancete</h1>
         </div>
         <button
           type="button"
@@ -194,440 +194,171 @@ interface TrendChartData {
             </section>
           }
 
-          <section class="consolidado">
-            <article>
-              <span>Compra de combustível</span>
-              <strong
-                [ngClass]="
-                  valueClass(movimento(balancete.consolidado, 'comprado'))
-                "
-              >
-                {{ signedMoney(movimento(balancete.consolidado, "comprado")) }}
-              </strong>
-            </article>
-            <article>
-              <span>Transporte de combustível</span>
-              <strong class="negative">
-                {{ signedMoney(-custoTransporte(balancete.consolidado)) }}
-              </strong>
-              <small>Incluído no custo final de compra</small>
-            </article>
-            <article>
-              <span>Vendido pendente de pagamento</span>
-              <strong
-                [ngClass]="
-                  valueClass(
-                    movimento(balancete.consolidado, 'vendido_pendente')
-                  )
-                "
-              >
-                {{
-                  signedMoney(
-                    movimento(balancete.consolidado, "vendido_pendente")
-                  )
-                }}
-              </strong>
-            </article>
-            <article>
-              <span>Recebido em baixas</span>
-              <strong
-                [ngClass]="
-                  valueClass(movimento(balancete.consolidado, 'recebido'))
-                "
-              >
-                {{ signedMoney(movimento(balancete.consolidado, "recebido")) }}
-              </strong>
-            </article>
-            <article>
-              <span>Resultado esperado do período</span>
-              <strong
-                [ngClass]="
-                  valueClass(balancete.consolidado.resultado_competencia)
-                "
-              >
-                {{ signedMoney(balancete.consolidado.resultado_competencia) }}
-              </strong>
-            </article>
-            <article>
-              <span>Caixa realizado</span>
-              <strong
-                [ngClass]="valueClass(balancete.consolidado.resultado_caixa)"
-              >
-                {{ signedMoney(balancete.consolidado.resultado_caixa) }}
-              </strong>
-            </article>
-            <article>
-              <span>Estoque do período</span>
-              <strong
-                [class.negative]="
-                  balancete.consolidado.estoque_periodo_litros < 0
-                "
-              >
-                {{ litros(balancete.consolidado.estoque_periodo_litros) }}
-              </strong>
-            </article>
-          </section>
-
-          <section class="flow-card">
-            <div class="flow-head">
-              <div>
-                <span>Fluxo financeiro</span>
-                <h2>Consolidado</h2>
-              </div>
-              <div class="panel-actions">
-                <strong
-                  [ngClass]="
-                    valueClass(balancete.consolidado.resultado_competencia)
-                  "
-                >
-                  {{ signedMoney(balancete.consolidado.resultado_competencia) }}
+          @if (locaisOrdenados()[0]; as item) {
+            <section class="consolidado">
+              <article>
+                <span>Compra de combustível</span>
+                <strong [ngClass]="valueClass(movimento(item, 'comprado'))">
+                  {{ signedMoney(movimento(item, "comprado")) }}
                 </strong>
-                <button
-                  type="button"
-                  class="collapse-btn"
-                  (click)="togglePanel('fluxo-consolidado')"
-                >
-                  {{
-                    isCollapsed("fluxo-consolidado") ? "Expandir" : "Recolher"
-                  }}
-                </button>
-              </div>
-            </div>
+              </article>
+              <article>
+                <span>Transporte de combustível</span>
+                <strong class="negative">
+                  {{ signedMoney(-custoTransporte(item)) }}
+                </strong>
+                <small>Incluído no custo final de compra</small>
+              </article>
+              <article>
+                <span>Vendido pendente de pagamento</span>
+                <strong [ngClass]="valueClass(movimento(item, 'vendido_pendente'))">
+                  {{ signedMoney(movimento(item, "vendido_pendente")) }}
+                </strong>
+              </article>
+              <article>
+                <span>Recebido em baixas</span>
+                <strong [ngClass]="valueClass(movimento(item, 'recebido'))">
+                  {{ signedMoney(movimento(item, "recebido")) }}
+                </strong>
+                <small>Informação de recebimento</small>
+              </article>
+              <article>
+                <span>Diferença bruta estimada</span>
+                <strong [ngClass]="valueClass(diferencaBruta(item))">
+                  {{ signedMoney(diferencaBruta(item)) }}
+                </strong>
+                <small class="operation-formula">
+                  total vendido - custo aplicado aos litros vendidos
+                  <b>
+                    {{ money(item.vendas?.valor) }} -
+                    {{ money(custoAplicadoVendas(item)) }} =
+                    {{ money(diferencaBruta(item)) }}
+                  </b>
+                </small>
+              </article>
+              <article>
+                <span>Estoque do período</span>
+                <strong [class.negative]="(item.estoque_periodo_litros ?? 0) < 0">
+                  {{ litros(item.estoque_periodo_litros) }}
+                </strong>
+              </article>
+            </section>
 
-            @if (!isCollapsed("fluxo-consolidado")) {
-              <div class="flow-columns">
-                <div class="flow-section">
-                  <h3>Entradas e valores a receber</h3>
-                  @for (
-                    row of fluxoEntradas(balancete.consolidado);
-                    track row.label
-                  ) {
-                    <p class="flow-line" [class.muted]="row.muted">
-                      <span>
-                        <strong>{{ row.label }}</strong>
-                        @if (row.detail) {
-                          <small>{{ row.detail }}</small>
-                        }
-                      </span>
-                      <b [ngClass]="row.muted ? '' : valueClass(row.value)">{{
-                        signedMoney(row.value)
-                      }}</b>
-                    </p>
-                  }
+            <section class="flow-card">
+              <div class="flow-head">
+                <div>
+                  <span>Fluxo financeiro</span>
+                  <h2>Resumo da filial</h2>
                 </div>
-                <div class="flow-section">
-                  <h3>Saídas e custos</h3>
-                  @for (
-                    row of fluxoSaidas(balancete.consolidado);
-                    track row.label
-                  ) {
+                <div class="panel-actions">
+                  <strong [ngClass]="valueClass(diferencaBruta(item))">
+                    {{ signedMoney(diferencaBruta(item)) }}
+                  </strong>
+                  <button type="button" class="collapse-btn" (click)="togglePanel('fluxo-consolidado')">
+                    {{ isCollapsed("fluxo-consolidado") ? "Expandir" : "Recolher" }}
+                  </button>
+                </div>
+              </div>
+
+              @if (!isCollapsed("fluxo-consolidado")) {
+                <div class="flow-columns">
+                  <div class="flow-section">
+                    <h3>Entradas e valores a receber</h3>
+                    @for (row of fluxoEntradas(item); track row.label) {
+                      <p class="flow-line" [class.muted]="row.muted">
+                        <span>
+                          <strong>{{ row.label }}</strong>
+                          @if (row.detail) { <small>{{ row.detail }}</small> }
+                        </span>
+                        <b [ngClass]="row.muted ? '' : valueClass(row.value)">{{ signedMoney(row.value) }}</b>
+                      </p>
+                    }
+                  </div>
+                  <div class="flow-section">
+                    <h3>Saídas e custos</h3>
+                    @for (row of fluxoSaidas(item); track row.label) {
+                      <p class="flow-line">
+                        <span>
+                          <strong>{{ row.label }}</strong>
+                          @if (row.detail) { <small>{{ row.detail }}</small> }
+                        </span>
+                        <b [ngClass]="valueClass(row.value)">{{ signedMoney(row.value) }}</b>
+                      </p>
+                    }
+                  </div>
+                </div>
+
+                <div class="flow-section localized-section">
+                  <h3>Custos localizados</h3>
+                  @for (row of custosLocalizados(item); track row.label) {
                     <p class="flow-line">
                       <span>
                         <strong>{{ row.label }}</strong>
-                        @if (row.detail) {
-                          <small>{{ row.detail }}</small>
-                        }
+                        @if (row.detail) { <small>{{ row.detail }}</small> }
                       </span>
-                      <b [ngClass]="valueClass(row.value)">{{
-                        signedMoney(row.value)
-                      }}</b>
+                      <b [ngClass]="valueClass(row.value)">{{ signedMoney(row.value) }}</b>
                     </p>
                   }
-                </div>
-              </div>
-
-              <div class="flow-section localized-section">
-                <h3>Custos localizados</h3>
-                @for (
-                  row of custosLocalizados(balancete.consolidado);
-                  track row.label
-                ) {
-                  <p class="flow-line">
-                    <span>
-                      <strong>{{ row.label }}</strong>
-                      @if (row.detail) {
-                        <small>{{ row.detail }}</small>
-                      }
-                    </span>
-                    <b [ngClass]="valueClass(row.value)">{{
-                      signedMoney(row.value)
-                    }}</b>
+                  <p class="flow-line total-line">
+                    <span><strong>Total de custos localizados</strong></span>
+                    <b [ngClass]="valueClass(-getLocalizedCost(item))">{{ signedMoney(-getLocalizedCost(item)) }}</b>
                   </p>
-                }
-              </div>
-
-              <div class="flow-results">
-                <div>
-                  <span>Caixa realizado</span>
-                  <strong
-                    [ngClass]="valueClass(balancete.consolidado.resultado_caixa)"
-                  >
-                    {{ signedMoney(balancete.consolidado.resultado_caixa) }}
-                  </strong>
-                  <small
-                    >recebido em baixas - compra de combustível - transporte de
-                    combustível - despesas</small
-                  >
                 </div>
-                <div>
-                  <span>Resultado esperado do período</span>
-                  <strong
-                    [ngClass]="
-                      valueClass(balancete.consolidado.resultado_competencia)
-                    "
-                  >
-                    {{ signedMoney(balancete.consolidado.resultado_competencia) }}
-                  </strong>
-                  <small
-                    >total vendido - compra de combustível - transporte de
-                    combustível - despesas</small
-                  >
-                </div>
-              </div>
-            }
-          </section>
 
-          <section class="branch-grid">
-            @for (item of locaisOrdenados(); track item.local) {
-              <article class="branch-panel">
-                <div class="branch-head">
+                <div class="flow-results">
                   <div>
-                    <span>Filial</span>
-                    <h2>{{ item.local }}</h2>
-                  </div>
-                  <div class="panel-actions">
-                    <strong [ngClass]="valueClass(item.resultado_competencia)">
-                      {{ signedMoney(item.resultado_competencia) }}
+                    <span>Total vendido</span>
+                    <strong class="positive">
+                      {{ litros(item.vendas?.litros) }} ({{ signedMoney(item.vendas?.valor) }})
                     </strong>
-                    <button
-                      type="button"
-                      class="collapse-btn"
-                      (click)="togglePanel(panelId('filial', item.local))"
-                    >
-                      {{
-                        isCollapsed(panelId("filial", item.local))
-                          ? "Expandir"
-                          : "Recolher"
-                      }}
-                    </button>
+                  </div>
+                  <div>
+                    <span>Diferença bruta estimada</span>
+                    <strong [ngClass]="valueClass(diferencaBruta(item))">
+                      {{ signedMoney(diferencaBruta(item)) }}
+                    </strong>
+                    <small class="operation-formula">
+                      total vendido - custo aplicado aos litros vendidos
+                      <b>
+                        {{ money(item.vendas?.valor) }} -
+                        {{ money(custoAplicadoVendas(item)) }} =
+                        {{ money(diferencaBruta(item)) }}
+                      </b>
+                    </small>
                   </div>
                 </div>
+              }
+            </section>
 
-                @if (!isCollapsed(panelId("filial", item.local))) {
-                  <div class="metrics">
-                    <div>
-                      <span>Litros comprados</span>
-                      <strong>{{ litros(item.compras.litros) }}</strong>
-                      <small [ngClass]="valueClass(movimento(item, 'comprado'))">
-                        {{ signedMoney(movimento(item, "comprado")) }}
-                      </small>
-                    </div>
-                    <div>
-                      <span>Transporte de combustível</span>
-                      <strong class="negative">{{
-                        signedMoney(-custoTransporte(item))
-                      }}</strong>
-                      <small>{{ money(0.04) }}/L incluído no custo final</small>
-                    </div>
-                    <div>
-                      <span>Total vendido</span>
-                      <strong>{{ litros(item.vendas.litros) }}</strong>
-                      <small class="positive">{{
-                        signedMoney(item.vendas.valor)
-                      }}</small>
-                    </div>
-                    <div>
-                      <span>Vendido pendente de pagamento</span>
-                      <strong
-                        [ngClass]="
-                          valueClass(movimento(item, 'vendido_pendente'))
-                        "
-                      >
-                        {{ signedMoney(movimento(item, "vendido_pendente")) }}
-                      </strong>
-                      <small
-                        >{{
-                          item.pendentes.registros || 0
-                        }}
-                        abastecimento(s)</small
-                      >
-                    </div>
-                    <div>
-                      <span>Recebido em baixas</span>
-                      <strong [ngClass]="valueClass(movimento(item, 'recebido'))">
-                        {{ signedMoney(movimento(item, "recebido")) }}
-                      </strong>
-                      <small>{{ item.recebidos.registros || 0 }} baixa(s)</small>
-                    </div>
-                    <div>
-                      <span>Despesas</span>
-                      <strong [ngClass]="valueClass(movimento(item, 'despesas'))">
-                        {{ signedMoney(movimento(item, "despesas")) }}
-                      </strong>
-                      <small
-                        >{{ item.despesas.registros || 0 }} lançamento(s)</small
-                      >
-                    </div>
-                    <div>
-                      <span>Saldo de litros</span>
-                      <strong
-                        [class.negative]="item.estoque_periodo_litros < 0"
-                        >{{ litros(item.estoque_periodo_litros) }}</strong
-                      >
-                      <small>comprado - vendido</small>
-                    </div>
-                  </div>
-
-                  <div class="result-row">
-                    <div>
-                      <span>Resultado esperado do período</span>
-                      <strong
-                        [ngClass]="valueClass(item.resultado_competencia)"
-                        >{{ signedMoney(item.resultado_competencia) }}</strong
-                      >
-                    </div>
-                    <div>
-                      <span>Caixa realizado</span>
-                      <strong [ngClass]="valueClass(item.resultado_caixa)">{{
-                        signedMoney(item.resultado_caixa)
-                      }}</strong>
-                    </div>
-                    <div>
-                      <span>Valor pendente de pagamento</span>
-                      <strong [ngClass]="valueClass(saldoAReceber(item))">{{
-                        signedMoney(saldoAReceber(item))
-                      }}</strong>
-                    </div>
-                  </div>
-
-                  <div class="flow-card branch-flow">
-                    <div class="flow-head">
-                      <div>
-                        <span>Fluxo financeiro</span>
-                        <h3>Entradas e saídas</h3>
-                      </div>
-                      <strong [ngClass]="valueClass(item.resultado_competencia)">
-                        {{ signedMoney(item.resultado_competencia) }}
-                      </strong>
-                    </div>
-
-                    <div class="flow-columns">
-                      <div class="flow-section">
-                        <h3>Entradas e valores a receber</h3>
-                        @for (row of fluxoEntradas(item); track row.label) {
-                          <p class="flow-line" [class.muted]="row.muted">
-                            <span>
-                              <strong>{{ row.label }}</strong>
-                              @if (row.detail) {
-                                <small>{{ row.detail }}</small>
-                              }
-                            </span>
-                            <b
-                              [ngClass]="row.muted ? '' : valueClass(row.value)"
-                              >{{ signedMoney(row.value) }}</b
-                            >
-                          </p>
-                        }
-                      </div>
-                      <div class="flow-section">
-                        <h3>Saídas e custos</h3>
-                        @for (row of fluxoSaidas(item); track row.label) {
-                          <p class="flow-line">
-                            <span>
-                              <strong>{{ row.label }}</strong>
-                              @if (row.detail) {
-                                <small>{{ row.detail }}</small>
-                              }
-                            </span>
-                            <b [ngClass]="valueClass(row.value)">{{
-                              signedMoney(row.value)
-                            }}</b>
-                          </p>
-                        }
-                      </div>
-                    </div>
-
-                    <div class="flow-section localized-section">
-                      <h3>Custos localizados</h3>
-                      @for (row of custosLocalizados(item); track row.label) {
-                        <p class="flow-line">
-                          <span>
-                            <strong>{{ row.label }}</strong>
-                            @if (row.detail) {
-                              <small>{{ row.detail }}</small>
-                            }
-                          </span>
-                          <b [ngClass]="valueClass(row.value)">{{
-                            signedMoney(row.value)
-                          }}</b>
-                        </p>
-                      }
-                    </div>
-
-                    <div class="flow-results">
-                      <div>
-                        <span>Caixa realizado</span>
-                        <strong [ngClass]="valueClass(item.resultado_caixa)">
-                          {{ signedMoney(item.resultado_caixa) }}
-                        </strong>
-                        <small
-                          >recebido em baixas - compra de combustível -
-                          transporte de combustível - despesas</small
-                        >
-                      </div>
-                      <div>
-                        <span>Resultado esperado do período</span>
-                        <strong
-                          [ngClass]="valueClass(item.resultado_competencia)"
-                        >
-                          {{ signedMoney(item.resultado_competencia) }}
-                        </strong>
-                        <small
-                          >total vendido - compra de combustível - transporte de
-                          combustível - despesas</small
-                        >
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="lists">
-                    <div>
-                      <h3>Pendentes de pagamento</h3>
-                      @if ((item.top_pendentes ?? []).length) {
-                        @for (
-                          p of item.top_pendentes;
-                          track p.nome_proprietario
-                        ) {
-                          <p>
-                            <span>{{ p.nome_proprietario }}</span
-                            ><strong>{{ money(p.valor) }}</strong>
-                          </p>
-                        }
-                      } @else {
-                        <p class="empty">Sem pendências</p>
-                      }
-                    </div>
-                    <div>
-                      <h3>Despesas</h3>
-                      @if ((item.despesas.categorias ?? []).length) {
-                        @for (
-                          cat of item.despesas.categorias;
-                          track cat.categoria
-                        ) {
-                          <p>
-                            <span>{{ cat.categoria }}</span
-                            ><strong>{{ money(cat.valor) }}</strong>
-                          </p>
-                        }
-                      } @else {
-                        <p class="empty">Sem despesas</p>
-                      }
-                    </div>
-                  </div>
+            <section class="lists">
+              <div>
+                <h3>Pendentes de pagamento</h3>
+                @if ((item.top_pendentes ?? []).length) {
+                  @for (p of item.top_pendentes; track p.nome_proprietario) {
+                    <p>
+                      <span>{{ p.nome_proprietario }}</span
+                      ><strong>{{ money(p.valor) }}</strong>
+                    </p>
+                  }
+                } @else {
+                  <p class="empty">Sem pendências</p>
                 }
-              </article>
-            }
-          </section>
+              </div>
+              <div>
+                <h3>Despesas</h3>
+                @if ((item.despesas?.categorias ?? []).length) {
+                  @for (cat of item.despesas!.categorias!; track cat.categoria) {
+                    <p>
+                      <span>{{ cat.categoria }}</span
+                      ><strong>{{ money(cat.valor) }}</strong>
+                    </p>
+                  }
+                } @else {
+                  <p class="empty">Sem despesas</p>
+                }
+              </div>
+            </section>
+          }
         }
       }
     </div>
@@ -652,7 +383,6 @@ interface TrendChartData {
 
       .page-header span,
       label,
-      .branch-head span,
       .metrics span,
       .result-row span {
         color: #64748b;
@@ -691,7 +421,6 @@ interface TrendChartData {
 
       .filters,
       .consolidado article,
-      .branch-panel,
       .state {
         background: #ffffff;
         border: 1px solid #e5e7eb;
@@ -887,6 +616,14 @@ interface TrendChartData {
       .dot {
         stroke: #ffffff;
         stroke-width: 1.6;
+        transition: r 0.2s ease, transform 0.2s ease;
+        transform-origin: center;
+        cursor: pointer;
+      }
+
+      .dot:hover {
+        r: 5;
+        transform: scale(1.5);
       }
 
       .custos-dot {
@@ -1008,91 +745,18 @@ interface TrendChartData {
         line-height: 1.35;
       }
 
-      .branch-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-        align-items: start;
-      }
-
-      .branch-panel {
-        padding: 18px;
-      }
-
-      .branch-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
-        padding-bottom: 14px;
-        border-bottom: 1px solid #e5e7eb;
-      }
-
-      .branch-head .panel-actions > strong {
-        font-size: 22px;
-        font-weight: 900;
-        color: #047857;
-        white-space: nowrap;
-      }
-
-      .metrics {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 14px;
-      }
-
-      .metrics div,
-      .result-row div {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 12px;
-        min-width: 0;
-      }
-
-      .metrics strong,
-      .metrics small {
-        display: block;
-        margin-top: 5px;
-      }
-
-      .metrics strong {
-        font-size: 18px;
-        font-weight: 900;
-      }
-
-      .metrics small {
-        color: #64748b;
-        font-size: 12px;
-        font-weight: 700;
-      }
-
-      .result-row {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 10px;
-      }
-
-      .result-row strong {
-        display: block;
-        margin-top: 6px;
-        font-size: 20px;
-        font-weight: 900;
-        color: #047857;
-      }
-
       .lists {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 14px;
         margin-top: 16px;
+        padding: 18px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
       }
 
       .lists > div {
-        border-top: 1px solid #e5e7eb;
-        padding-top: 12px;
         max-height: 320px;
         overflow-y: auto;
         padding-right: 6px;
@@ -1131,12 +795,6 @@ interface TrendChartData {
         box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
       }
 
-      .branch-flow {
-        margin: 14px 0 0;
-        padding: 14px;
-        border-color: #e2e8f0;
-      }
-
       .flow-head {
         display: flex;
         align-items: flex-start;
@@ -1146,8 +804,7 @@ interface TrendChartData {
         border-bottom: 1px solid #e5e7eb;
       }
 
-      .flow-head span,
-      .flow-results span {
+      .flow-head span {
         color: #64748b;
         font-size: 11px;
         font-weight: 800;
@@ -1155,17 +812,9 @@ interface TrendChartData {
         text-transform: uppercase;
       }
 
-      .flow-head h2,
-      .flow-head h3 {
+      .flow-head h2 {
         margin-top: 4px;
         margin-bottom: 0;
-      }
-
-      .flow-head > strong,
-      .flow-head .panel-actions > strong {
-        font-size: 21px;
-        font-weight: 900;
-        white-space: nowrap;
       }
 
       .flow-columns {
@@ -1282,6 +931,16 @@ interface TrendChartData {
         font-weight: 700;
       }
 
+      .operation-formula b {
+        display: block;
+        margin-top: 4px;
+        color: #334155;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.4;
+        white-space: normal;
+      }
+
       .empty {
         color: #94a3b8 !important;
       }
@@ -1306,74 +965,6 @@ interface TrendChartData {
         background: #fef2f2;
         border-color: #fecaca;
       }
-
-      @media (max-width: 1100px) {
-        .consolidado,
-        .branch-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .flow-columns {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      @media (max-width: 720px) {
-        .page {
-          padding: 16px;
-        }
-
-        .page-header,
-        .filters {
-          flex-direction: column;
-          align-items: stretch;
-        }
-
-        input,
-        .primary-btn,
-        .secondary-btn {
-          width: 100%;
-        }
-
-        .metrics,
-        .result-row,
-        .lists,
-        .flow-results {
-          grid-template-columns: 1fr;
-        }
-
-        .flow-head {
-          flex-direction: column;
-        }
-
-        .panel-actions {
-          justify-content: flex-start;
-        }
-
-        .trend-head,
-        .trend-summary {
-          grid-template-columns: 1fr;
-        }
-
-        .trend-head {
-          flex-direction: column;
-        }
-
-        .flow-line {
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .flow-line b {
-          flex-basis: auto;
-          text-align: left;
-          white-space: normal;
-        }
-
-        .consolidado strong {
-          white-space: normal;
-        }
-      }
     `,
   ],
 })
@@ -1388,7 +979,10 @@ export class BalancetePrivadoComponent implements OnInit {
 
   locaisOrdenados = computed(() => {
     const locais = this.data()?.locais ?? [];
-    return [...locais].sort((a, b) => this.localOrder(a) - this.localOrder(b));
+    const garagem = this.auth.getGaragem();
+    return locais
+      .filter((item) => item.local === garagem)
+      .sort((a, b) => this.localOrder(a) - this.localOrder(b));
   });
   grafico = computed(() =>
     this.buildTrendChart(this.data()?.serie_diaria ?? []),
@@ -1407,12 +1001,7 @@ export class BalancetePrivadoComponent implements OnInit {
   }
 
   canAccess(): boolean {
-    const user = this.auth.currentUser();
-    const ident = `${user?.login ?? ""} ${user?.nome ?? ""}`.toLowerCase();
-    return (
-      user?.tipo === "admin" &&
-      (ident.includes("douglas") || user?.login === "admin")
-    );
+    return this.auth.isAdmin();
   }
 
   isCollapsed(id: string): boolean {
@@ -1664,8 +1253,8 @@ export class BalancetePrivadoComponent implements OnInit {
       yMax,
       custosPoints,
       vendasPoints,
-      custosPath: this.linePath(custosPoints),
-      vendasPath: this.linePath(vendasPoints),
+      custosPath: this.smoothPath(custosPoints),
+      vendasPath: this.smoothPath(vendasPoints),
       custosArea: this.areaPath(custosPoints, baseline),
       vendasArea: this.areaPath(vendasPoints, baseline),
       yLabels,
@@ -1708,12 +1297,40 @@ export class BalancetePrivadoComponent implements OnInit {
       .join(" ");
   }
 
+  private smoothPath(points: ChartPoint[]): string {
+    if (!points.length) return "";
+    if (points.length === 1)
+      return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+
+    let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i === 0 ? i : i - 1];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = i + 2 < points.length ? points[i + 2] : p2;
+
+      // Control points for cubic bezier
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+
+    return path;
+  }
+
   private areaPath(points: ChartPoint[], baseline: number): string {
     if (!points.length) return "";
-    const line = this.linePath(points);
+    const line = this.smoothPath(points);
     const first = points[0];
     const last = points[points.length - 1];
-    return `${line} L ${last.x.toFixed(2)} ${baseline.toFixed(2)} L ${first.x.toFixed(2)} ${baseline.toFixed(2)} Z`;
+    return `${line} L ${last.x.toFixed(2)} ${baseline.toFixed(
+      2,
+    )} L ${first.x.toFixed(2)} ${baseline.toFixed(2)} Z`;
   }
 
   private roundChartMax(value: number): number {
@@ -1727,6 +1344,34 @@ export class BalancetePrivadoComponent implements OnInit {
     const [year, month, day] = value.slice(0, 10).split("-");
     if (!year || !month || !day) return value;
     return `${day}/${month}`;
+  }
+
+  getLocalizedCost(item: Partial<BalanceteLocal>): number {
+    const custoFinalCompra = Number(item.compras?.valor ?? 0);
+    const despesas = Number(item.despesas?.valor ?? 0);
+
+    return custoFinalCompra + despesas;
+  }
+
+  custoAplicadoVendas(item: Partial<BalanceteLocal>): number {
+    const informado = Number(item.custo_vendido_estimado);
+    if (Number.isFinite(informado) && item.custo_vendido_estimado != null) {
+      return informado;
+    }
+
+    const litrosComprados = Number(item.compras?.litros ?? 0);
+    const litrosVendidos = Number(item.vendas?.litros ?? 0);
+    const custoCompras = Number(item.compras?.valor ?? 0);
+    return litrosComprados > 0 ? (custoCompras / litrosComprados) * litrosVendidos : 0;
+  }
+
+  diferencaBruta(item: Partial<BalanceteLocal>): number {
+    const informado = Number(item.diferenca_bruta_estimada);
+    if (Number.isFinite(informado) && item.diferenca_bruta_estimada != null) {
+      return informado;
+    }
+
+    return Number(item.vendas?.valor ?? 0) - this.custoAplicadoVendas(item);
   }
 
   litros(value: number | null | undefined): string {

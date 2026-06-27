@@ -5,8 +5,11 @@ import { FormsModule, FormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { forkJoin } from 'rxjs';
 import { ApiService } from '../../core/services/api.service';
+import { AuthService } from '../../core/services/auth.service';
 import { ToastrService } from 'ngx-toastr';
-import { Abastecimento, Proprietario, Veiculo } from '../../shared/models';
+import { Abastecimento, Proprietario, Veiculo, Motorista } from '../../shared/models';
+import { ExcelExportService } from '../../core/services/excel-export.service';
+import { PdfThumbnailService } from '../../core/services/pdf-thumbnail.service';
 
 type AnexoTipo = 'image' | 'pdf' | 'file';
 
@@ -29,10 +32,79 @@ interface AnexoBaixaView {
         <button class="btn-primary" (click)="openNovaBaixa()">+ Nova Baixa</button>
       </div>
 
+      <div class="stats-row">
+        <div class="stat-card">
+          <span>Total em Litros</span>
+          <strong>{{ totalLitros() | number:'1.2-2' }} L</strong>
+        </div>
+        <div class="stat-card">
+          <span>Valor Total Baixado</span>
+          <strong>{{ totalValor() | currency:'BRL':'symbol':'1.2-2' }}</strong>
+        </div>
+        <div class="stat-card">
+          <span>Total de Registros</span>
+          <strong>{{ sortedBaixas().length }}</strong>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">
           <h3>Registros de Baixa</h3>
-          <button class="btn-sm" (click)="loadBaixas()">Atualizar</button>
+          <div class="card-title-btns">
+            <button class="btn-excel" (click)="exportExcel()">📊 Excel</button>
+            <button class="btn-sm" (click)="loadBaixas()">Atualizar</button>
+          </div>
+        </div>
+
+        <div class="filters-card">
+          <div class="filters-grid">
+            <div class="filter-field">
+              <label>Empresa</label>
+              <input type="text" [value]="histEmpresa()" placeholder="Nome do proprietário..."
+                     (input)="histEmpresa.set($any($event.target).value)" />
+            </div>
+            <div class="filter-field">
+              <label>Placa</label>
+              <input type="text" [value]="histPlaca()" placeholder="ABC1D23"
+                     (input)="histPlaca.set($any($event.target).value)" />
+            </div>
+            <div class="filter-field">
+              <label>Forma Pgto</label>
+              <select [value]="histFormaPgto()" (change)="histFormaPgto.set($any($event.target).value)">
+                <option value="">Todas</option>
+                @for (f of formasPagamentoDisponiveis(); track f) {
+                  <option [value]="f">{{ f }}</option>
+                }
+              </select>
+            </div>
+            <div class="filter-field">
+              <label>Recebedor</label>
+              <select [value]="histRecebedor()" (change)="histRecebedor.set($any($event.target).value)">
+                <option value="">Todos</option>
+                @for (r of recebedoresDisponiveis(); track r) {
+                  <option [value]="r">{{ r }}</option>
+                }
+              </select>
+            </div>
+            <div class="filter-field">
+              <label>Data Início</label>
+              <input type="date" [value]="histDataInicio()" (change)="histDataInicio.set($any($event.target).value)" />
+            </div>
+            <div class="filter-field">
+              <label>Data Fim</label>
+              <input type="date" [value]="histDataFim()" (change)="histDataFim.set($any($event.target).value)" />
+            </div>
+            <div class="filter-field">
+              <label>Valor (exato)</label>
+              <input type="text" [value]="histValor()" inputmode="decimal" placeholder="Ex.: 1500 ou 1500,50"
+                     (input)="histValor.set($any($event.target).value)" />
+            </div>
+          </div>
+          @if (temFiltrosHistorico()) {
+            <button class="btn-clear" (click)="limparFiltrosHistorico()">
+              Limpar Filtros · {{ sortedBaixas().length }} resultado(s)
+            </button>
+          }
         </div>
 
         @if (loadingBaixas()) {
@@ -102,14 +174,23 @@ interface AnexoBaixaView {
                       }
                     </td>
                     <td>
-                      <button
-                        class="btn-danger-sm"
-                        type="button"
-                        [disabled]="deletingBaixaId() === baixaGroupId(b)"
-                        (click)="$event.stopPropagation(); deleteBaixaGroup(b)"
-                      >
-                        {{ deletingBaixaId() === baixaGroupId(b) ? 'Excluindo...' : 'Excluir' }}
-                      </button>
+                      <div class="row-acoes">
+                        @if (isAdmin()) {
+                          <button
+                            class="btn-edit-sm"
+                            type="button"
+                            (click)="$event.stopPropagation(); abrirEdicaoBaixa(b, $event)"
+                          >Editar</button>
+                        }
+                        <button
+                          class="btn-danger-sm"
+                          type="button"
+                          [disabled]="deletingBaixaId() === baixaGroupId(b)"
+                          (click)="$event.stopPropagation(); deleteBaixaGroup(b)"
+                        >
+                          {{ deletingBaixaId() === baixaGroupId(b) ? 'Excluindo...' : 'Excluir' }}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 } @empty {
@@ -122,6 +203,201 @@ interface AnexoBaixaView {
           </div>
         }
       </div>
+
+      @if (editandoBaixa(); as eb) {
+        <div class="modal-overlay" (click)="editandoBaixa.set(null)">
+          <div class="modal-shell baixa-detail-modal" (click)="$event.stopPropagation()">
+            <div class="modal-header baixa-detail-header">
+              <div>
+                <h2>Editar baixa</h2>
+                <p>{{ baixaItems(eb).length }} abastecimento(s) neste pagamento</p>
+              </div>
+              <button class="btn-close" type="button" (click)="editandoBaixa.set(null)">✕</button>
+            </div>
+
+            <div class="detail-summary-grid">
+              <div class="detail-summary-card">
+                <span>Empresa</span>
+                <strong>{{ baixaEmpresa(eb) }}</strong>
+              </div>
+              <div class="detail-summary-card">
+                <span>Total baixado</span>
+                <strong>{{ editTotalGeral() | currency:'BRL':'symbol':'1.2-2' }}</strong>
+              </div>
+              <div class="detail-summary-card">
+                <span>Litros</span>
+                <strong>{{ editLitrosGeral() | number:'1.2-2' }} L</strong>
+              </div>
+              <div class="detail-summary-card edit-field-card">
+                <span>Pagamento</span>
+                <select [(ngModel)]="editForm.forma_pagamento">
+                  <option value="">—</option>
+                  <option value="PIX">PIX</option>
+                  <option value="dinheiro">Dinheiro</option>
+                  <option value="transferência">Transferência</option>
+                  <option value="depósito">Depósito</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="outro">Outro</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="detail-meta-grid">
+              <div class="edit-field-card">
+                <span>Data da baixa</span>
+                <input type="date" [(ngModel)]="editForm.data_baixa" />
+              </div>
+              <div class="edit-field-card">
+                <span>Data do pagamento</span>
+                <input type="date" [(ngModel)]="editForm.data_pagamento" />
+              </div>
+              <div class="edit-field-card">
+                <span>Usuário</span>
+                <input type="text" [(ngModel)]="editForm.usuario" placeholder="Usuário" />
+              </div>
+              <div class="edit-field-card">
+                <span>Recebedor</span>
+                <select [(ngModel)]="editForm.recebedor">
+                  <option value="">—</option>
+                  <option value="VIPE TRANSPORTES MULTIMODAIS LTDA">VIPE TRANSPORTES MULTIMODAIS LTDA</option>
+                  <option value="Augusto">Augusto</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <h3>Abastecimentos baixados</h3>
+              <div class="detail-table-wrap">
+                <table class="data-table detail-table">
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>Placa</th>
+                      <th>Motorista</th>
+                      <th>Combustível</th>
+                      <th class="text-right">Litros</th>
+                      <th class="text-right">Valor/L</th>
+                      <th class="text-right">Valor total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (item of baixaItems(eb); track item.id_baixa) {
+                      @if (rowOf(item.abastecimento?.id_abastecimento); as row) {
+                        <tr class="edit-row">
+                          <td>
+                            <input type="datetime-local" class="cell-input"
+                                   [ngModel]="row.data_hora"
+                                   (ngModelChange)="setRowField(item.abastecimento?.id_abastecimento, 'data_hora', $event)" />
+                          </td>
+                          <td>
+                            <select class="cell-input"
+                                    [ngModel]="row.id_veiculo"
+                                    (ngModelChange)="setRowField(item.abastecimento?.id_abastecimento, 'id_veiculo', $event)">
+                              <option [ngValue]="''">{{ row.placa_label || '—' }}</option>
+                              @for (v of veiculos(); track v.id_veiculo) {
+                                <option [ngValue]="v.id_veiculo">{{ v.placa }}</option>
+                              }
+                            </select>
+                          </td>
+                          <td>
+                            <select class="cell-input"
+                                    [ngModel]="row.id_motorista"
+                                    (ngModelChange)="setRowField(item.abastecimento?.id_abastecimento, 'id_motorista', $event)">
+                              <option [ngValue]="''">{{ row.motorista_label || '—' }}</option>
+                              @for (m of motoristas(); track m.id_motorista) {
+                                <option [ngValue]="m.id_motorista">{{ m.nome }}</option>
+                              }
+                            </select>
+                          </td>
+                          <td>
+                            <input type="text" class="cell-input"
+                                   [ngModel]="row.tipo_combustivel"
+                                   (ngModelChange)="setRowField(item.abastecimento?.id_abastecimento, 'tipo_combustivel', $event)" />
+                          </td>
+                          <td class="text-right">
+                            <input type="number" step="0.01" class="cell-input cell-num"
+                                   [ngModel]="row.quantidade_litros"
+                                   (ngModelChange)="setRowField(item.abastecimento?.id_abastecimento, 'quantidade_litros', $event)" />
+                          </td>
+                          <td class="text-right cell-readonly" title="Valor por litro é fixo pelo sistema">
+                            {{ row.valor_por_litro | currency:'BRL':'symbol':'1.2-2' }}
+                          </td>
+                          <td class="text-right val-green">
+                            {{ editRowTotal(item.abastecimento?.id_abastecimento) | currency:'BRL':'symbol':'1.2-2' }}
+                          </td>
+                        </tr>
+                      }
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="detail-bottom-grid">
+              <div class="detail-section">
+                <h3>Dados registrados</h3>
+                <div class="detail-list edit-list">
+                  <div class="edit-field-card">
+                    <span>Tipo</span>
+                    <input type="text" [(ngModel)]="editForm.tipo_despesa" placeholder="Tipo" />
+                  </div>
+                  <div class="edit-field-card">
+                    <span>Descrição</span>
+                    <input type="text" [(ngModel)]="editForm.descricao" placeholder="Descrição" />
+                  </div>
+                  <div class="edit-field-card">
+                    <span>Observação</span>
+                    <textarea rows="2" [(ngModel)]="editForm.observacao" placeholder="Observação"></textarea>
+                  </div>
+                  <div><span>ID da baixa</span><strong class="mono">{{ eb.id_baixa }}</strong></div>
+                </div>
+              </div>
+
+              <div class="detail-section">
+                <h3>Comprovantes</h3>
+                @if (getAnexos(baixaAnexo(eb)).length > 0) {
+                  <div class="detail-anexo-grid">
+                    @for (anexo of getAnexos(baixaAnexo(eb)); track anexo.url; let idx = $index) {
+                      <div class="anexo-edit-wrap">
+                        <button class="anexo-thumb detail-anexo-thumb" type="button" (click)="openAnexoPreview(anexo.url, idx)">
+                          <span class="anexo-thumb-media">
+                            @if (anexo.tipo === 'image') {
+                              <img [src]="anexo.url" [alt]="anexoLabel(idx, anexo.url)" loading="lazy" />
+                            } @else if (anexo.tipo === 'pdf') {
+                              @if (anexoThumbUrl(anexo.url); as thumbUrl) {
+                                <img [src]="thumbUrl" [alt]="anexoLabel(idx, anexo.url)" loading="lazy" />
+                              } @else {
+                                <span class="anexo-file-icon">📎</span>
+                              }
+                              <span class="anexo-type-chip">PDF</span>
+                            } @else {
+                              <span class="anexo-file-icon">📎</span>
+                              <span class="anexo-type-chip">Arquivo</span>
+                            }
+                          </span>
+                          <span class="anexo-thumb-label">{{ anexoLabel(idx, anexo.url) }}</span>
+                        </button>
+                        <button class="anexo-del" type="button" title="Remover este comprovante da baixa"
+                                [disabled]="removendoComprovanteUrl() === anexo.url"
+                                (click)="removerComprovanteBaixa(eb, anexo.url)">✕</button>
+                      </div>
+                    }
+                  </div>
+                } @else {
+                  <span class="muted">Sem comprovante anexado</span>
+                }
+              </div>
+            </div>
+
+            <div class="modal-actions">
+              <button class="btn-outline" (click)="editandoBaixa.set(null)">Cancelar</button>
+              <button class="btn-primary" [disabled]="editandoBusy()" (click)="salvarEdicaoBaixa()">
+                {{ editandoBusy() ? 'Salvando...' : 'Salvar alterações' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      }
 
       @if (showNovaBaixaModal()) {
         <div class="modal-overlay" (click)="closeNovaBaixa()">
@@ -297,17 +573,10 @@ interface AnexoBaixaView {
                   <div class="field">
                     <label>Recebedor</label>
                     <select formControlName="recebedor">
-                      <option value="Vipe Transportes">Vipe Transportes</option>
+                      <option value="VIPE TRANSPORTES MULTIMODAIS LTDA">VIPE TRANSPORTES MULTIMODAIS LTDA</option>
                       <option value="Augusto">Augusto</option>
-                      <option value="Outros">Outros</option>
                     </select>
                   </div>
-                  @if (form.value.recebedor === 'Outros') {
-                    <div class="field">
-                      <label>Recebedor (Outros)</label>
-                      <input type="text" formControlName="recebedor_outros" placeholder="Digite o nome" />
-                    </div>
-                  }
                   <div class="field">
                     <label>Observação</label>
                     <textarea formControlName="observacao" rows="2" placeholder="Observações"></textarea>
@@ -527,12 +796,23 @@ interface AnexoBaixaView {
     * { box-sizing:border-box; }
     .page { padding:28px; font-family:'Inter',sans-serif; color:#e2e8f0; }
     .page-header { margin-bottom:20px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
     .page-header p { font-size:13px; color:#64748b; margin-top:4px; }
+
+    .stats-row { display:flex; gap:16px; margin-bottom:20px; }
+    .stat-card {
+      background:#0d1427; border:1px solid #1e2d4a; border-radius:12px;
+      padding:16px; flex:1; display:flex; flex-direction:column;
+    }
+    .stat-card span { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
+    .stat-card strong { font-size:18px; color:#f8fafc; margin-top:4px; }
 
     .card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:16px; }
     .card-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
     .card-title h3 { margin:0; font-size:14px; color:#f8fafc; }
+    .card-title-btns { display:flex; gap:8px; align-items:center; }
+    .btn-excel { background:transparent; border:1px solid #16a34a60; border-radius:6px; padding:5px 12px; color:#4ade80; font-size:11px; font-weight:600; cursor:pointer; }
+    .btn-excel:hover { border-color:#4ade80; }
 
     .table-wrap { overflow:auto; }
     .data-table { width:100%; border-collapse:collapse; font-size:12px; }
@@ -628,6 +908,36 @@ interface AnexoBaixaView {
     }
     .btn-danger-sm:hover { background:#4c1d24; border-color:#991b1b; }
     .btn-danger-sm:disabled { opacity:0.55; cursor:not-allowed; }
+    .row-acoes { display:flex; gap:6px; align-items:center; }
+    .btn-edit-sm { background:#0d1b33; border:1px solid #1e3a5f; color:#7dd3fc; border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer; }
+    .btn-edit-sm:hover { border-color:#38bdf8; color:#38bdf8; }
+    .modal-edit { max-width:520px; }
+    .edit-body { padding:6px 4px 0; }
+    .edit-hint { color:#94a3b8; font-size:12px; margin:0 0 12px; }
+    .edit-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .edit-grid label { display:flex; flex-direction:column; gap:5px; font-size:12px; color:#94a3b8; }
+    .edit-grid .edit-full { grid-column:1 / -1; }
+    .edit-grid input, .edit-grid select, .edit-grid textarea { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:8px 10px; color:#e2e8f0; font-size:13px; }
+    .edit-note { margin:12px 0 0; font-size:11px; color:#64748b; }
+    .edit-field-card select, .edit-field-card input, .edit-field-card textarea {
+      width:100%; background:#0a0f1e; border:1px solid #2a3b5f; border-radius:7px;
+      padding:7px 9px; color:#e2e8f0; font-size:13px; font-weight:600;
+    }
+    .edit-field-card { outline:1px dashed #1e3a5f33; outline-offset:3px; border-radius:8px; }
+    .edit-field-card textarea { resize:vertical; }
+    .edit-list { gap:12px; }
+    .anexo-edit-wrap { position:relative; display:inline-block; }
+    .anexo-del {
+      position:absolute; top:-7px; right:-7px; width:22px; height:22px; border-radius:50%;
+      border:1px solid #7f1d1d; background:#dc2626; color:#fff; font-size:12px; font-weight:700;
+      line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; z-index:3;
+    }
+    .anexo-del:hover { background:#ef4444; }
+    .anexo-del:disabled { opacity:0.5; cursor:wait; }
+    .cell-input { width:100%; min-width:84px; background:#0a0f1e; border:1px solid #2a3b5f; border-radius:6px; padding:5px 7px; color:#e2e8f0; font-size:12px; }
+    .cell-input.cell-num { text-align:right; }
+    .edit-row td { vertical-align:middle; }
+    .cell-readonly { color:#64748b; font-size:12px; }
     .muted { color:#64748b; font-size:11px; }
     .empty-cell { text-align:center; padding:24px; color:#64748b; }
 
@@ -750,6 +1060,8 @@ interface AnexoBaixaView {
     .acerto-summary small { color:#cbd5e1; font-size:12px; white-space:nowrap; }
 
     .filters-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:12px; margin-bottom:12px; }
+    .btn-clear { margin-top:10px; background:transparent; border:1px solid #1e2d4a; color:#64748b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer; }
+    .btn-clear:hover { border-color:#94a3b8; color:#94a3b8; }
     .filters-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
     .filter-field { display:flex; flex-direction:column; gap:4px; }
     .filter-field label { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
@@ -907,9 +1219,56 @@ interface AnexoBaixaView {
 })
 export class BaixaComponent implements OnInit {
   private api = inject(ApiService);
+  private auth = inject(AuthService);
   private toastr = inject(ToastrService);
   private fb = inject(FormBuilder);
   private sanitizer = inject(DomSanitizer);
+  private excel = inject(ExcelExportService);
+  private pdfThumbnails = inject(PdfThumbnailService);
+
+  isAdmin(): boolean {
+    return this.auth.isAdmin();
+  }
+
+  // Edição de baixa (admin)
+  editandoBaixa = signal<any | null>(null);
+  editandoBusy = signal(false);
+  editForm: { forma_pagamento: string; data_pagamento: string; data_baixa: string; usuario: string; tipo_despesa: string; recebedor: string; descricao: string; observacao: string } = {
+    forma_pagamento: '', data_pagamento: '', data_baixa: '', usuario: '', tipo_despesa: '', recebedor: '', descricao: '', observacao: ''
+  };
+  removendoComprovanteUrl = signal<string | null>(null);
+
+  exportExcel() {
+    const grupos = this.sortedBaixas();
+    const rows: Record<string, any>[] = [];
+    for (const g of grupos) {
+      for (const item of this.baixaItems(g)) {
+        const a = item?.abastecimento ?? {};
+        rows.push({
+          'Data Baixa': item?.data_hora ? String(item.data_hora).slice(0, 10).split('-').reverse().join('/') : '',
+          'Empresa': a.nome_proprietario || a.proprietario?.nome || '',
+          'Placa': a.veiculo?.placa ?? '',
+          'Motorista': a.nome_motorista || a.motorista?.nome || '',
+          'Data Abastecimento': a.data_hora ? String(a.data_hora).slice(0, 10).split('-').reverse().join('/') : '',
+          'Qtd (L)': Number(a.quantidade_litros ?? 0),
+          'Total (R$)': Number(a.valor_total ?? 0),
+          'Forma Pgto': item?.forma_pagamento ?? '',
+          'Data Pgto': item?.data_pagamento ? String(item.data_pagamento).slice(0, 10).split('-').reverse().join('/') : '',
+          'Recebedor': a.recebedor ?? '',
+          'Tipo': a.tipo_despesa ?? '',
+          'Descrição': a.descricao ?? '',
+          'Observação': a.observacao ?? '',
+          'Usuário': item?.usuario ?? '',
+        });
+      }
+    }
+    if (!rows.length) {
+      this.toastr.warning('Nada para exportar com os filtros atuais.');
+      return;
+    }
+    this.excel.export(`baixas_${new Date().toISOString().slice(0, 10)}`, rows, 'Baixas');
+    this.toastr.success(`${rows.length} linha(s) exportada(s).`);
+  }
 
   baixas = signal<any[]>([]);
   sortColumn = signal<string>('data_hora');
@@ -921,6 +1280,18 @@ export class BaixaComponent implements OnInit {
   pendentes = signal<Abastecimento[]>([]);
   proprietarios = signal<Proprietario[]>([]);
   veiculos = signal<Veiculo[]>([]);
+  motoristas = signal<Motorista[]>([]);
+  // Edição inline das linhas de abastecimento (id_abastecimento -> campos)
+  editAbastRows = signal<Record<string, {
+    data_hora: string;
+    tipo_combustivel: string;
+    quantidade_litros: number;
+    id_veiculo: string;
+    id_motorista: string;
+    placa_label?: string;
+    motorista_label?: string;
+    valor_por_litro: number;
+  }>>({});
   selected = signal<Set<string>>(new Set());
   loadingPendentes = signal(false);
   saving = signal(false);
@@ -929,10 +1300,78 @@ export class BaixaComponent implements OnInit {
   previewImageUrl = signal('');
   previewKind = signal<AnexoTipo>('image');
   previewTitle = signal('');
+  private previewObjectUrl = '';
   empresaBusca = signal('');
   placaBusca = signal('');
   showEmpresaOptions = signal(false);
   showPlacaOptions = signal(false);
+
+  // Filtros do histórico de baixas
+  histEmpresa = signal('');
+  histPlaca = signal('');
+  histFormaPgto = signal('');
+  histRecebedor = signal('');
+  histDataInicio = signal('');
+  histDataFim = signal('');
+  histValor = signal('');
+
+  temFiltrosHistorico = computed(() => !!(
+    this.histEmpresa().trim() || this.histPlaca().trim() || this.histFormaPgto() ||
+    this.histDataInicio() || this.histDataFim() || this.histValor().trim() ||
+    this.histRecebedor().trim()
+  ));
+
+  formasPagamentoDisponiveis = computed(() =>
+    Array.from(new Set(
+      this.baixas().map(b => String(b?.forma_pagamento ?? '').trim()).filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  );
+
+  recebedoresDisponiveis = computed(() => ['VIPE TRANSPORTES MULTIMODAIS LTDA', 'Augusto']);
+
+  filteredBaixaGroups = computed(() => {
+    const empresa = this.normalizeText(this.histEmpresa());
+    const placa = this.normalizePlate(this.histPlaca());
+    const forma = this.normalizeText(this.histFormaPgto());
+    const recebedor = this.normalizeText(this.histRecebedor());
+    const di = this.histDataInicio();
+    const df = this.histDataFim();
+    const valor = this.parseValorFiltro(this.histValor());
+
+    return this.baixaGroups().filter(g => {
+      const items = this.baixaItems(g);
+      if (empresa) {
+        const empresas = items.map(i => this.normalizeText(
+          i?.abastecimento?.nome_proprietario || i?.abastecimento?.proprietario?.nome
+        ));
+        if (!empresas.some(e => e.includes(empresa))) return false;
+      }
+      if (placa) {
+        const placas = items.map(i => this.normalizePlate(i?.abastecimento?.veiculo?.placa));
+        if (!placas.some(p => p.includes(placa))) return false;
+      }
+      if (forma && this.normalizeText(g?.forma_pagamento) !== forma) return false;
+      if (recebedor) {
+        const recebedores = items.map(i => this.normalizeText(i?.abastecimento?.recebedor || i?.recebedor));
+        if (!recebedores.some(r => r.includes(recebedor))) return false;
+      }
+      const dataISO = g?.data_hora ? String(g.data_hora).slice(0, 10) : '';
+      if (di && (!dataISO || dataISO < di)) return false;
+      if (df && (!dataISO || dataISO > df)) return false;
+      if (valor != null && Math.abs(this.baixaTotal(g) - valor) >= 0.005) return false;
+      return true;
+    });
+  });
+
+  totalLitros = computed(() =>
+    this.sortedBaixas().reduce((acc, g) =>
+      acc + this.baixaItems(g).reduce((sum, i) => sum + this.toNumber(i?.abastecimento?.quantidade_litros), 0)
+    , 0)
+  );
+
+  totalValor = computed(() =>
+    this.sortedBaixas().reduce((acc, g) => acc + this.baixaTotal(g), 0)
+  );
 
   previewSafeResourceUrl = computed<SafeResourceUrl | null>(() => {
     const url = this.previewImageUrl();
@@ -967,7 +1406,7 @@ export class BaixaComponent implements OnInit {
   sortedBaixas = computed(() => {
     const column = this.sortColumn();
     const direction = this.sortDirection() === 'asc' ? 1 : -1;
-    return [...this.baixaGroups()].sort((a, b) => {
+    return [...this.filteredBaixaGroups()].sort((a, b) => {
       const left = this.sortValue(a, column);
       const right = this.sortValue(b, column);
       if (typeof left === 'number' && typeof right === 'number') {
@@ -1027,7 +1466,7 @@ export class BaixaComponent implements OnInit {
     descricao: [''],
     forma_pagamento: [''],
     data_pagamento: [''],
-    recebedor: ['Vipe Transportes'],
+    recebedor: ['VIPE TRANSPORTES MULTIMODAIS LTDA'],
     recebedor_outros: [''],
     observacao: [''],
     anexo: [''],
@@ -1036,15 +1475,16 @@ export class BaixaComponent implements OnInit {
 
   ngOnInit() {
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
-    this.api.getVeiculos({ per_page: 500 }).subscribe(r => this.veiculos.set(r.data));
+    this.api.getVeiculos({ per_page: 5000 }).subscribe(r => this.veiculos.set(r.data));
+    this.api.getMotoristas({ per_page: 5000 }).subscribe(r => this.motoristas.set(r.data));
     this.loadBaixas();
   }
 
   loadBaixas() {
     this.loadingBaixas.set(true);
-    this.api.getBaixas({ per_page: 100 }).subscribe({
-      next: (r) => {
-        this.baixas.set(r.data);
+    this.api.getBaixasAll().subscribe({
+      next: (baixas) => {
+        this.baixas.set(baixas);
         this.loadingBaixas.set(false);
       },
       error: () => {
@@ -1189,7 +1629,27 @@ export class BaixaComponent implements OnInit {
   }
 
   private normalizeText(value: unknown): string {
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  private parseValorFiltro(raw: string): number | null {
+    let texto = raw.trim().replace(/R\$\s?/g, '');
+    if (!texto) return null;
+    if (texto.includes(',')) {
+      texto = texto.replace(/\./g, '').replace(',', '.');
+    }
+    const n = Number(texto);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  limparFiltrosHistorico() {
+    this.histEmpresa.set('');
+    this.histPlaca.set('');
+    this.histFormaPgto.set('');
+    this.histRecebedor.set('');
+    this.histDataInicio.set('');
+    this.histDataFim.set('');
+    this.histValor.set('');
   }
 
   private normalizePlate(value: unknown): string {
@@ -1300,7 +1760,6 @@ export class BaixaComponent implements OnInit {
   selectAll() {
     this.selected.set(new Set(this.pendentes().map(a => a.id_abastecimento)));
   }
-
   clearSelection() { this.selected.set(new Set()); }
 
   private toNumber(value: unknown): number {
@@ -1313,8 +1772,16 @@ export class BaixaComponent implements OnInit {
 
   resolveImageUrl(url?: string | null): string | null {
     if (!url) return null;
-    const normalized = String(url).trim();
+    let normalized = String(url).trim();
     if (!normalized) return null;
+
+    if (normalized.includes('drive.google.com/uc?id=')) {
+      const match = normalized.match(/id=([^&]+)/);
+      if (match && match[1]) {
+        normalized = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+      }
+    }
+
     if (
       normalized.startsWith('http://') ||
       normalized.startsWith('https://') ||
@@ -1337,6 +1804,7 @@ export class BaixaComponent implements OnInit {
     if (!resolved) return null;
     if (this.anexoKind(resolved) === 'image') return resolved;
     if (this.anexoKind(resolved) !== 'pdf') return null;
+    if (resolved.includes('/duei0rf3b/')) return this.pdfThumbnails.get(resolved);
     return this.cloudinaryPdfPreviewUrl(resolved);
   }
 
@@ -1444,9 +1912,7 @@ export class BaixaComponent implements OnInit {
     this.saving.set(true);
     const payload = {
       ...this.form.value,
-      recebedor: this.form.value.recebedor === 'Outros'
-        ? (this.form.value.recebedor_outros || '').trim()
-        : this.form.value.recebedor,
+      recebedor: this.form.value.recebedor,
       ids: Array.from(this.selected()),
       anexos: this.formAnexos(),
       anexo: this.formAnexos()[0] ?? '',
@@ -1459,7 +1925,7 @@ export class BaixaComponent implements OnInit {
         this.form.patchValue({
           data_baixa: new Date().toISOString().slice(0, 10),
           tipo_despesa: 'Combustível',
-          recebedor: 'Vipe Transportes',
+          recebedor: 'VIPE TRANSPORTES MULTIMODAIS LTDA',
           recebedor_outros: '',
           observacao: '',
           anexo: '',
@@ -1527,15 +1993,46 @@ export class BaixaComponent implements OnInit {
   openAnexoPreview(url?: string | null, index = 0) {
     const imageUrl = this.resolveImageUrl(url);
     if (!imageUrl) return;
-    this.previewImageUrl.set(imageUrl);
-    this.previewKind.set(this.anexoKind(imageUrl));
+    const kind = this.anexoKind(imageUrl);
+    this.previewKind.set(kind);
     this.previewTitle.set(this.anexoLabel(index, imageUrl));
+
+    if (!this.isCloudinaryUrl(imageUrl)) {
+      this.previewImageUrl.set(imageUrl);
+      return;
+    }
+
+    this.api.downloadCloudinaryMedia(imageUrl).subscribe({
+      next: (blob) => {
+        this.revokePreviewObjectUrl();
+        this.previewObjectUrl = URL.createObjectURL(blob);
+        this.previewImageUrl.set(this.previewObjectUrl);
+      },
+      error: (err) => {
+        this.toastr.error(err?.error?.message ?? 'Não foi possível abrir o arquivo.');
+      },
+    });
   }
 
   closeImagePreview() {
     this.previewImageUrl.set('');
     this.previewTitle.set('');
     this.previewKind.set('image');
+    this.revokePreviewObjectUrl();
+  }
+
+  private isCloudinaryUrl(url: string): boolean {
+    try {
+      return new URL(url).hostname === 'res.cloudinary.com';
+    } catch {
+      return false;
+    }
+  }
+
+  private revokePreviewObjectUrl() {
+    if (!this.previewObjectUrl) return;
+    URL.revokeObjectURL(this.previewObjectUrl);
+    this.previewObjectUrl = '';
   }
 
   openDatePicker(input: HTMLInputElement) {
@@ -1552,6 +2049,199 @@ export class BaixaComponent implements OnInit {
   deleteBaixa(idBaixa: string) {
     const baixa = this.baixas().find((item) => item.id_baixa === idBaixa);
     this.deleteBaixaGroup(baixa ?? { id_baixa: idBaixa });
+  }
+
+  abrirEdicaoBaixa(baixa: any, event?: Event) {
+    event?.stopPropagation();
+    const item = this.baixaItems(baixa)[0] ?? baixa;
+    const abast = item?.abastecimento ?? {};
+    this.editForm = {
+      forma_pagamento: item?.forma_pagamento ?? baixa?.forma_pagamento ?? '',
+      data_pagamento: this.toDateInput(item?.data_pagamento ?? baixa?.data_pagamento),
+      data_baixa: this.toDateInput(abast?.data_baixa ?? item?.data_hora ?? baixa?.data_hora),
+      usuario: item?.usuario ?? baixa?.usuario ?? '',
+      tipo_despesa: abast?.tipo_despesa ?? 'Combustível',
+      recebedor: abast?.recebedor ?? '',
+      descricao: abast?.descricao ?? '',
+      observacao: abast?.observacao ?? '',
+    };
+
+    // Estado editável de cada abastecimento da baixa.
+    const rows: Record<string, any> = {};
+    for (const it of this.baixaItems(baixa)) {
+      const a = it?.abastecimento ?? {};
+      const id = String(a?.id_abastecimento ?? '').trim();
+      if (!id) continue;
+      rows[id] = {
+        data_hora: this.toDateTimeInput(a?.data_hora),
+        tipo_combustivel: a?.tipo_combustivel ?? '',
+        quantidade_litros: this.toNumber(a?.quantidade_litros),
+        id_veiculo: this.resolveVeiculoId(a),
+        id_motorista: this.resolveMotoristaId(a),
+        placa_label: a?.veiculo?.placa ?? a?.placa ?? a?.placa1 ?? '',
+        motorista_label: a?.motorista?.nome ?? a?.nome_motorista ?? '',
+        valor_por_litro: this.toNumber(a?.valor_por_litro),
+      };
+    }
+    this.editAbastRows.set(rows);
+    this.editandoBaixa.set(baixa);
+  }
+
+  private toDateInput(value: any): string {
+    if (!value) return '';
+    const s = String(value);
+    return s.length >= 10 ? s.slice(0, 10) : s;
+  }
+
+  private toDateTimeInput(value: any): string {
+    if (!value) return '';
+    const s = String(value);
+    // "2026-06-10T14:56:00..." -> "2026-06-10T14:56"
+    return s.length >= 16 ? s.slice(0, 16) : (s.length >= 10 ? s.slice(0, 10) + 'T00:00' : s);
+  }
+
+  private resolveVeiculoId(abastecimento: any): string {
+    const direto = String(abastecimento?.id_veiculo ?? abastecimento?.veiculo?.id_veiculo ?? '').trim();
+    if (direto) return direto;
+
+    const placa = this.normalizePlate(
+      abastecimento?.veiculo?.placa ?? abastecimento?.placa ?? abastecimento?.placa1
+    );
+    if (!placa) return '';
+
+    return this.veiculos().find(v => this.normalizePlate(v.placa) === placa)?.id_veiculo ?? '';
+  }
+
+  private resolveMotoristaId(abastecimento: any): string {
+    const direto = String(abastecimento?.id_motorista ?? abastecimento?.motorista?.id_motorista ?? '').trim();
+    if (direto) return direto;
+
+    const nome = this.normalizeText(abastecimento?.motorista?.nome ?? abastecimento?.nome_motorista);
+    if (!nome) return '';
+
+    return this.motoristas().find(m => this.normalizeText(m.nome) === nome)?.id_motorista ?? '';
+  }
+
+  // Total/Litros calculados ao vivo a partir das linhas editáveis.
+  editRowTotal(id?: string | null): number {
+    const r = id ? this.editAbastRows()[id] : undefined;
+    if (!r) return 0;
+    return this.toNumber(r.quantidade_litros) * this.toNumber(r.valor_por_litro);
+  }
+  editTotalGeral(): number {
+    return Object.keys(this.editAbastRows()).reduce((s, id) => s + this.editRowTotal(id), 0);
+  }
+  editLitrosGeral(): number {
+    return Object.values(this.editAbastRows()).reduce((s: number, r: any) => s + this.toNumber(r?.quantidade_litros), 0);
+  }
+  setRowField(id: string | null | undefined, campo: string, valor: any) {
+    if (!id) return;
+    this.editAbastRows.update(rows => ({ ...rows, [id]: { ...rows[id], [campo]: valor } }));
+  }
+  rowOf(id?: string | null) {
+    return id ? this.editAbastRows()[id] : undefined;
+  }
+
+  baixaLitros(baixa: any): number {
+    return this.baixaItems(baixa).reduce(
+      (total, item) => total + this.toNumber(item?.abastecimento?.quantidade_litros),
+      0
+    );
+  }
+
+  removerComprovanteBaixa(baixa: any, url: string) {
+    if (!url) return;
+    const ok = confirm(
+      'Remover este comprovante da baixa? Ele voltará para a tela "Baixa por Comprovante". '
+      + 'Se for o único comprovante, a baixa será revertida e os abastecimentos voltarão para Pendente.'
+    );
+    if (!ok) return;
+
+    const idBaixa = String(this.baixaItems(baixa)[0]?.id_baixa ?? '').trim();
+    if (!idBaixa) { this.toastr.error('Baixa sem identificador.'); return; }
+
+    this.removendoComprovanteUrl.set(url);
+    this.api.removerComprovanteBaixa(idBaixa, url).subscribe({
+      next: (res: any) => {
+        this.removendoComprovanteUrl.set(null);
+        this.toastr.success(res?.message ?? 'Comprovante removido.');
+        this.editandoBaixa.set(null);
+        this.loadBaixas();
+        this.loadPendentes();
+      },
+      error: (err) => {
+        this.removendoComprovanteUrl.set(null);
+        this.toastr.error(err.error?.message ?? 'Erro ao remover comprovante');
+      }
+    });
+  }
+
+  salvarEdicaoBaixa() {
+    const baixa = this.editandoBaixa();
+    if (!baixa) return;
+    const ids = this.baixaItems(baixa)
+      .map((item) => String(item?.id_baixa ?? '').trim())
+      .filter(Boolean);
+    if (ids.length === 0) { this.toastr.error('Baixa sem identificador.'); return; }
+
+    const payload: any = {
+      forma_pagamento: this.editForm.forma_pagamento || null,
+      data_pagamento: this.editForm.data_pagamento || null,
+      data_hora: this.editForm.data_baixa || null,
+      data_baixa: this.editForm.data_baixa || null,
+      usuario: this.editForm.usuario || null,
+      tipo_despesa: this.editForm.tipo_despesa || null,
+      recebedor: this.editForm.recebedor || null,
+      descricao: this.editForm.descricao || null,
+      observacao: this.editForm.observacao || null,
+    };
+
+    // Atualizações dos abastecimentos (campos permitidos pelo backend;
+    // valor_por_litro é protegido e o valor_total é recalculado por lá).
+    const rows = this.editAbastRows();
+    const chamadasAbast = Object.keys(rows).map((id) => {
+      const r = rows[id];
+      const data: any = {
+        tipo_combustivel: r.tipo_combustivel || undefined,
+        quantidade_litros: this.toNumber(r.quantidade_litros) || undefined,
+      };
+      if (r.data_hora) {
+        data.data_hora = r.data_hora;
+        data.data = String(r.data_hora).slice(0, 10);
+      }
+      if (r.id_veiculo) data.id_veiculo = r.id_veiculo;
+      if (r.id_motorista) data.id_motorista = r.id_motorista;
+      return this.api.updateAbastecimento(id, data);
+    });
+
+    this.editandoBusy.set(true);
+    const chamadas = [...ids.map((id) => this.api.updateBaixa(id, payload)), ...chamadasAbast];
+    forkJoin(chamadas).subscribe({
+      next: () => {
+        this.toastr.success('Baixa atualizada.');
+        this.editandoBaixa.set(null);
+        this.editandoBusy.set(false);
+        this.loadBaixas();
+        this.loadPendentes();
+      },
+      error: (err) => {
+        this.editandoBusy.set(false);
+        console.error('Erro ao atualizar baixa:', err);
+        const msg = this.apiErrorMessage(err, 'Erro ao atualizar baixa');
+        this.toastr.error(msg, 'Erro', { timeOut: 6000 });
+      }
+    });
+  }
+
+  private apiErrorMessage(err: any, fallback: string): string {
+    if (!err) return fallback;
+    if (typeof err.error === 'string' && err.error.includes('<!DOCTYPE html>')) return 'Erro interno do servidor (HTML).';
+    if (err.error?.errors) {
+      const firstKey = Object.keys(err.error.errors)[0];
+      const messages = err.error.errors[firstKey];
+      return Array.isArray(messages) ? messages[0] : String(messages);
+    }
+    return err.error?.message || err.message || fallback;
   }
 
   deleteBaixaGroup(baixa: any) {

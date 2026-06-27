@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, computed, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { forkJoin } from 'rxjs';
 import { ApiService } from '../../core/services/api.service';
@@ -22,20 +22,26 @@ interface TankView {
   imports: [CommonModule, FormsModule],
   template: `
     <div class="page">
-      <header class="page-header">
+      @if (!isAdmin()) {
+        <header class="page-header">
+          <div>
+            <h1>Acesso Restrito</h1>
+            <p>Esta tela está disponível apenas para administradores.</p>
+          </div>
+        </header>
+      } @else {
+        <header class="page-header">
         <div>
-          <span>Privado</span>
-          <h1>Tanques Matriz x Viana</h1>
+          <span>Histórico</span>
+          <h1>Histórico do Tanque</h1>
           <p>Leitura visual baseada no card Combustível no Tanque.</p>
         </div>
-        <button type="button" class="primary-btn" (click)="load()" [disabled]="loading() || !canAccess()">
+        <button type="button" class="primary-btn" (click)="load()" [disabled]="loading()">
           {{ loading() ? 'Atualizando...' : 'Atualizar' }}
         </button>
       </header>
 
-      @if (!canAccess()) {
-        <section class="state error">Acesso restrito ao administrador autorizado.</section>
-      } @else if (error()) {
+      @if (error()) {
         <section class="state error">{{ error() }}</section>
       } @else if (loading()) {
         <section class="state">Carregando tanques...</section>
@@ -171,8 +177,8 @@ interface TankView {
 
                   <div class="history-chart">
                     <svg viewBox="0 0 100 52" preserveAspectRatio="none" aria-hidden="true">
-                      <polygon [attr.points]="historyArea(item)"></polygon>
-                      <polyline [attr.points]="historyPolyline(item)"></polyline>
+                      <path [attr.d]="historyAreaPath(item)" class="area-path"></path>
+                      <path [attr.d]="historyLinePath(item)" class="line-path"></path>
                     </svg>
                   </div>
 
@@ -213,6 +219,7 @@ interface TankView {
           </section>
         }
       }
+    }
     </div>
   `,
   styles: [`
@@ -673,11 +680,12 @@ interface TankView {
       overflow: visible;
     }
 
-    .history-chart polygon {
+    .area-path {
       fill: rgba(15, 118, 110, 0.13);
+      stroke: none;
     }
 
-    .history-chart polyline {
+    .line-path {
       fill: none;
       stroke: #0F766E;
       stroke-width: 2.5;
@@ -884,22 +892,21 @@ export class TanquesPrivadoComponent implements OnInit {
       .filter((item): item is TanqueHistoricoLocal => !!item);
   });
 
-  constructor(private api: ApiService, private auth: AuthService) {}
+  private auth = inject(AuthService);
+
+  constructor(private api: ApiService) {}
+
+  isAdmin(): boolean {
+    return this.auth.isAdmin();
+  }
 
   ngOnInit(): void {
-    if (this.canAccess()) {
+    if (this.isAdmin()) {
       this.load();
     }
   }
 
-  canAccess(): boolean {
-    const user = this.auth.currentUser();
-    const ident = `${user?.login ?? ''} ${user?.nome ?? ''}`.toLowerCase();
-    return user?.tipo === 'admin' && (ident.includes('douglas') || user?.login === 'admin');
-  }
-
   load(): void {
-    if (!this.canAccess()) return;
     this.loading.set(true);
     this.error.set('');
 
@@ -987,10 +994,11 @@ export class TanquesPrivadoComponent implements OnInit {
     return [...(item.pontos ?? [])].reverse();
   }
 
-  historyPolyline(item: TanqueHistoricoLocal): string {
+  historyLinePath(item: TanqueHistoricoLocal): string {
     const pontos = item.pontos ?? [];
-    if (!pontos.length) return '';
-    const values = pontos.map(p => Number(p.saldo_litros ?? 0));
+    if (!pontos.length) return "";
+
+    const values = pontos.map((p) => Number(p.saldo_litros ?? 0));
     const min = Math.min(...values);
     const max = Math.max(...values);
     const gap = Math.max(1, (max - min) * 0.12);
@@ -998,17 +1006,45 @@ export class TanquesPrivadoComponent implements OnInit {
     const maxScale = max + gap;
     const range = Math.max(1, maxScale - minScale);
 
-    return pontos.map((p, index) => {
-      const x = pontos.length === 1 ? 50 : (index / (pontos.length - 1)) * 100;
-      const y = 48 - ((Number(p.saldo_litros ?? 0) - minScale) / range) * 42;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    }).join(' ');
+    const chartPoints = pontos.map((p, index) => ({
+      x: pontos.length === 1 ? 50 : (index / (pontos.length - 1)) * 100,
+      y: 48 - ((Number(p.saldo_litros ?? 0) - minScale) / range) * 42,
+    }));
+
+    return this.smoothPath(chartPoints);
   }
 
-  historyArea(item: TanqueHistoricoLocal): string {
-    const line = this.historyPolyline(item);
-    if (!line) return '';
-    return `0,52 ${line} 100,52`;
+  historyAreaPath(item: TanqueHistoricoLocal): string {
+    const pontos = item.pontos ?? [];
+    if (!pontos.length) return "";
+
+    const line = this.historyLinePath(item);
+    return `${line} L 100,52 L 0,52 Z`;
+  }
+
+  private smoothPath(points: { x: number; y: number }[]): string {
+    if (!points.length) return "";
+    if (points.length === 1)
+      return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+
+    let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i === 0 ? i : i - 1];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = i + 2 < points.length ? points[i + 2] : p2;
+
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+
+    return path;
   }
 
   private toTank(local: TankLocal, data: DashboardData): TankView {

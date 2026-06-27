@@ -20,7 +20,15 @@
             "browser": "src/main.ts",
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.app.json",
-            "assets": ["src/assets", "src/manifest.webmanifest"],
+            "assets": [
+              "src/assets",
+              "src/manifest.webmanifest",
+              {
+                "glob": "pdf.worker.min.mjs",
+                "input": "node_modules/pdfjs-dist/build",
+                "output": "/"
+              }
+            ],
             "styles": ["src/styles.css"],
             "scripts": []
           },
@@ -29,7 +37,7 @@
               "serviceWorker": "ngsw-config.json",
               "budgets": [
                 { "type": "initial", "maximumWarning": "500kb", "maximumError": "1mb" },
-                { "type": "anyComponentStyle", "maximumWarning": "12kb", "maximumError": "16kb" }
+                { "type": "anyComponentStyle", "maximumWarning": "16kb", "maximumError": "24kb" }
               ],
               "outputHashing": "all",
               "fileReplacements": [

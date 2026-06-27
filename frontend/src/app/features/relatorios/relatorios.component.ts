@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
 import { ToastrService } from 'ngx-toastr';
 import { Proprietario, Veiculo, Abastecimento } from '../../shared/models';
+import { ExcelExportService } from '../../core/services/excel-export.service';
 import jsPDF from 'jspdf';
 
 @Component({
@@ -103,6 +104,9 @@ import jsPDF from 'jspdf';
             <button class="btn-pdf" (click)="exportPdf()">
               📄 Exportar PDF
             </button>
+            <button class="btn-excel" (click)="exportExcel()">
+              📊 Exportar Excel
+            </button>
           }
         </div>
       </div>
@@ -140,6 +144,19 @@ import jsPDF from 'jspdf';
           </div>
         </div>
 
+        <div class="group-sort-bar">
+          <span>Ordenar proprietários por:</span>
+          <select [value]="grupoSortColumn()" (change)="grupoSortColumn.set($any($event.target).value)">
+            <option value="valor">Valor total</option>
+            <option value="litros">Litros</option>
+            <option value="registros">Registros</option>
+            <option value="nome">Nome</option>
+          </select>
+          <button type="button" class="btn-sort-dir" (click)="toggleGrupoSortDir()">
+            {{ grupoSortDirection() === 'asc' ? '↑ Crescente' : '↓ Decrescente' }}
+          </button>
+        </div>
+
         <div class="groups-card">
           @for (grupo of gruposProprietario(); track grupo.id) {
             <div class="owner-group">
@@ -156,14 +173,14 @@ import jsPDF from 'jspdf';
                   <table class="data-table">
                     <thead>
                       <tr>
-                        <th>Data e Hora</th>
-                        <th>Veículo</th>
-                        <th>Motorista</th>
-                        <th>Combustível</th>
-                        <th class="text-right">Qtd (L)</th>
-                        <th class="text-right">R$/L</th>
-                        <th class="text-right">Total (R$)</th>
-                        <th class="text-center">Baixa</th>
+                        <th class="sortable" (click)="sortRelBy('data_hora')">Data e Hora <span>{{ sortRelIcon('data_hora') }}</span></th>
+                        <th class="sortable" (click)="sortRelBy('placa')">Veículo <span>{{ sortRelIcon('placa') }}</span></th>
+                        <th class="sortable" (click)="sortRelBy('motorista')">Motorista <span>{{ sortRelIcon('motorista') }}</span></th>
+                        <th class="sortable" (click)="sortRelBy('combustivel')">Combustível <span>{{ sortRelIcon('combustivel') }}</span></th>
+                        <th class="text-right sortable" (click)="sortRelBy('litros')">Qtd (L) <span>{{ sortRelIcon('litros') }}</span></th>
+                        <th class="text-right sortable" (click)="sortRelBy('valor_litro')">R$/L <span>{{ sortRelIcon('valor_litro') }}</span></th>
+                        <th class="text-right sortable" (click)="sortRelBy('valor_total')">Total (R$) <span>{{ sortRelIcon('valor_total') }}</span></th>
+                        <th class="text-center sortable" (click)="sortRelBy('baixa')">Baixa <span>{{ sortRelIcon('baixa') }}</span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -207,7 +224,7 @@ import jsPDF from 'jspdf';
     * { box-sizing:border-box; }
     .page { padding:28px; font-family:'Inter',sans-serif; color:#e2e8f0; }
     .page-header { margin-bottom:20px; }
-    .page-header h1 { font-size:24px; font-weight:700; color:#111827; margin:0; }
+    .page-header h1 { font-size:24px; font-weight:700; color:#f8fafc; margin:0; }
     .page-header p { font-size:13px; color:#64748b; margin-top:4px; }
 
     .filters-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; padding:18px; margin-bottom:16px; }
@@ -246,6 +263,8 @@ import jsPDF from 'jspdf';
     .btn-search:disabled { opacity:0.4; cursor:not-allowed; }
     .btn-pdf { background:#0f172a; border:1px solid #1e2d4a; border-radius:8px; padding:10px 16px; color:#e2e8f0; font-size:13px; cursor:pointer; }
     .btn-pdf:hover { border-color:#94a3b8; }
+    .btn-excel { background:#0f172a; border:1px solid #16a34a60; border-radius:8px; padding:10px 16px; color:#4ade80; font-size:13px; cursor:pointer; }
+    .btn-excel:hover { border-color:#4ade80; }
 
     .loading-state { display:flex;align-items:center;gap:10px;padding:40px;justify-content:center;color:#64748b; }
     .spinner-lg { width:24px;height:24px;border:3px solid #1e2d4a;border-top-color:#0ea5e9;border-radius:50%;animation:spin 0.8s linear infinite; }
@@ -265,6 +284,12 @@ import jsPDF from 'jspdf';
     .total-value.green { color:#4ade80; }
 
     .table-card { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; overflow:hidden; }
+    .group-sort-bar { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+    .group-sort-bar span { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
+    .group-sort-bar select { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:7px 10px; color:#e2e8f0; font-size:12px; outline:none; }
+    .group-sort-bar select option { background:#0d1427; }
+    .btn-sort-dir { background:#0a0f1e; border:1px solid #1e2d4a; border-radius:7px; padding:7px 12px; color:#38bdf8; font-size:12px; cursor:pointer; }
+    .btn-sort-dir:hover { border-color:#38bdf8; }
     .groups-card { display:flex; flex-direction:column; gap:10px; }
     .owner-group { background:#0d1427; border:1px solid #1e2d4a; border-radius:12px; overflow:hidden; }
     .owner-summary {
@@ -281,6 +306,9 @@ import jsPDF from 'jspdf';
     .table-wrap { overflow-x:auto; }
     .data-table { width:100%; border-collapse:collapse; font-size:12px; }
     .data-table thead th { padding:10px 12px; text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#64748b; border-bottom:1px solid #1e2d4a; background:#080e1c; }
+    .data-table thead th.sortable { cursor:pointer; user-select:none; white-space:nowrap; transition:color 0.15s; }
+    .data-table thead th.sortable:hover { color:#38bdf8; }
+    .data-table thead th.sortable span { display:inline-block; min-width:10px; color:#38bdf8; }
     .data-table tbody td { padding:10px 12px; border-bottom:1px solid #1e2d4a15; }
     .data-table tbody tr:hover td { background:#1e2d4a15; }
     .data-table tfoot td { padding:10px 12px; border-top:1px solid #1e2d4a; }
@@ -305,6 +333,34 @@ import jsPDF from 'jspdf';
 export class RelatoriosComponent implements OnInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
+  private excel = inject(ExcelExportService);
+
+  exportExcel() {
+    const rel = this.relatorio();
+    if (!rel) {
+      this.toastr.warning('Gere o relatório antes de exportar');
+      return;
+    }
+    const rows = ((rel.abastecimentos ?? []) as Abastecimento[]).map((a: any) => ({
+      'Proprietário': a.nome_proprietario || a.proprietario?.nome || '',
+      'Data': a.data ? String(a.data).slice(0, 10).split('-').reverse().join('/') : '',
+      'Hora': a.data_hora ? String(a.data_hora).slice(11, 16) : '',
+      'Placa': a.veiculo?.placa ?? '',
+      'Modelo': a.veiculo?.modelo ?? '',
+      'Motorista': a.nome_motorista ?? '',
+      'Combustível': a.tipo_combustivel ?? '',
+      'Qtd (L)': Number(a.quantidade_litros ?? 0),
+      'R$/L': Number(a.valor_por_litro ?? 0),
+      'Total (R$)': Number(a.valor_total ?? 0),
+      'Baixa': a.baixa_abastecimento ? 'Baixado' : 'Pendente',
+    }));
+    if (!rows.length) {
+      this.toastr.warning('Relatório vazio.');
+      return;
+    }
+    this.excel.export(`relatorio_${this.filters.id_proprietario || 'geral'}_${new Date().toISOString().slice(0, 10)}`, rows, 'Relatório');
+    this.toastr.success(`${rows.length} registro(s) exportado(s).`);
+  }
 
   proprietarios = signal<Proprietario[]>([]);
   veiculos = signal<Veiculo[]>([]);
@@ -317,6 +373,15 @@ export class RelatoriosComponent implements OnInit {
   showVeiculoOptions = signal(false);
 
   filters: any = { id_proprietario:'', id_veiculo:'', data_inicio:'', data_fim:'', status:'' };
+
+  relSortColumn = signal<string>('data_hora');
+  relSortDirection = signal<'asc' | 'desc'>('desc');
+  grupoSortColumn = signal<'nome' | 'registros' | 'litros' | 'valor'>('valor');
+  grupoSortDirection = signal<'asc' | 'desc'>('desc');
+
+  toggleGrupoSortDir() {
+    this.grupoSortDirection.set(this.grupoSortDirection() === 'asc' ? 'desc' : 'asc');
+  }
 
   proprietariosFiltrados = computed(() => {
     const term = this.normalizeText(this.proprietarioBusca());
@@ -358,8 +423,54 @@ export class RelatoriosComponent implements OnInit {
       grupo.registros += 1;
     }
 
-    return Array.from(map.values()).sort((a, b) => b.valor - a.valor);
+    const col = this.relSortColumn();
+    const dir = this.relSortDirection() === 'asc' ? 1 : -1;
+    const gCol = this.grupoSortColumn();
+    const gDir = this.grupoSortDirection() === 'asc' ? 1 : -1;
+    const grupos = Array.from(map.values()).sort((a, b) => {
+      if (gCol === 'nome') {
+        return a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }) * gDir;
+      }
+      return (a[gCol] - b[gCol]) * gDir;
+    });
+    for (const grupo of grupos) {
+      grupo.abastecimentos.sort((a, b) => {
+        const l = this.relSortValue(a, col);
+        const r = this.relSortValue(b, col);
+        if (typeof l === 'number' && typeof r === 'number') return (l - r) * dir;
+        return String(l).localeCompare(String(r), 'pt-BR', { sensitivity: 'base' }) * dir;
+      });
+    }
+    return grupos;
   });
+
+  private relSortValue(a: Abastecimento, col: string): string | number {
+    switch (col) {
+      case 'data_hora': return a.data_hora ? new Date(a.data_hora as any).getTime() : 0;
+      case 'placa': return a.veiculo?.placa ?? '';
+      case 'motorista': return a.nome_motorista ?? a.motorista?.nome ?? '';
+      case 'combustivel': return a.tipo_combustivel ?? '';
+      case 'litros': return Number(a.quantidade_litros ?? 0);
+      case 'valor_litro': return Number(a.valor_por_litro ?? 0);
+      case 'valor_total': return Number(a.valor_total ?? 0);
+      case 'baixa': return a.baixa_abastecimento ? 1 : 0;
+      default: return '';
+    }
+  }
+
+  sortRelBy(col: string) {
+    if (this.relSortColumn() === col) {
+      this.relSortDirection.set(this.relSortDirection() === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    this.relSortColumn.set(col);
+    this.relSortDirection.set(col === 'data_hora' ? 'desc' : 'asc');
+  }
+
+  sortRelIcon(col: string): string {
+    if (this.relSortColumn() !== col) return '';
+    return this.relSortDirection() === 'asc' ? '↑' : '↓';
+  }
 
   ngOnInit() {
     this.api.getProprietariosAll().subscribe(r => this.proprietarios.set(r.data));
@@ -376,7 +487,7 @@ export class RelatoriosComponent implements OnInit {
   }
 
   private normalizeText(value: unknown): string {
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   }
 
   onProprietarioBuscaChange(event: Event) {

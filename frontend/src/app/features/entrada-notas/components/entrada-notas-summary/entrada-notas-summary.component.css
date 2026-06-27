@@ -1,0 +1,20 @@
+.summary-row { display: flex; gap: 16px; margin-bottom: 14px; }
+.summary-item { background: #0d1427; border: 1px solid #1e2d4a; border-radius: 10px; padding: 12px 18px; display: flex; flex-direction: column; }
+.s-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+.s-value { font-size: 18px; font-weight: 700; color: #f8fafc; margin-top: 2px; }
+.s-value.blue { color: #38bdf8; }
+.s-value.green { color: #4ade80; }
+.s-value.amber { color: #f59e0b; }
+.s-value.purple { color: #c084fc; }
+
+.suppliers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.supplier-card { background: #0d1427; border: 1px solid #1e2d4a; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; transition: transform 0.2s; }
+.supplier-card:hover { transform: translateY(-2px); border-color: #38bdf840; }
+.supplier-info { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #1e2d4a50; padding-bottom: 8px; }
+.supplier-name { font-size: 13px; font-weight: 700; color: #f8fafc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.supplier-count { font-size: 10px; color: #64748b; font-weight: 600; text-transform: uppercase; }
+.supplier-stats { display: flex; gap: 16px; }
+.supplier-stats .stat { display: flex; flex-direction: column; gap: 2px; }
+.stat-label { font-size: 9px; color: #64748b; text-transform: uppercase; letter-spacing: 0.4px; }
+.stat-value { font-size: 14px; font-weight: 700; color: #e2e8f0; }
+.val-green { color: #4ade80; font-weight: 600; }
