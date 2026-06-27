@@ -481,8 +481,8 @@ export class ApiService {
     let normalized = String(url).trim();
     if (!normalized) return null;
 
-    if (normalized.includes('drive.google.com/uc?id=')) {
-      const match = normalized.match(/id=([^&]+)/);
+    if (normalized.includes('drive.google.com/')) {
+      const match = normalized.match(/(?:id=|file\/d\/)([^&/?]+)/);
       if (match && match[1]) {
         return `${this.base}/drive-image?id=${match[1]}`;
       }
