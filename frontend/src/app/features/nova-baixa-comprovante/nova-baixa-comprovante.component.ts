@@ -194,7 +194,7 @@ function criarGrupoState(proprietarioId: string | null, proprietarioNome: string
                   <div class="comp-thumb-wrap">
                     <button class="comp-thumb" type="button" (click)="abrirPreview(c)">
                       @if (c.arquivo_tipo === 'image') {
-                        <img [src]="c.arquivo_url" alt="comprovante" loading="lazy" />
+                        <img [src]="resolveImageUrl(c.arquivo_url)" alt="comprovante" loading="lazy" />
                       } @else {
                         @if (pdfThumb(c.arquivo_url); as thumb) {
                           <img [src]="thumb" alt="PDF" loading="lazy" />
@@ -1312,7 +1312,7 @@ export class NovaBaixaComprovanteComponent implements OnInit {
     this.previewTipo.set(c.arquivo_tipo === 'pdf' ? 'pdf' : 'image');
     this.previewNome.set(c.remetente_extraido ?? 'Comprovante');
     if (!this.isCloudinaryUrl(c.arquivo_url)) {
-      this.previewUrl.set(c.arquivo_url);
+      this.previewUrl.set(this.resolveImageUrl(c.arquivo_url) ?? c.arquivo_url);
       return;
     }
 
@@ -1348,9 +1348,13 @@ export class NovaBaixaComprovanteComponent implements OnInit {
     } catch { return null; }
   }
 
-  private isCloudinaryUrl(url: string): boolean {
+  resolveImageUrl(url?: string | null): string | null {
+    return this.api.resolveImageUrl(url) || (url ?? null);
+  }
+
+  isCloudinaryUrl(url?: string | null): boolean {
     try {
-      return new URL(url).hostname === 'res.cloudinary.com';
+      return new URL(url!).hostname === 'res.cloudinary.com';
     } catch {
       return false;
     }
