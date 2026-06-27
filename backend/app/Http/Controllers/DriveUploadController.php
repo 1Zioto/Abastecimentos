@@ -18,14 +18,8 @@ class DriveUploadController extends Controller
             $uploaded = $data['file'];
 
             $cloudinaryUrl = (string) env('CLOUDINARY_URL', '');
-            if ($cloudinaryUrl !== '') {
-                $uploadedFile = $this->uploadToCloudinary($uploaded, $cloudinaryUrl);
+            // Cloudinary migration: all new uploads go directly to Google Drive
 
-                return new \Illuminate\Http\JsonResponse([
-                    'message' => 'Arquivo enviado para o Cloudinary.',
-                    'file' => $uploadedFile,
-                ], 201);
-            }
 
             $folderId = (string) env('GOOGLE_DRIVE_FOLDER_ID', '');
             if ($folderId === '') {
@@ -106,72 +100,33 @@ class DriveUploadController extends Controller
         }
     }
 
-    private function uploadToCloudinary($uploaded, string $cloudinaryUrl): array
+    public function showImage(Request $request)
     {
-        $parsed = parse_url($cloudinaryUrl);
-        $cloudName = $parsed['host'] ?? '';
-        $user = isset($parsed['user']) ? urldecode($parsed['user']) : '';
-        $pass = isset($parsed['pass']) ? urldecode($parsed['pass']) : '';
-
-        if ($cloudName === '' || $user === '' || $pass === '') {
-            throw new \RuntimeException('CLOUDINARY_URL inválido.');
+        $id = $request->query('id');
+        if (!$id) {
+            return response('ID não informado', 400);
         }
 
-        $timestamp = time();
-        $publicId = (string) Str::uuid();
-        $folder = trim((string) env('CLOUDINARY_FOLDER', 'abastecimentos'));
+        try {
+            $accessToken = $this->fetchAccessToken();
+            $response = Http::withToken($accessToken)
+                ->get("https://www.googleapis.com/drive/v3/files/{$id}?alt=media");
 
-        $signatureData = [
-            'public_id' => $publicId,
-            'timestamp' => (string) $timestamp,
-        ];
-        if ($folder !== '') {
-            $signatureData['folder'] = $folder;
+            if (!$response->successful()) {
+                return response('Imagem não encontrada: ' . $response->body(), 404);
+            }
+
+            $contentType = $response->header('Content-Type');
+            if (!$contentType || str_contains($contentType, 'application/json')) {
+                $contentType = 'image/jpeg';
+            }
+
+            return response($response->body(), 200)
+                ->header('Content-Type', $contentType)
+                ->header('Cache-Control', 'public, max-age=864000');
+        } catch (\Throwable $e) {
+            return response('Erro ao buscar imagem', 500);
         }
-
-        ksort($signatureData);
-        $toSign = collect($signatureData)
-            ->map(fn ($value, $key) => $key . '=' . $value)
-            ->implode('&');
-        $signature = sha1($toSign . $pass);
-
-        $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/auto/upload";
-        $fileBytes = file_get_contents($uploaded->getRealPath());
-        if ($fileBytes === false) {
-            throw new \RuntimeException('Não foi possível ler o arquivo para upload.');
-        }
-
-        $payload = [
-            'api_key' => $user,
-            'timestamp' => $timestamp,
-            'signature' => $signature,
-            'public_id' => $publicId,
-        ];
-        if ($folder !== '') {
-            $payload['folder'] = $folder;
-        }
-
-        $response = Http::connectTimeout(10)
-            ->timeout(30)
-            ->attach('file', $fileBytes, $uploaded->getClientOriginalName())
-            ->post($uploadUrl, $payload);
-
-        if (!$response->successful()) {
-            throw new \RuntimeException('Falha no Cloudinary: ' . $response->body());
-        }
-
-        $json = $response->json() ?? [];
-        $url = $json['secure_url'] ?? ($json['url'] ?? null);
-
-        return [
-            'id' => $json['public_id'] ?? null,
-            'name' => $uploaded->getClientOriginalName(),
-            'mimeType' => $uploaded->getMimeType() ?: 'application/octet-stream',
-            'size' => (int) ($json['bytes'] ?? $uploaded->getSize() ?? 0),
-            'webViewLink' => $url,
-            'webContentLink' => $url,
-            'downloadUrl' => $url,
-        ];
     }
 
     private function resolveServiceAccountCredentials(): array

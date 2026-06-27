@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\BaixaAbastecimento;
 use App\Models\Abastecimento;
 use App\Models\Proprietario;
+use App\Support\RecebedorBaixa;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -273,7 +274,7 @@ class BaixaAbastecimentoController extends Controller
             'descricao'    => $data['descricao'] ?? null,
             'valor'        => $data['valor'] ?? null,
             'placa1'       => $data['placa1'] ?? null,
-            'recebedor'    => $data['recebedor'] ?? null,
+            'recebedor'    => RecebedorBaixa::normalizar($data['recebedor'] ?? null),
             'observacao'   => $data['observacao'] ?? null,
             'anexo'        => $data['anexo'] ?? null,
             'sync_token_at' => now(),
@@ -313,9 +314,42 @@ class BaixaAbastecimentoController extends Controller
         DB::table('baixa_abastecimento')->insert($payload);
     }
 
+    private function normalizarRecebedoresExistentes(): void
+    {
+        if (!$this->tabelaTemColuna('abastecimentos', 'recebedor')) {
+            return;
+        }
+
+        try {
+            $valores = DB::table('abastecimentos')
+                ->select('recebedor')
+                ->whereNotNull('recebedor')
+                ->whereRaw("TRIM(COALESCE(recebedor, '')) <> ''")
+                ->distinct()
+                ->pluck('recebedor');
+
+            foreach ($valores as $valor) {
+                $normalizado = RecebedorBaixa::normalizar($valor);
+                if ($normalizado === $valor) {
+                    continue;
+                }
+
+                DB::table('abastecimentos')
+                    ->where('recebedor', $valor)
+                    ->update([
+                        'recebedor' => $normalizado,
+                        'sync_token_at' => now(),
+                    ]);
+            }
+        } catch (\Throwable) {
+            // Normalização de legado não pode bloquear a listagem de baixas.
+        }
+    }
+
     public function index(Request $request)
     {
         $this->garantirColunasAuditoria('baixa_abastecimento');
+        $this->normalizarRecebedoresExistentes();
         $query = BaixaAbastecimento::with(['abastecimento.veiculo','abastecimento.proprietario']);
         $this->aplicarFiltroAtivos($query, 'baixa_abastecimento', $request);
         $permitidas = $this->filiaisPermitidas();
@@ -376,7 +410,7 @@ class BaixaAbastecimentoController extends Controller
 
         $data['data_pagamento'] = $this->emptyToNull($data['data_pagamento'] ?? null);
         $data['data_baixa'] = $this->emptyToNull($data['data_baixa'] ?? null);
-        $data['recebedor'] = $this->emptyToNull($data['recebedor'] ?? null);
+        $data['recebedor'] = RecebedorBaixa::normalizar($data['recebedor'] ?? null);
         $data['observacao'] = $this->emptyToNull($data['observacao'] ?? null);
         $data['anexo'] = $this->normalizarAnexos($data);
         $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
@@ -423,7 +457,7 @@ class BaixaAbastecimentoController extends Controller
         $data['data_baixa'] = $this->emptyToNull($data['data_baixa'] ?? null);
         $data['tipo_despesa'] = $this->emptyToNull($data['tipo_despesa'] ?? null) ?? 'Combustível';
         $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
-        $data['recebedor'] = $this->emptyToNull($data['recebedor'] ?? null);
+        $data['recebedor'] = RecebedorBaixa::normalizar($data['recebedor'] ?? null);
         $data['observacao'] = $this->emptyToNull($data['observacao'] ?? null);
         $data['anexo'] = $this->normalizarAnexos($data);
         $data['valor'] = $this->emptyToNull($data['valor'] ?? null);
@@ -583,7 +617,7 @@ class BaixaAbastecimentoController extends Controller
         $data['data_baixa'] = $this->emptyToNull($data['data_baixa'] ?? null) ?? now();
         $data['tipo_despesa'] = $this->emptyToNull($data['tipo_despesa'] ?? null) ?? 'Combustível';
         $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
-        $data['recebedor'] = $this->emptyToNull($data['recebedor'] ?? null);
+        $data['recebedor'] = RecebedorBaixa::normalizar($data['recebedor'] ?? null);
         $data['observacao'] = $this->emptyToNull($data['observacao'] ?? null);
         $data['nota_entrada'] = $this->emptyToNull($data['nota_entrada'] ?? null)
             ?? ($idempotencyKey ? ('auto:' . $idempotencyKey) : ('auto:' . (string) Str::uuid()));
@@ -646,18 +680,51 @@ class BaixaAbastecimentoController extends Controller
 
     public function update(Request $request, string $id)
     {
-        $baixa = BaixaAbastecimento::findOrFail($id);
-        $this->validarAcessoAbastecimento($baixa->id_abastecimento);
-        $data = $request->only(['forma_pagamento','data_pagamento','nota_entrada']);
-        $this->registrarAlteracoes($baixa, $data);
-        $baixa->update($data);
-        return new \Illuminate\Http\JsonResponse($baixa->fresh());
+        try {
+            $baixa = BaixaAbastecimento::findOrFail($id);
+            $this->validarAcessoAbastecimento($baixa->id_abastecimento);
+
+            // Campos da própria baixa.
+            $data = $request->only(['forma_pagamento', 'data_pagamento', 'nota_entrada', 'data_hora', 'usuario']);
+            if (!empty($data)) {
+                $this->registrarAlteracoes($baixa, $data);
+                $baixa->update($data);
+            }
+
+            // Campos espelhados no abastecimento (recebedor, observação, etc.).
+            $abastUpdate = [];
+            foreach (['recebedor', 'observacao', 'descricao', 'tipo_despesa', 'data_baixa'] as $campo) {
+                if ($request->has($campo) && $this->tabelaTemColuna('abastecimentos', $campo)) {
+                    $abastUpdate[$campo] = $campo === 'recebedor'
+                        ? RecebedorBaixa::normalizar($request->input($campo))
+                        : $request->input($campo);
+                }
+            }
+            if (!empty($abastUpdate)) {
+                $abastUpdate['sync_token_at'] = now();
+                Abastecimento::where('id_abastecimento', $baixa->id_abastecimento)->update($abastUpdate);
+            }
+
+            return new \Illuminate\Http\JsonResponse($baixa->fresh(['abastecimento']));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Registro de baixa não encontrado.'], 404);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return new \Illuminate\Http\JsonResponse([
+                'message' => 'Erro de validação.',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Throwable $e) {
+            return new \Illuminate\Http\JsonResponse([
+                'message' => 'Erro interno ao atualizar baixa: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function destroy(string $id)
     {
         $baixa = BaixaAbastecimento::findOrFail($id);
         $this->validarAcessoAbastecimento($baixa->id_abastecimento);
+        $nota = $baixa->nota_entrada;
         // Reverter o abastecimento para não baixado
         Abastecimento::where('id_abastecimento', $baixa->id_abastecimento)->update([
             'baixa_abastecimento' => $this->sqlBoolean(false),
@@ -671,7 +738,140 @@ class BaixaAbastecimentoController extends Controller
             'anexo' => null,
             'sync_token_at' => now(),
         ]);
+
+        // Se a baixa veio da tela "Baixa por Comprovante" (nota "comprovantes:..."),
+        // devolve os comprovantes vinculados para lá (status pendente), em vez de
+        // deixá-los presos como "aplicado".
+        if ($nota && is_string($nota) && str_starts_with($nota, 'comprovantes:')) {
+            $this->reabrirComprovantesDaNota($nota);
+        }
+
         return $this->inativarRegistro($baixa, 'Baixa inativada e abastecimento retornou para Pendente');
+    }
+
+    /**
+     * Devolve os comprovantes de pagamento de uma nota para a tela "Baixa por
+     * Comprovante" (status pendente), liberando-os para um novo lançamento.
+     */
+    private function reabrirComprovantesDaNota(string $nota): void
+    {
+        try {
+            if (!DB::getSchemaBuilder()->hasTable('comprovantes_pagamento')) {
+                return;
+            }
+            DB::table('comprovantes_pagamento')
+                ->where('nota_entrada', $nota)
+                ->whereNotNull('proprietario_id')
+                ->update(['status' => 'aguardando_confirmacao', 'nota_entrada' => null, 'updated_at' => now()]);
+            DB::table('comprovantes_pagamento')
+                ->where('nota_entrada', $nota)
+                ->whereNull('proprietario_id')
+                ->update(['status' => 'aguardando_proprietario', 'nota_entrada' => null, 'updated_at' => now()]);
+        } catch (\Throwable $e) {
+            // Não bloqueia a exclusão da baixa se a reabertura falhar.
+        }
+    }
+
+    /**
+     * Remove UM comprovante (por URL) de uma baixa: devolve o comprovante para a
+     * tela "Baixa por Comprovante" (pendente) e tira a URL do anexo dos
+     * abastecimentos. Se era o último comprovante, reverte a baixa inteira.
+     */
+    public function removerComprovante(Request $request, string $id)
+    {
+        $user = auth()->user();
+        if (!$user || ($user->tipo ?? null) !== 'admin') {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Apenas administradores podem remover comprovantes de uma baixa.'], 403);
+        }
+
+        $baixa = BaixaAbastecimento::findOrFail($id);
+        $this->validarAcessoAbastecimento($baixa->id_abastecimento);
+
+        $url = trim((string) $request->input('url', ''));
+        if ($url === '') {
+            return new \Illuminate\Http\JsonResponse(['message' => 'URL do comprovante é obrigatória.'], 422);
+        }
+
+        $nota = $baixa->nota_entrada;
+        if (!$nota || !is_string($nota) || !str_starts_with($nota, 'comprovantes:')) {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Esta baixa não possui comprovantes vinculados para remover.'], 422);
+        }
+
+        $temTabela = false;
+        try { $temTabela = DB::getSchemaBuilder()->hasTable('comprovantes_pagamento'); } catch (\Throwable $e) {}
+
+        // Libera o comprovante correspondente (volta para "Baixa por Comprovante").
+        if ($temTabela) {
+            $comp = DB::table('comprovantes_pagamento')
+                ->where('nota_entrada', $nota)
+                ->where('arquivo_url', $url)
+                ->first();
+            if ($comp) {
+                DB::table('comprovantes_pagamento')->where('id', $comp->id)->update([
+                    'status'       => $comp->proprietario_id ? 'aguardando_confirmacao' : 'aguardando_proprietario',
+                    'nota_entrada' => null,
+                    'updated_at'   => now(),
+                ]);
+            }
+        }
+
+        // Tira a URL do anexo de todos os abastecimentos do lote.
+        $idsAbast = DB::table('baixa_abastecimento')->where('nota_entrada', $nota)->pluck('id_abastecimento')->all();
+        foreach ($idsAbast as $idAbast) {
+            $ab = Abastecimento::where('id_abastecimento', $idAbast)->first();
+            if ($ab) {
+                $ab->update(['anexo' => $this->removerUrlDeAnexo($ab->anexo, $url), 'sync_token_at' => now()]);
+            }
+        }
+
+        // Se não restou nenhum comprovante na nota, reverte a baixa inteira.
+        $restantes = $temTabela
+            ? DB::table('comprovantes_pagamento')->where('nota_entrada', $nota)->count()
+            : 0;
+
+        $baixaRevertida = false;
+        if ($restantes === 0 && !empty($idsAbast)) {
+            Abastecimento::whereIn('id_abastecimento', $idsAbast)->update([
+                'baixa_abastecimento' => $this->sqlBoolean(false),
+                'data_baixa'   => null,
+                'tipo_despesa' => null,
+                'descricao'    => null,
+                'valor'        => null,
+                'placa1'       => null,
+                'recebedor'    => null,
+                'observacao'   => null,
+                'anexo'        => null,
+                'sync_token_at' => now(),
+            ]);
+            DB::table('baixa_abastecimento')->where('nota_entrada', $nota)->delete();
+            $baixaRevertida = true;
+        }
+
+        return new \Illuminate\Http\JsonResponse([
+            'message' => $baixaRevertida
+                ? 'Comprovante removido. Era o último: a baixa foi revertida e os abastecimentos voltaram para Pendente.'
+                : 'Comprovante removido da baixa e devolvido para "Baixa por Comprovante".',
+            'baixa_revertida'      => $baixaRevertida,
+            'comprovantes_restantes' => $restantes,
+        ]);
+    }
+
+    private function removerUrlDeAnexo($anexo, string $url): ?string
+    {
+        if (!$anexo) return null;
+        $s = trim((string) $anexo);
+        $lista = [];
+        if (str_starts_with($s, '[')) {
+            $dec = json_decode($s, true);
+            if (is_array($dec)) $lista = $dec;
+        } elseif ($s !== '') {
+            $lista = [$s];
+        }
+        $lista = array_values(array_filter($lista, fn ($u) => trim((string) $u) !== $url));
+        if (empty($lista)) return null;
+        return count($lista) === 1
+            ? $lista[0]
+            : json_encode($lista, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     public function forceDelete(string $id)

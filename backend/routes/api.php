@@ -24,12 +24,27 @@ use App\Http\Controllers\BalancetePrivadoController;
 use App\Http\Controllers\TanqueHistoricoController;
 use App\Http\Controllers\AbastecimentoAuditoriaController;
 use App\Http\Controllers\GraficosGerenciaisController;
+use App\Http\Controllers\ComprovantePagamentoController;
+use App\Http\Controllers\AliasProprietarioController;
+use App\Http\Controllers\ApiKeyController;
+use App\Http\Controllers\PortalProprietarioController;
+use App\Http\Controllers\SofitController;
+use App\Http\Controllers\ConciliacaoBancariaController;
+use App\Http\Controllers\CloudinaryController;
+use App\Http\Controllers\CloudinaryMediaController;
+use App\Http\Controllers\GoogleDriveOAuthController;
 
 /*
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
 */
+
+// Nova Baixa: recebimento externo de comprovantes (API key)
+Route::middleware('api_key')->group(function () {
+    Route::post('external/comprovantes', [ComprovantePagamentoController::class, 'storeExterno']);
+    Route::post('external/comprovantes/lote', [ComprovantePagamentoController::class, 'storeExternoLote']);
+});
 
 // Auth
 Route::prefix('auth')->group(function () {
@@ -41,6 +56,16 @@ Route::prefix('auth')->group(function () {
 
 // Atualização do APK
 Route::get('app-update', [AppUpdateController::class, 'show']);
+
+// Autorização única do Google Drive (OAuth 2.0 Web Server Flow)
+Route::get('google-drive/auth', [GoogleDriveOAuthController::class, 'redirect']);
+Route::get('google-drive/callback', [GoogleDriveOAuthController::class, 'callback']);
+
+// Portal público do proprietário (acesso por token, sem login)
+Route::get('portal/{token}', [PortalProprietarioController::class, 'show']);
+
+// Google Drive Image Proxy (acesso público para o frontend renderizar miniaturas)
+Route::get('drive-image', [DriveUploadController::class, 'showImage']);
 
 // Protected routes
 Route::middleware('auth:api')->group(function () {
@@ -64,6 +89,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Abastecimentos (leitura)
     Route::get('abastecimentos/filter/baixa-pendente', [AbastecimentoController::class, 'pendenteBaixa']);
+    Route::get('abastecimentos/preco-custo-automatico/{tipo}', [AbastecimentoController::class, 'precoCustoAutomatico']);
     Route::apiResource('abastecimentos', AbastecimentoController::class)->only(['index', 'show']);
     Route::get('abastecimentos/{id}/comprovante', [AbastecimentoController::class, 'comprovante']);
     Route::get('abastecimentos/{id}/comprovante/debug', [AbastecimentoController::class, 'comprovanteDebug']);
@@ -72,6 +98,7 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('baixas', BaixaAbastecimentoController::class)->only(['index', 'show']);
 
     // Entrada de Notas (leitura)
+    Route::get('entrada-notas/fornecedores', [EntradaNotaController::class, 'fornecedores']);
     Route::apiResource('entrada-notas', EntradaNotaController::class)->only(['index', 'show']);
 
     // Valores Combustível (leitura)
@@ -94,7 +121,11 @@ Route::middleware('auth:api')->group(function () {
 
     // Uploads
     Route::post('uploads/drive', [DriveUploadController::class, 'store']);
+    Route::get('media/cloudinary', [CloudinaryMediaController::class, 'show']);
     Route::post('abastecimentos/analisar-comprovante', [ComprovanteAnalysisController::class, 'analyze']);
+
+    // Lançar no Sofit (liberado para todos os perfis logados, inclusive visualizador)
+    Route::post('abastecimentos/{id}/lancar-sofit', [SofitController::class, 'lancar']);
 
     // Criação: admin e operador
     Route::middleware('admin_or_operador')->group(function () {
@@ -108,6 +139,8 @@ Route::middleware('auth:api')->group(function () {
         Route::post('abastecimentos/{id}/analisar-inconsistencias', [AbastecimentoController::class, 'analisarInconsistencias']);
         Route::post('entrada-notas', [EntradaNotaController::class, 'store']);
         Route::post('entrada-notas/{id}/analisar-ia', [EntradaNotaController::class, 'analisarIa']);
+        Route::post('entrada-notas/{id}/confirmar-fornecedor', [EntradaNotaController::class, 'confirmarFornecedor']);
+        Route::post('entrada-notas/{id}/baixar', [EntradaNotaController::class, 'baixar']);
         Route::post('encerrantes-bomba', [EncerranteBombaController::class, 'store']);
     });
 
@@ -119,10 +152,10 @@ Route::middleware('auth:api')->group(function () {
         Route::get('auditoria/abastecimentos-suspeitos', [AbastecimentoAuditoriaController::class, 'index']);
         Route::post('auditoria/abastecimentos-suspeitos/{id}/auditar', [AbastecimentoAuditoriaController::class, 'marcarAuditado']);
 
-        // Tela privada Douglas
+        // Telas administrativas
         Route::get('balancete-privado', [BalancetePrivadoController::class, 'index']);
-        Route::get('tanques-privado/historico', [TanqueHistoricoController::class, 'index']);
         Route::get('graficos-gerenciais', [GraficosGerenciaisController::class, 'index']);
+        Route::get('tanques-privado/historico', [TanqueHistoricoController::class, 'index']);
 
         // Erros do APK/app
         Route::get('app-erros', [AppErroController::class, 'index']);
@@ -132,7 +165,21 @@ Route::middleware('auth:api')->group(function () {
         Route::post('despesas-avulsas/{id}/restore', [DespesaAvulsaController::class, 'restore']);
         Route::apiResource('despesas-avulsas', DespesaAvulsaController::class);
 
+        // Conciliação bancária
+        Route::prefix('conciliacao-bancaria')->group(function () {
+            Route::get('extratos', [ConciliacaoBancariaController::class, 'index']);
+            Route::post('extratos/importar', [ConciliacaoBancariaController::class, 'importar']);
+            Route::post('extratos/{id}/ignorar', [ConciliacaoBancariaController::class, 'ignorar']);
+            Route::get('extratos/{id}/sugestoes', [ConciliacaoBancariaController::class, 'sugestoes']);
+            Route::get('extratos/{id}/detalhes', [ConciliacaoBancariaController::class, 'detalhes']);
+            Route::post('extratos/{id}/conciliar', [ConciliacaoBancariaController::class, 'conciliar']);
+            Route::post('extratos/{id}/desconciliar', [ConciliacaoBancariaController::class, 'desconciliar']);
+            Route::delete('extratos/{id}', [ConciliacaoBancariaController::class, 'destroy']);
+            Route::get('baixas-disponiveis', [ConciliacaoBancariaController::class, 'baixasDisponiveis']);
+        });
+
         // Proprietários
+        Route::post('proprietarios/{id}/portal-token', [PortalProprietarioController::class, 'gerarToken']);
         Route::post('proprietarios/{id}/bloquear', [ProprietarioController::class, 'bloquear']);
         Route::post('proprietarios/{id}/desbloquear', [ProprietarioController::class, 'desbloquear']);
         Route::post('proprietarios/{id}/restore', [ProprietarioController::class, 'restore']);
@@ -155,9 +202,36 @@ Route::middleware('auth:api')->group(function () {
         // Baixas
         Route::post('baixas/{id}/restore', [BaixaAbastecimentoController::class, 'restore']);
         Route::apiResource('baixas', BaixaAbastecimentoController::class)->only(['store', 'update', 'destroy']);
+        Route::post('baixas/{id}/remover-comprovante', [BaixaAbastecimentoController::class, 'removerComprovante']);
         Route::delete('baixas/{id}/force', [BaixaAbastecimentoController::class, 'forceDelete']);
         Route::post('baixas/automaticas', [BaixaAbastecimentoController::class, 'storeAutomatica']);
         Route::post('baixas/lote', [BaixaAbastecimentoController::class, 'storeLote']);
+
+        // Nova Baixa por Comprovante
+        Route::post('comprovantes-pagamento', [ComprovantePagamentoController::class, 'store']);
+        Route::post('comprovantes-pagamento/lote', [ComprovantePagamentoController::class, 'storeLote']);
+        Route::get('comprovantes-pagamento', [ComprovantePagamentoController::class, 'index']);
+        Route::get('comprovantes-pagamento/{id}', [ComprovantePagamentoController::class, 'show']);
+        Route::patch('comprovantes-pagamento/{id}', [ComprovantePagamentoController::class, 'update']);
+        Route::post('comprovantes-pagamento/{id}/verificar', [ComprovantePagamentoController::class, 'verificarNovamente']);
+        Route::post('comprovantes-pagamento/{id}/confirmar', [ComprovantePagamentoController::class, 'confirmar']);
+        Route::post('comprovantes-pagamento/confirmar-grupo', [ComprovantePagamentoController::class, 'confirmarGrupo']);
+        Route::delete('comprovantes-pagamento/{id}', [ComprovantePagamentoController::class, 'destroy']);
+
+        // Alias proprietários
+        Route::get('alias-proprietarios', [AliasProprietarioController::class, 'index']);
+        Route::get('alias-proprietarios/buscar', [AliasProprietarioController::class, 'buscar']);
+        Route::post('alias-proprietarios', [AliasProprietarioController::class, 'store']);
+        Route::delete('alias-proprietarios/{id}', [AliasProprietarioController::class, 'destroy']);
+
+        // API Keys
+        Route::get('api-keys', [ApiKeyController::class, 'index']);
+        Route::post('api-keys', [ApiKeyController::class, 'store']);
+        Route::delete('api-keys/{id}', [ApiKeyController::class, 'destroy']);
+
+        // Cloudinary: status de uso da pool de contas e troca automática
+        Route::get('cloudinary/status', [CloudinaryController::class, 'status']);
+        Route::post('cloudinary/reavaliar', [CloudinaryController::class, 'reavaliar']);
 
         // Entrada de notas
         Route::post('entrada-notas/{id}/restore', [EntradaNotaController::class, 'restore']);

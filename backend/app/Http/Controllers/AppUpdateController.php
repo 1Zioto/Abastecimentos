@@ -10,21 +10,21 @@ class AppUpdateController extends Controller
     {
         $notes = env(
             'APP_APK_RELEASE_NOTES',
-            "Verificação de entrada de nota fiscal com IA"
-                . "\nPrompt da nota fiscal configurável nas configurações"
-                . "\nFiltro por número da nota e relatório em modo retrato"
+            "Novo filtro por Fornecedor na tela de Entrada de Notas"
+                . "\nCorreção na exibição de data e hora na lista de Entrada de Notas"
+                . "\nAtualizações futuras passam a ser aplicadas automaticamente via Shorebird (sem precisar baixar novo APK)"
         );
 
         return response()->json([
             'platform' => 'android',
-            'latest_version_code' => (int) env('APP_APK_VERSION_CODE', 5904),
-            'latest_version_name' => env('APP_APK_VERSION_NAME', '2.0 - Update 18'),
+            'latest_version_code' => (int) env('APP_APK_VERSION_CODE', 5911),
+            'latest_version_name' => env('APP_APK_VERSION_NAME', '2.0 - Update 24'),
             'apk_url' => env(
                 'APP_APK_URL',
-                'https://abastecimentovipetrasportes.vercel.app/assets/downloads/vipe-abastecimento-2.0-update-18-5904.apk'
+                'https://abastecimentovipetrasportes.vercel.app/assets/downloads/vipe-abastecimento-2.0-update-24-5911.apk'
             ),
             'required' => filter_var(env('APP_APK_REQUIRED', false), FILTER_VALIDATE_BOOLEAN),
-            'title' => env('APP_APK_UPDATE_TITLE', 'Versão 2.0 - Update 18 disponível'),
+            'title' => env('APP_APK_UPDATE_TITLE', 'Versão 2.0 - Update 24 disponível'),
             'message' => env(
                 'APP_APK_UPDATE_MESSAGE',
                 'Há uma nova versão do aplicativo disponível. Atualize para receber as melhorias e correções mais recentes.'

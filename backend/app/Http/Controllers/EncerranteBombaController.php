@@ -381,10 +381,8 @@ class EncerranteBombaController extends Controller
     {
         $currentUser = auth('api')->user();
         $tipo = strtolower((string) ($currentUser?->tipo ?? ''));
-        $login = strtolower(trim((string) ($currentUser?->login ?? '')));
-        $nome = strtolower(trim((string) ($currentUser?->nome ?? '')));
 
-        if (!$currentUser || $tipo !== 'admin' || ($login !== 'admin' && !str_contains($login . ' ' . $nome, 'douglas'))) {
+        if (!$currentUser || $tipo !== 'admin') {
             return new JsonResponse(['message' => 'Acesso restrito.'], 403);
         }
 

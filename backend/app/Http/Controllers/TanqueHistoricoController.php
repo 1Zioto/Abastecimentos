@@ -13,10 +13,6 @@ class TanqueHistoricoController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        if ($erro = $this->ensurePrivateAccess()) {
-            return $erro;
-        }
-
         $this->garantirCustoTransporteEntradaNotas();
 
         $dataInicio = $this->normalizarData(
@@ -169,17 +165,4 @@ class TanqueHistoricoController extends Controller
         return method_exists($user, 'filiaisAcesso') ? $user->filiaisAcesso() : self::LOCAIS;
     }
 
-    private function ensurePrivateAccess(): ?JsonResponse
-    {
-        $currentUser = auth('api')->user();
-        $tipo = strtolower((string) ($currentUser?->tipo ?? ''));
-        $login = strtolower(trim((string) ($currentUser?->login ?? '')));
-        $nome = strtolower(trim((string) ($currentUser?->nome ?? '')));
-
-        if (!$currentUser || $tipo !== 'admin' || ($login !== 'admin' && !str_contains($login . ' ' . $nome, 'douglas'))) {
-            return new JsonResponse(['message' => 'Acesso restrito.'], 403);
-        }
-
-        return null;
-    }
 }

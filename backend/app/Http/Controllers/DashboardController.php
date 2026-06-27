@@ -186,6 +186,35 @@ class DashboardController extends Controller
             ->limit(5)
             ->get();
 
+        // ── Alerta: clientes com valores em aberto há mais de 30 dias ──
+        $corte30 = now()->subDays(30)->toDateString();
+        $emAberto30Query = $this->aplicarFiltroPendenteBaixa(
+            $this->abastecimentosAtivos($request, $local)
+        );
+        $emAberto30 = $emAberto30Query
+            ->whereDate('data', '<', $corte30)
+            ->selectRaw("id_proprietario, COALESCE(nome_proprietario, 'Sem proprietário') as nome_proprietario, COUNT(*) as total, COALESCE(SUM(valor_total), 0) as valor, MIN(data) as mais_antigo")
+            ->groupBy('id_proprietario', 'nome_proprietario')
+            ->orderByDesc('valor')
+            ->limit(30)
+            ->get()
+            ->map(function ($row) {
+                $dias = null;
+                try {
+                    $dias = (int) now()->diffInDays(\Carbon\Carbon::parse($row->mais_antigo));
+                } catch (\Throwable $e) {
+                }
+                return [
+                    'id_proprietario' => $row->id_proprietario,
+                    'nome_proprietario' => $row->nome_proprietario,
+                    'total' => (int) $row->total,
+                    'valor' => round((float) $row->valor, 2),
+                    'mais_antigo' => $row->mais_antigo,
+                    'dias_mais_antigo' => $dias,
+                ];
+            })
+            ->values();
+
         return new \Illuminate\Http\JsonResponse([
             'totais' => [
                 'abastecimentos' => $totalAbastecimentos,
@@ -205,6 +234,7 @@ class DashboardController extends Controller
             'comparativo_12_meses' => $comparativo12Meses,
             'status_resumo' => $statusResumo,
             'top_proprietarios' => $topProprietarios,
+            'alerta_em_aberto_30_dias' => $emAberto30,
         ]);
     }
 }

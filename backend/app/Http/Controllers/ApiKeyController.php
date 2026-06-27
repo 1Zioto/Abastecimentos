@@ -38,16 +38,17 @@ class ApiKeyController extends Controller
         $preview = substr($chave, 0, 12) . '...';
 
         $id = (string) Str::uuid();
-        DB::table('api_keys')->insert([
-            'id'           => $id,
-            'nome'         => $data['nome'],
-            'chave_hash'   => $hash,
-            'chave_preview' => $preview,
-            'ativo'        => true,
-            'usuario_id'   => $user ? (string) $user->getAuthIdentifier() : null,
-            'created_at'   => now(),
-            'updated_at'   => now(),
-        ]);
+        DB::insert(
+            'INSERT INTO api_keys (id, nome, chave_hash, chave_preview, ativo, usuario_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, TRUE, ?, NOW(), NOW())',
+            [
+                $id,
+                $data['nome'],
+                $hash,
+                $preview,
+                $user ? (string) $user->getAuthIdentifier() : null,
+            ]
+        );
 
         $key = DB::table('api_keys')->where('id', $id)->first();
         unset($key->chave_hash);

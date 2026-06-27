@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Abastecimento;
 use App\Models\EncerranteBomba;
+use App\Models\EntradaNota;
 use App\Models\Proprietario;
 use App\Models\ValoresCombustivel;
 use App\Models\Veiculo;
@@ -197,6 +198,7 @@ class AbastecimentoController extends Controller
         DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS limite_litros NUMERIC(14,2) NULL');
         DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS bloqueio_automatico BOOLEAN NOT NULL DEFAULT FALSE');
         DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS alerta_limite_percentual NUMERIC(5,2) NOT NULL DEFAULT 80');
+        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS preco_custo_automatico BOOLEAN NOT NULL DEFAULT FALSE');
     }
 
     private function formatarMoeda(float $valor): string
@@ -415,6 +417,79 @@ class AbastecimentoController extends Controller
         return (float) $valor;
     }
 
+    /**
+     * Preço de custo (por litro) para proprietários com "preço de custo automático" ativado.
+     * Considera o valor da última nota fiscal de entrada (compra) para o tipo de combustível e filial informados.
+     */
+    private function custoUltimaEntradaNotaPorFilial(string $tipoCombustivel, string $local): float
+    {
+        $query = EntradaNota::query()
+            ->where('tipo', $tipoCombustivel)
+            ->whereRaw('LOWER(local) = LOWER(?)', [$local]);
+
+        $this->aplicarFiltroNotasAjusteEntradaNotas($query, 'entrada_notas');
+
+        $query->orderByDesc('data');
+
+        if ($this->tabelaTemColuna('entrada_notas', 'sync_token_at')) {
+            $query->orderByDesc('sync_token_at');
+        }
+
+        $entrada = $query->orderByDesc('id_financeiro')->first();
+
+        if (!$entrada) {
+            throw ValidationException::withMessages([
+                'valor_por_litro' => [
+                    "Nenhuma nota fiscal de entrada cadastrada para {$tipoCombustivel} na filial {$local}. Não é possível aplicar o preço de custo automático para este proprietário.",
+                ],
+            ]);
+        }
+
+        // Preço de custo = (valor da nota + custo de transporte) / quantidade de litros comprados
+        $quantidade = (float) ($entrada->quantidade ?? 0);
+        if ($quantidade > 0) {
+            $valorCompraFinal = $entrada->valor_compra_final !== null
+                ? (float) $entrada->valor_compra_final
+                : round(
+                    (float) ($entrada->valor ?? 0)
+                    + (float) ($entrada->custo_transporte_total ?? round($quantidade * self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO, 2)),
+                    2
+                );
+
+            return round($valorCompraFinal / $quantidade, 3);
+        }
+
+        $valorLitro = $entrada->valor_litro !== null ? (float) $entrada->valor_litro : null;
+        if ($valorLitro !== null && $valorLitro > 0) {
+            return round($valorLitro + (float) ($entrada->custo_transporte_litro ?? 0), 3);
+        }
+
+        throw ValidationException::withMessages([
+            'valor_por_litro' => [
+                "A última nota fiscal de entrada de {$tipoCombustivel} na filial {$local} não possui valores suficientes para calcular o preço de custo automático.",
+            ],
+        ]);
+    }
+
+    /**
+     * Preview do preço de custo automático (última nota fiscal de entrada) para um tipo de
+     * combustível/filial, usado pelo formulário de abastecimento ao selecionar um proprietário
+     * com "preço de custo automático" ativado.
+     */
+    public function precoCustoAutomatico(Request $request, string $tipo)
+    {
+        $local = $this->normalizarLocal($request->query('local'));
+        $this->validarAcessoFilial($local);
+
+        $valor = $this->custoUltimaEntradaNotaPorFilial($tipo, $local);
+
+        return new \Illuminate\Http\JsonResponse([
+            'tipo_combustivel' => $tipo,
+            'local' => $local,
+            'valor' => $valor,
+        ]);
+    }
+
     private function buildComprovanteDiagnostics(Abastecimento $abastecimento): array
     {
         $rawDataHora = method_exists($abastecimento, 'getRawOriginal')
@@ -467,74 +542,6 @@ class AbastecimentoController extends Controller
             'tempDir' => $tmpBase,
             'chroot' => base_path(),
         ];
-    }
-
-    private function getUltimoOdometroInformado(string $idVeiculo, ?string $ignoreAbastecimentoId = null): ?int
-    {
-        $query = Abastecimento::query()
-            ->where('id_veiculo', $idVeiculo)
-            ->whereNotNull('odometro');
-
-        if ($this->tabelaTemColuna('abastecimentos', 'deleted_at')) {
-            $query->whereNull('deleted_at');
-        }
-
-        if ($this->tabelaTemColuna('abastecimentos', 'status')) {
-            $query->where(function ($q) {
-                $q->whereNull('status')
-                    ->orWhereRaw('LOWER(status) <> ?', ['inativo']);
-            });
-        }
-
-        if ($ignoreAbastecimentoId) {
-            $query->where('id_abastecimento', '!=', $ignoreAbastecimentoId);
-        }
-
-        $ultimoAbastecimentoOdometro = $query->max('odometro');
-
-        $odometroVeiculo = $ignoreAbastecimentoId
-            ? null
-            : Veiculo::query()
-                ->where('id_veiculo', $idVeiculo)
-                ->value('odometro');
-
-        $candidatos = array_values(array_filter([
-            $ultimoAbastecimentoOdometro,
-            $odometroVeiculo,
-        ], fn ($v) => $v !== null));
-
-        if (empty($candidatos)) {
-            return null;
-        }
-
-        return (int) max($candidatos);
-    }
-
-    private function validarOdometroMinimo(array $data, ?string $ignoreAbastecimentoId = null): void
-    {
-        $idVeiculo = $data['id_veiculo'] ?? null;
-        if (!$idVeiculo) {
-            return;
-        }
-
-        $ultimoOdometro = $this->getUltimoOdometroInformado($idVeiculo, $ignoreAbastecimentoId);
-        if ($ultimoOdometro === null) {
-            return;
-        }
-
-        if (!array_key_exists('odometro', $data) || $data['odometro'] === null || trim((string) $data['odometro']) === '') {
-            $minimo = $ultimoOdometro + 1;
-            throw ValidationException::withMessages([
-                'odometro' => "Odômetro é obrigatório para esta placa porque já existe abastecimento anterior. Próximo mínimo: {$minimo} km.",
-            ]);
-        }
-
-        if ((int) $data['odometro'] <= $ultimoOdometro) {
-            $minimo = $ultimoOdometro + 1;
-            throw ValidationException::withMessages([
-                'odometro' => "Odômetro inválido: informe um valor maior que {$ultimoOdometro} km. Próximo mínimo: {$minimo} km.",
-            ]);
-        }
     }
 
     private function garantirColunaOdometroObrigatorioProprietario(): void
@@ -699,8 +706,29 @@ class AbastecimentoController extends Controller
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
+        if ($request->filled('baixa') && $this->tabelaTemColuna('abastecimentos', 'baixa_abastecimento')) {
+            $baixaFiltro = strtolower(trim((string) $request->baixa));
+            if (in_array($baixaFiltro, ['baixado', 'baixados', 'true', '1'], true)) {
+                $query->whereRaw('COALESCE(abastecimentos.baixa_abastecimento, false) = true');
+            } elseif (in_array($baixaFiltro, ['pendente', 'pendentes', 'false', '0'], true)) {
+                $query->whereRaw('COALESCE(abastecimentos.baixa_abastecimento, false) = false');
+            }
+        }
         if ($request->filled('tipo_combustivel')) {
             $query->where('tipo_combustivel', $request->tipo_combustivel);
+        }
+        if ($request->filled('valor_total')) {
+            $raw = str_replace(['R$', ' '], '', trim((string) $request->valor_total));
+            if (str_contains($raw, ',')) {
+                $raw = str_replace('.', '', $raw);
+                $raw = str_replace(',', '.', $raw);
+            }
+            if (is_numeric($raw)) {
+                $query->whereRaw(
+                    'ABS(COALESCE(abastecimentos.valor_total, FLOOR(COALESCE(abastecimentos.valor_por_litro, 0) * COALESCE(abastecimentos.quantidade_litros, 0) + 0.000001)) - ?) < 0.005',
+                    [(float) $raw]
+                );
+            }
         }
 
         $perPage = $request->get('per_page', 20);
@@ -814,10 +842,15 @@ class AbastecimentoController extends Controller
         unset($data['responsavel']);
 
         // Buscar valor atual do combustível pela filial selecionada — NÃO pode ser alterado depois
-        $valorAtual = $this->valorCombustivelAtualPorFilial(
-            (string) $data['tipo_combustivel'],
-            (string) $data['local']
+        $this->garantirColunasLimiteProprietarios();
+        $precoCustoAutomatico = filter_var(
+            Proprietario::query()->where('id_proprietario', $data['id_proprietario'])->value('preco_custo_automatico'),
+            FILTER_VALIDATE_BOOLEAN
         );
+
+        $valorAtual = $precoCustoAutomatico
+            ? $this->custoUltimaEntradaNotaPorFilial((string) $data['tipo_combustivel'], (string) $data['local'])
+            : $this->valorCombustivelAtualPorFilial((string) $data['tipo_combustivel'], (string) $data['local']);
 
         $data['valor_por_litro'] = $valorAtual;
         $data['valor_total'] = $this->calcularValorTotalAbastecimento(
@@ -830,8 +863,6 @@ class AbastecimentoController extends Controller
             (float) $data['quantidade_litros'],
             (float) $data['valor_total']
         );
-
-        $this->validarOdometroMinimo($data);
 
         // Atualizar odômetro do veículo
         if (!empty($data['odometro'])) {
@@ -847,6 +878,33 @@ class AbastecimentoController extends Controller
         }
 
         $abastecimento = Abastecimento::create($data);
+
+        // Move the file to the correct folder
+        if (!empty($abastecimento->foto_odometro) || !empty($abastecimento->anexo) || !empty($abastecimento->bomba)) {
+            try {
+                $drive = app(\App\Services\GoogleDriveService::class);
+                $proprietarioNome = trim((string)$data['nome_proprietario']) ?: 'Desconhecido';
+                $targetFolder = $drive->resolveProprietarioFolder($proprietarioNome, 'Abastecimentos');
+
+                if (!empty($abastecimento->foto_odometro)) {
+                    $fileId = $drive->extractFileId($abastecimento->foto_odometro);
+                    if ($fileId) $drive->moveFile($fileId, $targetFolder);
+                }
+                
+                if (!empty($abastecimento->anexo)) {
+                    $fileId = $drive->extractFileId($abastecimento->anexo);
+                    if ($fileId) $drive->moveFile($fileId, $targetFolder);
+                }
+
+                if (!empty($abastecimento->bomba)) {
+                    $fileId = $drive->extractFileId($abastecimento->bomba);
+                    if ($fileId) $drive->moveFile($fileId, $targetFolder);
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Falha ao organizar pasta no Google Drive: " . $e->getMessage());
+            }
+        }
+
         return new \Illuminate\Http\JsonResponse($abastecimento->load(['veiculo','motorista','proprietario']), 201);
     }
 
@@ -884,75 +942,109 @@ class AbastecimentoController extends Controller
 
     public function update(Request $request, string $id)
     {
-        $currentUser = auth()->user();
-        if (!$currentUser || $currentUser->tipo !== 'admin') {
-            return new \Illuminate\Http\JsonResponse(['message' => 'Somente administradores podem editar registros'], 403);
+        try {
+            $currentUser = auth()->user();
+            if (!$currentUser || $currentUser->tipo !== 'admin') {
+                return new \Illuminate\Http\JsonResponse(['message' => 'Somente administradores podem editar registros'], 403);
+            }
+
+            $this->normalizarDatasRequest($request);
+
+            $abastecimento = Abastecimento::findOrFail($id);
+            $this->validarAcessoFilial((string) $abastecimento->local);
+
+            $data = $request->validate([
+                'data'              => 'sometimes|date',
+                'data_hora'         => 'sometimes|date',
+                'frentista'         => 'nullable|string',
+                'id_veiculo'        => 'sometimes|exists:veiculos,id_veiculo',
+                'id_motorista'      => 'sometimes|required|exists:motoristas,id_motorista',
+                'id_proprietario'   => 'sometimes|exists:proprietarios,id_proprietario',
+                'nome_motorista'    => 'nullable|string',
+                'nome_proprietario' => 'nullable|string',
+                'local'             => 'sometimes|required|string',
+                'tipo_combustivel'  => 'sometimes|string',
+                'quantidade_litros' => 'sometimes|numeric|min:0.01',
+                'odometro'          => 'nullable|numeric',
+                'foto_odometro'     => 'nullable|string',
+                'bomba'             => 'nullable|string',
+                'status'            => 'sometimes|required|string',
+                'responsavel'       => 'nullable|string',
+            ]);
+
+            // REGRA: valor_por_litro NÃO é recalculado na edição
+            // Apenas recalcular valor_total se quantidade mudar, usando o valor já gravado
+            if (isset($data['quantidade_litros'])) {
+                $data['valor_total'] = $this->calcularValorTotalAbastecimento(
+                    $data['quantidade_litros'],
+                    $abastecimento->valor_por_litro
+                );
+            }
+
+            // Remover campos protegidos caso venham no request
+            unset($data['valor_por_litro']);
+            if (array_key_exists('local', $data)) {
+                $data['local'] = $this->normalizarLocal($data['local'] ?? $abastecimento->local);
+                $this->validarAcessoFilial($data['local']);
+            }
+            if (array_key_exists('frentista', $data) && trim((string) ($data['frentista'] ?? '')) !== '') {
+                $data['frentista'] = trim((string) $data['frentista']);
+            } elseif (empty($abastecimento->frentista)) {
+                $data['frentista'] = trim((string) ($data['responsavel'] ?? auth()->user()?->nome ?? auth()->user()?->login ?? ''));
+            } else {
+                unset($data['frentista']);
+            }
+            if (array_key_exists('id_proprietario', $data)) {
+                $this->validarProprietarioPodeAbastecer((string) $data['id_proprietario']);
+            }
+            $this->preencherNomesRelacionados($data, $abastecimento);
+            $this->validarCamposObrigatoriosAbastecimento($data, $abastecimento);
+            $this->validarAnexoBombaObrigatorio($data, $abastecimento);
+            unset($data['responsavel']);
+            $data = $this->manterSomenteAlteracoesReais($abastecimento, $data);
+            $this->registrarAlteracoes($abastecimento, $data);
+
+            $abastecimento->update($data);
+
+            // Move the file to the correct folder
+            if (!empty($data['foto_odometro']) || !empty($data['anexo']) || !empty($data['bomba'])) {
+                try {
+                    $drive = app(\App\Services\GoogleDriveService::class);
+                    $proprietarioNome = trim((string)$abastecimento->nome_proprietario) ?: 'Desconhecido';
+                    $targetFolder = $drive->resolveProprietarioFolder($proprietarioNome, 'Abastecimentos');
+
+                    if (!empty($data['foto_odometro'])) {
+                        $fileId = $drive->extractFileId($data['foto_odometro']);
+                        if ($fileId) $drive->moveFile($fileId, $targetFolder);
+                    }
+                    
+                    if (!empty($data['anexo'])) {
+                        $fileId = $drive->extractFileId($data['anexo']);
+                        if ($fileId) $drive->moveFile($fileId, $targetFolder);
+                    }
+
+                    if (!empty($data['bomba'])) {
+                        $fileId = $drive->extractFileId($data['bomba']);
+                        if ($fileId) $drive->moveFile($fileId, $targetFolder);
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning("Falha ao organizar pasta no Google Drive: " . $e->getMessage());
+                }
+            }
+
+            return new \Illuminate\Http\JsonResponse($abastecimento->fresh(['veiculo','motorista','proprietario']));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return new \Illuminate\Http\JsonResponse(['message' => 'Abastecimento não encontrado.'], 404);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return new \Illuminate\Http\JsonResponse([
+                'message' => 'Erro de validação.',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Throwable $e) {
+            return new \Illuminate\Http\JsonResponse([
+                'message' => 'Erro interno ao atualizar abastecimento: ' . $e->getMessage()
+            ], 500);
         }
-
-        $this->normalizarDatasRequest($request);
-
-        $abastecimento = Abastecimento::findOrFail($id);
-        $this->validarAcessoFilial((string) $abastecimento->local);
-
-        $data = $request->validate([
-            'data'              => 'sometimes|date',
-            'data_hora'         => 'sometimes|date',
-            'frentista'         => 'nullable|string',
-            'id_veiculo'        => 'sometimes|exists:veiculos,id_veiculo',
-            'id_motorista'      => 'sometimes|required|exists:motoristas,id_motorista',
-            'id_proprietario'   => 'sometimes|exists:proprietarios,id_proprietario',
-            'nome_motorista'    => 'nullable|string',
-            'nome_proprietario' => 'nullable|string',
-            'local'             => 'sometimes|required|string',
-            'tipo_combustivel'  => 'sometimes|string',
-            'quantidade_litros' => 'sometimes|numeric|min:0.01',
-            'odometro'          => 'nullable|numeric',
-            'foto_odometro'     => 'nullable|string',
-            'bomba'             => 'nullable|string',
-            'status'            => 'sometimes|required|string',
-            'responsavel'       => 'nullable|string',
-        ]);
-
-        // REGRA: valor_por_litro NÃO é recalculado na edição
-        // Apenas recalcular valor_total se quantidade mudar, usando o valor já gravado
-        if (isset($data['quantidade_litros'])) {
-            $data['valor_total'] = $this->calcularValorTotalAbastecimento(
-                $data['quantidade_litros'],
-                $abastecimento->valor_por_litro
-            );
-        }
-
-        // Remover campos protegidos caso venham no request
-        unset($data['valor_por_litro']);
-        if (array_key_exists('local', $data)) {
-            $data['local'] = $this->normalizarLocal($data['local'] ?? $abastecimento->local);
-            $this->validarAcessoFilial($data['local']);
-        }
-        if (array_key_exists('frentista', $data) && trim((string) ($data['frentista'] ?? '')) !== '') {
-            $data['frentista'] = trim((string) $data['frentista']);
-        } elseif (empty($abastecimento->frentista)) {
-            $data['frentista'] = trim((string) ($data['responsavel'] ?? auth()->user()?->nome ?? auth()->user()?->login ?? ''));
-        } else {
-            unset($data['frentista']);
-        }
-        if (array_key_exists('id_proprietario', $data)) {
-            $this->validarProprietarioPodeAbastecer((string) $data['id_proprietario']);
-        }
-        $this->preencherNomesRelacionados($data, $abastecimento);
-        $this->validarCamposObrigatoriosAbastecimento($data, $abastecimento);
-        $this->validarAnexoBombaObrigatorio($data, $abastecimento);
-        unset($data['responsavel']);
-        $data = $this->manterSomenteAlteracoesReais($abastecimento, $data);
-        $this->registrarAlteracoes($abastecimento, $data);
-
-        $dataParaValidacaoOdometro = [
-            'id_veiculo' => $data['id_veiculo'] ?? $abastecimento->id_veiculo,
-            'odometro' => $data['odometro'] ?? null,
-        ];
-        $this->validarOdometroMinimo($dataParaValidacaoOdometro, $abastecimento->id_abastecimento);
-
-        $abastecimento->update($data);
-        return new \Illuminate\Http\JsonResponse($abastecimento->fresh(['veiculo','motorista','proprietario']));
     }
 
     public function destroy(string $id)

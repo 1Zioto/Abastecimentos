@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth' => \App\Http\Middleware\Authenticate::class,
             'admin' => \App\Http\Middleware\EnsureAdmin::class,
             'admin_or_operador' => \App\Http\Middleware\EnsureAdminOrOperador::class,
+            'api_key' => \App\Http\Middleware\EnsureApiKey::class,
         ]);
 
         // CORS

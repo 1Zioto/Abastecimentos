@@ -23,7 +23,7 @@ class EnsureApiKey
             $hash = hash('sha256', $key);
             $apiKey = DB::table('api_keys')
                 ->where('chave_hash', $hash)
-                ->where('ativo', true)
+                ->whereRaw('ativo IS TRUE')
                 ->first();
 
             if (!$apiKey) {

@@ -32,6 +32,7 @@ class Proprietario extends Model
         'limite_litros',
         'bloqueio_automatico',
         'alerta_limite_percentual',
+        'preco_custo_automatico',
         'sync_token_at',
     ];
     protected $casts = [
@@ -41,6 +42,7 @@ class Proprietario extends Model
         'limite_litros' => 'decimal:2',
         'bloqueio_automatico' => 'boolean',
         'alerta_limite_percentual' => 'decimal:2',
+        'preco_custo_automatico' => 'boolean',
         'sync_token_at' => 'datetime',
     ];
 

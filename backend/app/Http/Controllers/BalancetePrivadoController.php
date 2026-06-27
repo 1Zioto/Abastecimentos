@@ -105,6 +105,10 @@ class BalancetePrivadoController extends Controller
         $despesasValor = (float) ($despesasResumo->valor ?? 0);
         $comprasLitros = (float) ($compras->litros ?? 0);
         $vendidosLitros = (float) ($vendidos->litros ?? 0);
+        $custoMedioCompraLitro = $comprasLitros > 0 ? $comprasValor / $comprasLitros : 0.0;
+        $custoVendidoEstimado = $vendidosLitros * $custoMedioCompraLitro;
+        $diferencaBrutaEstimada = $vendidosValor - $custoVendidoEstimado;
+        $resultadoOperacionalEstimado = $diferencaBrutaEstimada - $despesasValor;
         $resultadoCompetencia = $vendidosValor - $comprasValor - $despesasValor;
         $resultadoCaixa = $recebidosValor - $comprasValor - $despesasValor;
 
@@ -144,6 +148,10 @@ class BalancetePrivadoController extends Controller
             'top_pendentes' => $pendentesPorProprietario,
             'estoque_periodo_litros' => round($comprasLitros - $vendidosLitros, 2),
             'saldo_a_receber' => round($pendentesValor, 2),
+            'custo_medio_compra_litro' => round($custoMedioCompraLitro, 4),
+            'custo_vendido_estimado' => round($custoVendidoEstimado, 2),
+            'diferenca_bruta_estimada' => round($diferencaBrutaEstimada, 2),
+            'resultado_operacional_estimado' => round($resultadoOperacionalEstimado, 2),
             'resultado_competencia' => round($resultadoCompetencia, 2),
             'resultado_caixa' => round($resultadoCaixa, 2),
             'movimento_financeiro' => [
@@ -222,6 +230,9 @@ class BalancetePrivadoController extends Controller
             'despesas' => ['registros' => 0, 'valor' => 0.0],
             'estoque_periodo_litros' => 0.0,
             'saldo_a_receber' => 0.0,
+            'custo_vendido_estimado' => 0.0,
+            'diferenca_bruta_estimada' => 0.0,
+            'resultado_operacional_estimado' => 0.0,
             'resultado_competencia' => 0.0,
             'resultado_caixa' => 0.0,
             'movimento_financeiro' => [
@@ -251,6 +262,9 @@ class BalancetePrivadoController extends Controller
                 + (float) ($linha['despesas']['valor_sinalizado'] ?? -($linha['despesas']['valor'] ?? 0));
             $base['estoque_periodo_litros'] += (float) ($linha['estoque_periodo_litros'] ?? 0);
             $base['saldo_a_receber'] += (float) ($linha['saldo_a_receber'] ?? 0);
+            $base['custo_vendido_estimado'] += (float) ($linha['custo_vendido_estimado'] ?? 0);
+            $base['diferenca_bruta_estimada'] += (float) ($linha['diferenca_bruta_estimada'] ?? 0);
+            $base['resultado_operacional_estimado'] += (float) ($linha['resultado_operacional_estimado'] ?? 0);
             $base['resultado_competencia'] += (float) ($linha['resultado_competencia'] ?? 0);
             $base['resultado_caixa'] += (float) ($linha['resultado_caixa'] ?? 0);
             foreach ($base['movimento_financeiro'] as $campo => $_) {
@@ -299,10 +313,8 @@ class BalancetePrivadoController extends Controller
     {
         $currentUser = auth('api')->user();
         $tipo = strtolower((string) ($currentUser?->tipo ?? ''));
-        $login = strtolower(trim((string) ($currentUser?->login ?? '')));
-        $nome = strtolower(trim((string) ($currentUser?->nome ?? '')));
 
-        if (!$currentUser || $tipo !== 'admin' || ($login !== 'admin' && !str_contains($login . ' ' . $nome, 'douglas'))) {
+        if (!$currentUser || $tipo !== 'admin') {
             return new JsonResponse(['message' => 'Acesso restrito.'], 403);
         }
 

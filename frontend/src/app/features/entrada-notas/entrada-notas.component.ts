@@ -433,26 +433,7 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   }
 
   resolveImageUrl(url?: string | null): string | null {
-    if (!url) return null;
-    let normalized = String(url).trim();
-    if (!normalized) return null;
-
-    if (normalized.includes('drive.google.com/uc?id=')) {
-      const match = normalized.match(/id=([^&]+)/);
-      if (match && match[1]) {
-        normalized = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
-      }
-    }
-
-    if (
-      normalized.startsWith('http://') ||
-      normalized.startsWith('https://') ||
-      normalized.startsWith('data:image/') ||
-      normalized.startsWith('blob:')
-    ) {
-      return normalized;
-    }
-    return null;
+    return this.api.resolveImageUrl(url);
   }
 
   displayImageUrl(url?: string | null): string {

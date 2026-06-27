@@ -23,6 +23,7 @@ class ProprietarioController extends Controller
         DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS limite_litros NUMERIC(14,2) NULL');
         DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS bloqueio_automatico BOOLEAN NOT NULL DEFAULT FALSE');
         DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS alerta_limite_percentual NUMERIC(5,2) NOT NULL DEFAULT 80');
+        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS preco_custo_automatico BOOLEAN NOT NULL DEFAULT FALSE');
     }
 
     private function filiaisPermitidas(): array
@@ -58,6 +59,7 @@ class ProprietarioController extends Controller
             'limite_litros' => 'nullable|numeric|min:0',
             'bloqueio_automatico' => 'nullable|boolean',
             'alerta_limite_percentual' => 'nullable|numeric|min:1|max:100',
+            'preco_custo_automatico' => 'nullable|boolean',
         ];
     }
 
@@ -75,6 +77,10 @@ class ProprietarioController extends Controller
         if (array_key_exists('bloqueio_automatico', $data)) {
             $data['bloqueio_automatico'] = filter_var($data['bloqueio_automatico'], FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
         }
+
+        if (array_key_exists('preco_custo_automatico', $data)) {
+            $data['preco_custo_automatico'] = filter_var($data['preco_custo_automatico'], FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+        }
     }
 
     private function ocultarLimitesSeNaoAdmin(Proprietario $proprietario): Proprietario
@@ -85,6 +91,7 @@ class ProprietarioController extends Controller
                 'limite_litros',
                 'bloqueio_automatico',
                 'alerta_limite_percentual',
+                'preco_custo_automatico',
                 'limites_resumo',
             ]);
         }
@@ -178,7 +185,7 @@ class ProprietarioController extends Controller
         $data['status'] = ucfirst(mb_strtolower(trim((string) ($data['status'] ?? 'Ativo')) ?: 'Ativo'));
         $data['odometro_obrigatorio'] = filter_var($data['odometro_obrigatorio'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
         if (auth()->user()?->tipo !== 'admin') {
-            unset($data['limite_financeiro'], $data['limite_litros'], $data['bloqueio_automatico'], $data['alerta_limite_percentual']);
+            unset($data['limite_financeiro'], $data['limite_litros'], $data['bloqueio_automatico'], $data['alerta_limite_percentual'], $data['preco_custo_automatico']);
         }
         $this->normalizarLimites($data);
         $this->validarAcessoFilial($data['local']);
@@ -227,7 +234,7 @@ class ProprietarioController extends Controller
             $data['odometro_obrigatorio'] = filter_var($data['odometro_obrigatorio'], FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
         }
         if (auth()->user()?->tipo !== 'admin') {
-            unset($data['limite_financeiro'], $data['limite_litros'], $data['bloqueio_automatico'], $data['alerta_limite_percentual']);
+            unset($data['limite_financeiro'], $data['limite_litros'], $data['bloqueio_automatico'], $data['alerta_limite_percentual'], $data['preco_custo_automatico']);
         }
         $this->normalizarLimites($data);
         $this->registrarAlteracoes($proprietario, $data);

@@ -1,2 +1,4 @@
 .vercel
 vendor/
+storage/app/private/google_drive_refresh_token.enc
+storage/app/private/google_drive*.enc
