@@ -219,6 +219,101 @@ class ComprovantePagamentoController extends Controller
         }
     }
 
+    public function storeExternoLote(Request $request): JsonResponse
+    {
+        $this->garantirTabelas();
+
+        $comprovantes = [];
+        $duplicados = [];
+        $erros = [];
+
+        try {
+            if ($request->hasFile('arquivos')) {
+                foreach ($request->file('arquivos') as $uploaded) {
+                    try {
+                        $hash = hash_file('sha256', $uploaded->getRealPath());
+                        $duplicado = DB::table('comprovantes_pagamento')->where('arquivo_hash', $hash)->first();
+                        if ($duplicado) {
+                            $duplicados[] = $this->enriquecerComprovante($duplicado);
+                            continue;
+                        }
+
+                        $cloudinaryResult = $this->uploadComprovanteFile($uploaded, 'comprovantes_pagamento');
+                        $arquivoUrl = $cloudinaryResult['downloadUrl'] ?? '';
+                        $arquivoTipo = $this->detectarTipoArquivo($uploaded->getMimeType() ?: '');
+                        
+                        $comprovantes[] = $this->processarUnicoExterno($arquivoUrl, $arquivoTipo, $hash, $request->get('_api_key_nome', 'externo'));
+                    } catch (\Throwable $e) {
+                        $erros[] = 'Falha no arquivo ' . $uploaded->getClientOriginalName() . ': ' . $e->getMessage();
+                    }
+                }
+            } elseif ($request->has('arquivo_urls') && is_array($request->arquivo_urls)) {
+                $urls = $request->arquivo_urls;
+                $hashes = $request->arquivo_hashes ?? [];
+                
+                foreach ($urls as $i => $arquivoUrl) {
+                    try {
+                        $hash = $hashes[$i] ?? null;
+                        if ($hash) {
+                            $duplicado = DB::table('comprovantes_pagamento')->where('arquivo_hash', $hash)->first();
+                            if ($duplicado) {
+                                $duplicados[] = $this->enriquecerComprovante($duplicado);
+                                continue;
+                            }
+                        }
+
+                        $arquivoTipo = str_contains(strtolower($arquivoUrl), '.pdf') ? 'pdf' : 'image';
+                        $comprovantes[] = $this->processarUnicoExterno($arquivoUrl, $arquivoTipo, $hash, $request->get('_api_key_nome', 'externo'));
+                    } catch (\Throwable $e) {
+                        $erros[] = 'Falha na URL ' . $arquivoUrl . ': ' . $e->getMessage();
+                    }
+                }
+            } else {
+                return new JsonResponse(['message' => 'Nenhum arquivo ou URL fornecido.'], 400);
+            }
+
+            return new JsonResponse([
+                'message'        => 'Lote processado.',
+                'comprovantes'   => $comprovantes,
+                'duplicados'     => $duplicados,
+                'erros'          => $erros,
+                'total_recebido' => count($comprovantes),
+            ], 200);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['message' => 'Erro ao processar lote: ' . $e->getMessage()], 500);
+        }
+    }
+
+    private function processarUnicoExterno(string $arquivoUrl, string $arquivoTipo, ?string $hash, string $apiKeyNome): array
+    {
+        $analise = $this->analisarComprovanteSeguro($arquivoUrl, $arquivoTipo);
+        $remetente = $this->extrairRemetente($analise);
+        $resolucao = $this->resolverProprietario($remetente);
+        $status = $resolucao['proprietario_id'] ? 'aguardando_confirmacao' : 'aguardando_proprietario';
+
+        $id = (string) Str::uuid();
+        DB::table('comprovantes_pagamento')->insert([
+            'id'                      => $id,
+            'arquivo_url'             => $arquivoUrl,
+            'arquivo_tipo'            => $arquivoTipo,
+            'arquivo_hash'            => $hash,
+            'valor_extraido'          => $this->numOuNull($analise['valor_pago'] ?? null),
+            'data_pagamento_extraida' => $this->dataOuNull($analise['data_pagamento'] ?? null),
+            'remetente_extraido'      => $remetente,
+            'proprietario_id'         => $resolucao['proprietario_id'],
+            'status'                  => $status,
+            'confianca_ia'            => $this->numOuNull($analise['confidence'] ?? null),
+            'dados_ia'                => json_encode($analise, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'usuario'                 => 'api:' . $apiKeyNome,
+            'usuario_id'              => null,
+            'created_at'              => now(),
+            'updated_at'              => now(),
+        ]);
+
+        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
+        return $this->enriquecerComprovante($comprovante);
+    }
+
     // ─────────────────────────────────────────────
     // ATRIBUIR PROPRIETÁRIO
     // ─────────────────────────────────────────────
