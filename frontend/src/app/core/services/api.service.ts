@@ -475,4 +475,27 @@ export class ApiService {
   revogarApiKey(id: string): Observable<any> {
     return this.http.delete(this.url(`api-keys/${id}`));
   }
+
+  resolveImageUrl(url?: string | null): string | null {
+    if (!url) return null;
+    let normalized = String(url).trim();
+    if (!normalized) return null;
+
+    if (normalized.includes('drive.google.com/uc?id=')) {
+      const match = normalized.match(/id=([^&]+)/);
+      if (match && match[1]) {
+        return `${this.base}/drive-image?id=${match[1]}`;
+      }
+    }
+
+    if (
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('data:image/') ||
+      normalized.startsWith('blob:')
+    ) {
+      return normalized;
+    }
+    return null;
+  }
 }
