@@ -22,13 +22,12 @@ class DriveUploadController extends Controller
 
 
             $folderId = (string) env('GOOGLE_DRIVE_FOLDER_ID', '');
-            if ($folderId === '') {
-                return new \Illuminate\Http\JsonResponse([
-                    'message' => 'Configure CLOUDINARY_URL ou GOOGLE_DRIVE_FOLDER_ID.',
-                ], 500);
+            if (!$folderId) {
+                return response('Falha ao obter pasta no Google Drive.', 500);
             }
 
-            $accessToken = $this->fetchAccessToken();
+            $driveService = app(\App\Services\GoogleDriveService::class);
+            $accessToken = $driveService->accessToken();
             $extension = $uploaded->getClientOriginalExtension();
             $targetName = Str::uuid()->toString() . ($extension ? '.' . strtolower($extension) : '');
             $mimeType = $uploaded->getMimeType() ?: 'application/octet-stream';
@@ -108,7 +107,15 @@ class DriveUploadController extends Controller
         }
 
         try {
-            $accessToken = $this->fetchAccessToken();
+            $driveService = app(\App\Services\GoogleDriveService::class);
+            // We use reflection to access the private accessToken method for the proxy, 
+            // or we can just make accessToken public in GoogleDriveService
+            // Let's just make it public in GoogleDriveService! But wait, I'll just change the controller to call it correctly.
+            // Wait, we need an access token! Let's just use GoogleDriveService directly.
+            // Oh, I can just copy the oauth logic from GoogleDriveService or just change GoogleDriveService to make accessToken public.
+            // Let's make accessToken public in GoogleDriveService and use it here.
+            $accessToken = $driveService->accessToken();
+
             $response = Http::withToken($accessToken)
                 ->get("https://www.googleapis.com/drive/v3/files/{$id}?alt=media");
 

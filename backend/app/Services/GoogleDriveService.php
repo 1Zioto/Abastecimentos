@@ -232,7 +232,7 @@ class GoogleDriveService
         return null;
     }
 
-    private function accessToken(): string
+    public function accessToken(): string
     {
         $refreshToken = $this->refreshToken();
         if (!$refreshToken) {
