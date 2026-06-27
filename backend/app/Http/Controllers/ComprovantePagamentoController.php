@@ -221,13 +221,13 @@ class ComprovantePagamentoController extends Controller
 
     public function storeExternoLote(Request $request): JsonResponse
     {
-        $this->garantirTabelas();
-
-        $comprovantes = [];
-        $duplicados = [];
-        $erros = [];
-
         try {
+            $this->garantirTabelas();
+
+            $comprovantes = [];
+            $duplicados = [];
+            $erros = [];
+
             if ($request->hasFile('arquivos')) {
                 foreach ($request->file('arquivos') as $uploaded) {
                     try {
@@ -280,7 +280,11 @@ class ComprovantePagamentoController extends Controller
                 'total_recebido' => count($comprovantes),
             ], 200);
         } catch (\Throwable $e) {
-            return new JsonResponse(['message' => 'Erro ao processar lote: ' . $e->getMessage()], 500);
+            return new JsonResponse([
+                'message' => 'Erro ao processar lote: ' . $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine()
+            ], 500);
         }
     }
 
