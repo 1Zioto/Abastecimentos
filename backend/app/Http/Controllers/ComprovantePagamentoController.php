@@ -465,6 +465,129 @@ class ComprovantePagamentoController extends Controller
     }
 
     // ─────────────────────────────────────────────
+    // CONFIRMAR GRUPO (múltiplos comprovantes)
+    // ─────────────────────────────────────────────
+
+    public function confirmarGrupo(Request $request): JsonResponse
+    {
+        $this->garantirTabelas();
+
+        $data = $request->validate([
+            'comprovante_ids'          => 'required|array|min:1',
+            'comprovante_ids.*'        => 'string',
+            'ids_abastecimentos'       => 'required|array|min:1',
+            'ids_abastecimentos.*'     => 'exists:abastecimentos,id_abastecimento',
+            'proprietarios_terceiros'  => 'nullable|array',
+            'proprietarios_terceiros.*'=> 'string',
+            'forma_pagamento'          => 'nullable|string',
+            'data_pagamento'           => 'nullable|date',
+            'data_baixa'               => 'nullable|date',
+            'tipo_despesa'             => 'nullable|string',
+            'descricao'                => 'nullable|string',
+            'recebedor'                => 'nullable|string',
+            'observacao'               => 'nullable|string',
+        ]);
+
+        // Load all comprovantes
+        $comprovantes = DB::table('comprovantes_pagamento')
+            ->whereIn('id', $data['comprovante_ids'])
+            ->get();
+
+        if ($comprovantes->isEmpty()) {
+            return new JsonResponse(['message' => 'Nenhum comprovante encontrado.'], 404);
+        }
+
+        // Check none are already applied
+        $jaAplicado = $comprovantes->firstWhere('status', 'aplicado');
+        if ($jaAplicado) {
+            return new JsonResponse(['message' => 'Comprovante já foi aplicado.'], 422);
+        }
+
+        // Determine the proprietario — use the first comprovante's proprietario_id
+        $proprietarioId = $comprovantes->first()->proprietario_id;
+        if (!$proprietarioId) {
+            return new JsonResponse(['message' => 'Comprovante sem proprietário atribuído.'], 422);
+        }
+
+        // Build allowed proprietario IDs (main + terceiros)
+        $allowedProprietarios = [$proprietarioId];
+        if (!empty($data['proprietarios_terceiros'])) {
+            $allowedProprietarios = array_merge($allowedProprietarios, $data['proprietarios_terceiros']);
+        }
+
+        // Validate abastecimentos belong to allowed proprietarios
+        $abastecimentos = Abastecimento::whereIn('id_abastecimento', $data['ids_abastecimentos'])->get();
+        foreach ($abastecimentos as $abastecimento) {
+            if (!in_array((string) $abastecimento->id_proprietario, array_map('strval', $allowedProprietarios), true)) {
+                return new JsonResponse([
+                    'message' => 'Abastecimento ' . $abastecimento->id_abastecimento . ' não pertence ao proprietário do comprovante.',
+                ], 422);
+            }
+        }
+
+        $user = auth()->user();
+        $notaEntrada = 'comprovantes:' . implode(',', $data['comprovante_ids']);
+
+        // Collect all arquivo_urls from comprovantes for the anexo field
+        $anexoUrls = $comprovantes->pluck('arquivo_url')->filter()->values()->all();
+        $anexo = count($anexoUrls) === 1
+            ? $anexoUrls[0]
+            : (count($anexoUrls) > 1 ? json_encode($anexoUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null);
+
+        $dataPayload = [
+            'forma_pagamento' => $data['forma_pagamento'] ?? 'PIX',
+            'data_pagamento'  => $data['data_pagamento'] ?? $data['data_baixa'] ?? now()->format('Y-m-d'),
+            'nota_entrada'    => $notaEntrada,
+            'data_baixa'      => $data['data_baixa'] ?? now()->format('Y-m-d'),
+            'tipo_despesa'    => $data['tipo_despesa'] ?? 'Combustível',
+            'descricao'       => $data['descricao'] ?? null,
+            'recebedor'       => $data['recebedor'] ?? null,
+            'observacao'      => $data['observacao'] ?? null,
+            'valor'           => null,
+            'anexo'           => $anexo,
+        ];
+
+        $errors = [];
+        $success = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($data['ids_abastecimentos'] as $idAbastecimento) {
+                try {
+                    $this->upsertBaixa($idAbastecimento, $dataPayload, $user);
+                    Abastecimento::where('id_abastecimento', $idAbastecimento)
+                        ->update($this->buildAbastecimentoBaixaUpdate($dataPayload));
+                    $success++;
+                } catch (\Throwable $e) {
+                    $errors[] = ['id_abastecimento' => $idAbastecimento, 'message' => $e->getMessage()];
+                }
+            }
+
+            if (empty($errors)) {
+                // Mark all comprovantes as applied
+                DB::table('comprovantes_pagamento')
+                    ->whereIn('id', $data['comprovante_ids'])
+                    ->update(['status' => 'aplicado', 'nota_entrada' => $notaEntrada, 'updated_at' => now()]);
+                DB::commit();
+            } else {
+                DB::rollBack();
+                return new JsonResponse([
+                    'message' => 'Erro ao aplicar parte das baixas.',
+                    'errors'  => $errors,
+                ], 500);
+            }
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return new JsonResponse(['message' => 'Erro ao confirmar baixa: ' . $e->getMessage()], 500);
+        }
+
+        return new JsonResponse([
+            'message' => $success . ' baixa(s) registrada(s) com sucesso.',
+            'success' => $success,
+        ], 201);
+    }
+
+    // ─────────────────────────────────────────────
     // CANCELAR
     // ─────────────────────────────────────────────
 
