@@ -18,8 +18,8 @@ class ValoresCombustivel extends Model
     protected $keyType = 'string';
     public $timestamps = false;
 
-    protected $fillable = ['id_valor','tipo_combustivel','valor','data','responsavel','local','sync_token_at'];
-    protected $casts = ['valor' => 'decimal:3','data' => 'datetime', 'sync_token_at' => 'datetime'];
+    protected $fillable = ['id_valor','tipo_combustivel','valor','valor_frete','data','responsavel','local','sync_token_at'];
+    protected $casts = ['valor' => 'decimal:3','valor_frete' => 'decimal:3','data' => 'datetime', 'sync_token_at' => 'datetime'];
 
     protected static function boot()
     {

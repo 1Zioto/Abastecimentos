@@ -29,6 +29,7 @@ class _PrecosScreenState extends State<PrecosScreen> {
     final localNotifier = ValueNotifier<String>(
         AppState.instance.auth.filialAtual ?? AppConstants.locais.first);
     final valorCtrl = TextEditingController();
+    final freteCtrl = TextEditingController(text: '0.040');
     String data = AppDates.todayIso();
 
     final ok = await showDialog<bool>(
@@ -66,6 +67,11 @@ class _PrecosScreenState extends State<PrecosScreen> {
                       label: 'Valor por litro',
                       suffix: 'R\$/L'),
                   const SizedBox(height: 8),
+                  DecimalField(
+                      controller: freteCtrl,
+                      label: 'Valor do frete/ L',
+                      suffix: 'R\$/L'),
+                  const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: () async {
                       final p = await pickDateIso(context, initialIso: data);
@@ -99,9 +105,11 @@ class _PrecosScreenState extends State<PrecosScreen> {
       ));
       return;
     }
+    final frete = parseDecimal(freteCtrl.text) ?? 0.04;
     final item = ValorCombustivel(
       tipoCombustivel: tipoNotifier.value,
       valor: valor,
+      valorFrete: frete,
       data: data,
       responsavel: AppState.instance.auth.nome ?? AppState.instance.auth.login,
       local: localNotifier.value,
@@ -160,9 +168,19 @@ class _PrecosScreenState extends State<PrecosScreen> {
                       'Filial: ${v.local ?? 'Matriz'} | Data: ${AppDates.formatDateBr(v.data)}'
                       '${(v.responsavel ?? '').isEmpty ? '' : ' | ${v.responsavel}'}',
                     ),
-                    trailing: Text(
-                      AppDates.money(v.valor),
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          AppDates.money(v.valor),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          'Frete: ${AppDates.money(v.valorFrete ?? 0.04)}/L',
+                          style: const TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
                     ),
                   ),
                 );

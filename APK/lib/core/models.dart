@@ -81,6 +81,7 @@ class Proprietario {
   final String? dataRegistro;
   final String? local;
   final bool odometroObrigatorio;
+  final bool precoCustoAutomatico;
 
   Proprietario({
     this.idProprietario,
@@ -92,6 +93,7 @@ class Proprietario {
     this.dataRegistro,
     this.local,
     this.odometroObrigatorio = false,
+    this.precoCustoAutomatico = false,
   });
 
   factory Proprietario.fromJson(Map<String, dynamic> j) => Proprietario(
@@ -104,6 +106,7 @@ class Proprietario {
         dataRegistro: _asString(j['data_registro']),
         local: _asString(j['local']),
         odometroObrigatorio: _asBool(j['odometro_obrigatorio']) ?? false,
+        precoCustoAutomatico: _asBool(j['preco_custo_automatico']) ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -115,6 +118,7 @@ class Proprietario {
         'observacao': observacao,
         'local': local,
         'odometro_obrigatorio': odometroObrigatorio,
+        'preco_custo_automatico': precoCustoAutomatico,
       };
 }
 
@@ -254,6 +258,7 @@ class ValorCombustivel {
   final String? idValor;
   final String tipoCombustivel;
   final double valor;
+  final double? valorFrete;
   final String data; // yyyy-MM-dd
   final String? responsavel;
   final String? local;
@@ -262,6 +267,7 @@ class ValorCombustivel {
     this.idValor,
     required this.tipoCombustivel,
     required this.valor,
+    this.valorFrete,
     required this.data,
     this.responsavel,
     this.local,
@@ -271,6 +277,7 @@ class ValorCombustivel {
         idValor: _asId(j['id_valor']),
         tipoCombustivel: _asString(j['tipo_combustivel']) ?? '',
         valor: _asDouble(j['valor']) ?? 0,
+        valorFrete: _asDouble(j['valor_frete']),
         data: _asString(j['data']) ?? '',
         responsavel: _asString(j['responsavel']),
         local: _asString(j['local']),
@@ -280,6 +287,7 @@ class ValorCombustivel {
         if (idValor != null) 'id_valor': idValor,
         'tipo_combustivel': tipoCombustivel,
         'valor': valor,
+        if (valorFrete != null) 'valor_frete': valorFrete,
         'data': data,
         'responsavel': responsavel,
         'local': local,
@@ -478,6 +486,11 @@ class EntradaNota {
   final String? responsavel;
   final String? fotoNota;
   final String? local;
+  final String? fornecedor;
+  final String? fornecedorIaStatus;
+  final String? fornecedorIaMensagem;
+  final String? fornecedorIaExtraido;
+  final bool fornecedorConfirmado;
   final String? notaVerificacaoStatus;
   final String? notaVerificacaoMensagem;
   final String? notaVerificacaoTipo;
@@ -499,6 +512,11 @@ class EntradaNota {
     this.responsavel,
     this.fotoNota,
     this.local,
+    this.fornecedor,
+    this.fornecedorIaStatus,
+    this.fornecedorIaMensagem,
+    this.fornecedorIaExtraido,
+    this.fornecedorConfirmado = false,
     this.notaVerificacaoStatus,
     this.notaVerificacaoMensagem,
     this.notaVerificacaoTipo,
@@ -521,6 +539,11 @@ class EntradaNota {
         responsavel: _asString(j['responsavel']),
         fotoNota: _asString(j['foto_nota']),
         local: _asString(j['local']),
+        fornecedor: _asString(j['fornecedor']),
+        fornecedorIaStatus: _asString(j['fornecedor_ia_status']),
+        fornecedorIaMensagem: _asString(j['fornecedor_ia_mensagem']),
+        fornecedorIaExtraido: _asString(j['fornecedor_ia_extraido']),
+        fornecedorConfirmado: _asBool(j['fornecedor_confirmado']) ?? false,
         notaVerificacaoStatus: _asString(j['nota_verificacao_status']),
         notaVerificacaoMensagem: _asString(j['nota_verificacao_mensagem']),
         notaVerificacaoTipo: _asString(j['nota_verificacao_tipo']),
@@ -545,6 +568,14 @@ class EntradaNota {
         'responsavel': responsavel,
         'foto_nota': fotoNota,
         if (local != null) 'local': local,
+        'fornecedor': fornecedor,
+        if (fornecedorIaStatus != null)
+          'fornecedor_ia_status': fornecedorIaStatus,
+        if (fornecedorIaMensagem != null)
+          'fornecedor_ia_mensagem': fornecedorIaMensagem,
+        if (fornecedorIaExtraido != null)
+          'fornecedor_ia_extraido': fornecedorIaExtraido,
+        'fornecedor_confirmado': fornecedorConfirmado,
         if (notaVerificacaoStatus != null)
           'nota_verificacao_status': notaVerificacaoStatus,
         if (notaVerificacaoMensagem != null)

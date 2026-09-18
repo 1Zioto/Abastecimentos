@@ -26,6 +26,17 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   private auth = inject(AuthService);
 
   notas = signal<EntradaNota[]>([]);
+
+  // ── Paginação ───────────────────────────────────────────────
+  /** Valor enviado quando o usuário escolhe "Todas". */
+  private readonly TODAS = 1000;
+  opcoesPorPagina = [25, 50, 100, 200, 0];
+  perPage = signal(50);
+  page = signal(1);
+  total = signal(0);
+  lastPage = signal(1);
+  carregando = signal(false);
+
   showForm = signal(false);
   editItem = signal<EntradaNota | null>(null);
   deleteTarget = signal<EntradaNota | null>(null);
@@ -34,6 +45,7 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   previewImageUrl = signal('');
   private readonly defaultTipoCombustivel = 'OLEO DIESEL S10';
   private readonly custoTransportePorLitro = 0.04;
+  private fretePorTipoCombustivel: Record<string, number> = {};
   private readonly onGaragemChanged = () => {
     this.loadTiposCombustivel();
     this.loadFornecedores();
@@ -69,6 +81,7 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
     this.filtroDataInicio = filters.data_inicio;
     this.filtroDataFim = filters.data_fim;
     this.filtroFornecedor = filters.fornecedor;
+    this.page.set(1); // filtro novo, volta para a primeira página
     this.load();
   }
 
@@ -93,7 +106,7 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
 
   loadTiposCombustivel() {
     this.api.getValoresCombustivel({
-      per_page: 500,
+      per_page: 50,
       local: this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz',
     }).subscribe({
       next: (r) => {
@@ -104,6 +117,13 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
               .filter(Boolean),
           ),
         );
+        this.fretePorTipoCombustivel = {};
+        for (const v of r.data ?? []) {
+          const t = String(v?.tipo_combustivel ?? '').trim();
+          if (t && !(t in this.fretePorTipoCombustivel) && v?.valor_frete !== undefined && v?.valor_frete !== null) {
+            this.fretePorTipoCombustivel[t] = Number(v.valor_frete);
+          }
+        }
         const lista = tipos.length ? tipos : [this.defaultTipoCombustivel];
         this.tiposCombustivel.set(lista);
         const tipoAtual = String(this.form.getRawValue().tipo ?? '').trim();
@@ -123,19 +143,56 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   }
 
   load() {
+    this.carregando.set(true);
+    // per_page = 0 significa "Todas": pede um lote grande de uma vez.
+    const porPagina = this.perPage() === 0 ? this.TODAS : this.perPage();
+
     this.api.getEntradaNotas({
       tipo: this.filtroTipo,
       numero_nota_fiscal: this.filtroNumeroNota.trim(),
       data_inicio: this.filtroDataInicio,
       data_fim: this.filtroDataFim,
       fornecedor: this.filtroFornecedor.trim(),
-      per_page: 100
-    }).subscribe(r => {
-      const notas = (r.data ?? [])
-        .map(n => this.normalizeNota(n))
-        .sort((a, b) => this.notaTimestamp(b) - this.notaTimestamp(a));
-      this.notas.set(notas);
+      per_page: porPagina,
+      page: this.page(),
+    }).subscribe({
+      next: (r: any) => {
+        const notas = (r.data ?? [])
+          .map((n: EntradaNota) => this.normalizeNota(n))
+          .sort((a: EntradaNota, b: EntradaNota) => this.notaTimestamp(b) - this.notaTimestamp(a));
+        this.notas.set(notas);
+        this.total.set(r?.total ?? notas.length);
+        this.lastPage.set(r?.last_page ?? 1);
+        this.page.set(r?.current_page ?? this.page());
+        this.carregando.set(false);
+      },
+      error: () => this.carregando.set(false),
     });
+  }
+
+  /** Troca a quantidade por página e volta para a primeira. */
+  mudarPerPage(valor: any) {
+    this.perPage.set(Number(valor) || 0);
+    this.page.set(1);
+    this.load();
+  }
+
+  irPara(p: number) {
+    if (p < 1 || p > this.lastPage() || p === this.page()) return;
+    this.page.set(p);
+    this.load();
+    // Volta ao topo da listagem ao trocar de página.
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  inicioIntervalo(): number {
+    if (this.total() === 0) return 0;
+    const porPagina = this.perPage() === 0 ? this.total() : this.perPage();
+    return (this.page() - 1) * porPagina + 1;
+  }
+
+  fimIntervalo(): number {
+    return Math.min(this.inicioIntervalo() + this.notas().length - 1, this.total());
   }
 
   private notaTimestamp(n: EntradaNota): number {
@@ -180,7 +237,10 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   custoTransporteTotal(n: EntradaNota): number {
     const persisted = Number(n.custo_transporte_total ?? 0);
     if (Number.isFinite(persisted) && persisted > 0) return persisted;
-    return Math.round((Number(n.quantidade ?? 0) * this.custoTransportePorLitro) * 100) / 100;
+    const tipo = String(n.tipo ?? '').trim();
+    const freteTabela = tipo in this.fretePorTipoCombustivel ? this.fretePorTipoCombustivel[tipo] : undefined;
+    const custoLitro = Number(n.custo_transporte_litro ?? freteTabela ?? this.custoTransportePorLitro);
+    return Math.round((Number(n.quantidade ?? 0) * custoLitro) * 100) / 100;
   }
 
   valorCompraFinal(n: EntradaNota): number {
@@ -317,6 +377,12 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
       this.toastr.warning('Preencha os campos obrigatórios antes de salvar.');
       return;
     }
+    // Validação: anexo de imagem é obrigatório
+    const fotoNota = (this.form.getRawValue().foto_nota ?? '').trim();
+    if (!fotoNota) {
+      this.toastr.warning('É obrigatório anexar uma imagem/foto da nota fiscal.');
+      return;
+    }
     if (this.editItem() && !this.isAdmin()) {
       this.toastr.error('Somente administradores podem editar notas');
       return;
@@ -439,10 +505,9 @@ export class EntradaNotasComponent implements OnInit, OnDestroy {
   displayImageUrl(url?: string | null): string {
     const imageUrl = this.resolveImageUrl(url);
     if (!imageUrl) return '';
-    const driveId = this.googleDriveFileId(imageUrl);
-    if (driveId) {
-      return `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveId)}&sz=w1600`;
-    }
+    // Usar sempre o proxy do backend para evitar que o Google Drive
+    // peça autenticação da conta Google do usuário.
+    // O resolveImageUrl já converte URLs do Drive para /api/drive-image?id=...
     return imageUrl;
   }
 

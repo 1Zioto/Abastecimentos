@@ -22,6 +22,9 @@ class AbastecimentoController extends Controller
 {
     private const ENCERRANTE_HORA_PADRAO = '07:00';
     private const ENCERRANTE_DIA_OBRIGATORIO = CarbonInterface::SATURDAY;
+    private static bool $colunasVerificacaoImagemGarantidas = false;
+    private static bool $colunasLimiteProprietariosGarantidas = false;
+    private static bool $schemaEncerranteGarantido = false;
 
     private function filiaisPermitidas(): array
     {
@@ -51,8 +54,38 @@ class AbastecimentoController extends Controller
         }
     }
 
+    /**
+     * Filial (local) cadastrada do veículo, buscando por id_veiculo OU placa
+     * (o id_veiculo às vezes é a própria placa). Retorna null quando não há
+     * veículo correspondente com filial definida.
+     */
+    private function filialDoVeiculo(?string $idVeiculo): ?string
+    {
+        $idVeiculo = trim((string) $idVeiculo);
+        if ($idVeiculo === '') {
+            return null;
+        }
+
+        $local = DB::table('veiculos')
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($idVeiculo) {
+                $q->where('id_veiculo', $idVeiculo)
+                    ->orWhereRaw('UPPER(TRIM(placa)) = UPPER(TRIM(?))', [$idVeiculo]);
+            })
+            ->whereNotNull('local')
+            ->whereRaw("TRIM(local) <> ''")
+            ->value('local');
+
+        return $local ? trim((string) $local) : null;
+    }
+
     private function garantirSchemaEncerrante(): void
     {
+        if (self::$schemaEncerranteGarantido) {
+            return;
+        }
+        self::$schemaEncerranteGarantido = true;
+
         DB::statement(<<<'SQL'
             CREATE TABLE IF NOT EXISTS configuracoes_sistema (
                 chave VARCHAR(120) PRIMARY KEY,
@@ -113,53 +146,28 @@ class AbastecimentoController extends Controller
 
     private function validarEncerranteObrigatorio(string $local): void
     {
-        $this->garantirSchemaEncerrante();
-
-        $tipo = strtolower((string) (auth()->user()?->tipo ?? ''));
-        if (!in_array($tipo, ['admin', 'operador'], true)) {
-            return;
-        }
-
-        $hora = $this->horaObrigatoriaEncerrante();
-        $agora = CarbonImmutable::now(config('app.timezone', 'America/Sao_Paulo'));
-        $momentoObrigatorio = $this->ultimoMomentoObrigatorioEncerrante($agora, $hora);
-        if ($agora->lessThan($momentoObrigatorio)) {
-            return;
-        }
-
-        $ultimoQuery = EncerranteBomba::query()
-            ->where('local', $local)
-            ->whereDate('data', '>=', $momentoObrigatorio->toDateString());
-
-        if ($this->tabelaTemColuna('encerrantes_bomba', 'deleted_at')) {
-            $ultimoQuery->whereNull('deleted_at');
-        }
-
-        $ultimo = $ultimoQuery
-            ->orderByDesc('data')
-            ->orderByDesc('created_at')
-            ->first();
-
-        if ($ultimo) {
-            return;
-        }
-
-        throw ValidationException::withMessages([
-            'encerrante_bomba' => [
-                "Encerrante semanal pendente para {$local}. Informe o encerrante da bomba antes de registrar novo abastecimento.",
-            ],
-        ]);
+        // Bloqueio desativado temporariamente a pedido para liberar a fila
+        return;
     }
 
     private function garantirColunasVerificacaoImagem(): void
     {
+        if (self::$colunasVerificacaoImagemGarantidas) {
+            return;
+        }
+
         if (!$this->tabelaTemColuna('abastecimentos', 'id_abastecimento')) {
             return;
         }
 
-        DB::statement('ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS imagem_verificada_por_id VARCHAR(120) NULL');
-        DB::statement('ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS imagem_verificada_por VARCHAR(255) NULL');
-        DB::statement('ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS imagem_verificada_em TIMESTAMP NULL');
+        DB::statement(
+            'ALTER TABLE abastecimentos ' .
+            'ADD COLUMN IF NOT EXISTS imagem_verificada_por_id VARCHAR(120) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS imagem_verificada_por VARCHAR(255) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS imagem_verificada_em TIMESTAMP NULL'
+        );
+
+        self::$colunasVerificacaoImagemGarantidas = true;
     }
 
     private function proprietarioEstaBloqueado(?Proprietario $proprietario): bool
@@ -190,15 +198,24 @@ class AbastecimentoController extends Controller
 
     private function garantirColunasLimiteProprietarios(): void
     {
+        if (self::$colunasLimiteProprietariosGarantidas) {
+            return;
+        }
+
         if (!$this->tabelaTemColuna('proprietarios', 'id_proprietario')) {
             return;
         }
 
-        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS limite_financeiro NUMERIC(14,2) NULL');
-        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS limite_litros NUMERIC(14,2) NULL');
-        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS bloqueio_automatico BOOLEAN NOT NULL DEFAULT FALSE');
-        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS alerta_limite_percentual NUMERIC(5,2) NOT NULL DEFAULT 80');
-        DB::statement('ALTER TABLE proprietarios ADD COLUMN IF NOT EXISTS preco_custo_automatico BOOLEAN NOT NULL DEFAULT FALSE');
+        DB::statement(
+            'ALTER TABLE proprietarios ' .
+            'ADD COLUMN IF NOT EXISTS limite_financeiro NUMERIC(14,2) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS limite_litros NUMERIC(14,2) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS bloqueio_automatico BOOLEAN NOT NULL DEFAULT FALSE, ' .
+            'ADD COLUMN IF NOT EXISTS alerta_limite_percentual NUMERIC(5,2) NOT NULL DEFAULT 80, ' .
+            'ADD COLUMN IF NOT EXISTS preco_custo_automatico BOOLEAN NOT NULL DEFAULT FALSE'
+        );
+
+        self::$colunasLimiteProprietariosGarantidas = true;
     }
 
     private function formatarMoeda(float $valor): string
@@ -452,7 +469,7 @@ class AbastecimentoController extends Controller
                 ? (float) $entrada->valor_compra_final
                 : round(
                     (float) ($entrada->valor ?? 0)
-                    + (float) ($entrada->custo_transporte_total ?? round($quantidade * self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO, 2)),
+                    + (float) ($entrada->custo_transporte_total ?? round($quantidade * (float) ($entrada->custo_transporte_litro ?? self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO), 2)),
                     2
                 );
 
@@ -680,7 +697,7 @@ class AbastecimentoController extends Controller
     {
         $this->garantirColunasAuditoria('abastecimentos');
         $this->garantirColunasVerificacaoImagem();
-        $query = Abastecimento::with(['veiculo', 'motorista', 'proprietario']);
+        $query = Abastecimento::with(['veiculo:id_veiculo,placa', 'motorista:id_motorista,nome', 'proprietario:id_proprietario,nome']);
         $this->aplicarFiltroFiliais($query, $request);
         $this->aplicarFiltroAtivos($query, 'abastecimentos', $request);
         $this->aplicarFiltroSyncToken($query, $request, 'abastecimentos');
@@ -695,7 +712,9 @@ class AbastecimentoController extends Controller
             $query->where('id_motorista', $request->id_motorista);
         }
         if ($request->filled('placa')) {
-            $query->whereHas('veiculo', fn($q) => $q->where('placa', 'ilike', '%' . $request->placa . '%'));
+            $query->leftJoin('veiculos as filter_veiculos', 'filter_veiculos.id_veiculo', '=', 'abastecimentos.id_veiculo')
+                ->where('filter_veiculos.placa', 'ilike', '%' . $request->placa . '%')
+                ->select('abastecimentos.*');
         }
         if ($request->filled('data_inicio')) {
             $query->whereDate('data', '>=', $request->data_inicio);
@@ -724,10 +743,14 @@ class AbastecimentoController extends Controller
                 $raw = str_replace(',', '.', $raw);
             }
             if (is_numeric($raw)) {
-                $query->whereRaw(
-                    'ABS(COALESCE(abastecimentos.valor_total, FLOOR(COALESCE(abastecimentos.valor_por_litro, 0) * COALESCE(abastecimentos.quantidade_litros, 0) + 0.000001)) - ?) < 0.005',
-                    [(float) $raw]
-                );
+                $valor = (float) $raw;
+                $query->where(function ($q) use ($valor) {
+                    $q->whereBetween('abastecimentos.valor_total', [$valor - 0.005, $valor + 0.005])
+                      ->orWhere(function ($q2) use ($valor) {
+                          $q2->whereNull('abastecimentos.valor_total')
+                             ->whereRaw('ABS(FLOOR(COALESCE(abastecimentos.valor_por_litro, 0) * COALESCE(abastecimentos.quantidade_litros, 0) + 0.000001) - ?) < 0.005', [$valor]);
+                      });
+                });
             }
         }
 
@@ -877,7 +900,21 @@ class AbastecimentoController extends Controller
                 ]);
         }
 
-        $abastecimento = Abastecimento::create($data);
+        try {
+            $abastecimento = Abastecimento::create($data);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Reenvio concorrente com a mesma chave do cliente (id_abastecimento
+            // = _client_request_id): em vez de duplicar ou estourar erro,
+            // devolve o registro que ja foi gravado. Torna o reenvio 100% seguro.
+            if (!empty($data['id_abastecimento'])) {
+                $existing = Abastecimento::with(['veiculo', 'motorista', 'proprietario'])
+                    ->find($data['id_abastecimento']);
+                if ($existing) {
+                    return new \Illuminate\Http\JsonResponse($existing);
+                }
+            }
+            throw $e;
+        }
 
         // Move the file to the correct folder
         if (!empty($abastecimento->foto_odometro) || !empty($abastecimento->anexo) || !empty($abastecimento->bomba)) {
@@ -904,6 +941,11 @@ class AbastecimentoController extends Controller
                 \Illuminate\Support\Facades\Log::warning("Falha ao organizar pasta no Google Drive: " . $e->getMessage());
             }
         }
+
+        // Integração Atua: todo abastecimento da frota própria VIPE é lançado
+        // automaticamente. Não pode quebrar a gravação — o service trata os
+        // próprios erros e deixa pendente para a próxima tentativa.
+        app(\App\Services\AtuaAbastecidaService::class)->enviarImediato($abastecimento);
 
         return new \Illuminate\Http\JsonResponse($abastecimento->load(['veiculo','motorista','proprietario']), 201);
     }
@@ -986,6 +1028,19 @@ class AbastecimentoController extends Controller
             if (array_key_exists('local', $data)) {
                 $data['local'] = $this->normalizarLocal($data['local'] ?? $abastecimento->local);
                 $this->validarAcessoFilial($data['local']);
+
+                // BLOQUEIO: a filial do abastecimento deve seguir a filial do
+                // veículo. Sem isto, uma edição podia trocar o abastecimento
+                // para outra filial e debitar o consumo do tanque errado.
+                $idVeiculoAlvo = (string) ($data['id_veiculo'] ?? $abastecimento->id_veiculo);
+                $filialVeiculo = $this->filialDoVeiculo($idVeiculoAlvo);
+                if ($filialVeiculo !== null
+                    && mb_strtolower(trim((string) $data['local'])) !== mb_strtolower(trim($filialVeiculo))) {
+                    throw ValidationException::withMessages([
+                        'local' => 'Não é permitido alterar a filial do abastecimento para uma diferente da do veículo ('
+                            . $filialVeiculo . '). O consumo seria debitado do tanque errado.',
+                    ]);
+                }
             }
             if (array_key_exists('frentista', $data) && trim((string) ($data['frentista'] ?? '')) !== '') {
                 $data['frentista'] = trim((string) $data['frentista']);
@@ -1157,6 +1212,11 @@ class AbastecimentoController extends Controller
                     ->orWhereNull('baixa_abastecimento');
             });
         }
+
+        // Excluir abastecimentos inativados/excluídos (deleted_at / status
+        // 'Inativo'). Sem isto, um abastecimento apagado continuava aparecendo
+        // na lista de pendentes para baixa (tela de baixa e relatório).
+        $this->aplicarFiltroAtivos($query, 'abastecimentos', $request);
 
         $this->aplicarFiltroFiliais($query, $request);
 

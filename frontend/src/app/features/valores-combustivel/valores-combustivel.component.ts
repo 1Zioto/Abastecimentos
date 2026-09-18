@@ -57,6 +57,10 @@ import { AuthService } from '../../core/services/auth.service';
                 <label>Valor (R$/L) <span class="req">*</span></label>
                 <input type="number" formControlName="valor" placeholder="0.000" step="0.001" />
               </div>
+              <div class="field">
+                <label>Valor do frete/ L <span class="req">*</span></label>
+                <input type="number" formControlName="valor_frete" placeholder="0.040" step="0.001" />
+              </div>
             </div>
             <p class="form-note">O responsável será registrado automaticamente como o usuário logado.</p>
             <div class="form-actions">
@@ -78,6 +82,7 @@ import { AuthService } from '../../core/services/auth.service';
                 <th>Filial</th>
                 <th>Combustível</th>
                 <th class="text-right">Valor (R$/L)</th>
+                <th class="text-right">Valor do frete/ L</th>
                 <th>Data/Hora</th>
                 <th>Responsável</th>
               </tr>
@@ -88,12 +93,13 @@ import { AuthService } from '../../core/services/auth.service';
                   <td><span class="branch-badge">{{ v.local || 'Matriz' }}</span></td>
                   <td><span class="fuel-badge">{{ v.tipo_combustivel }}</span></td>
                   <td class="text-right val-green">R$ {{ v.valor | number:'1.3-3' }}</td>
+                  <td class="text-right val-frete">R$ {{ (v.valor_frete !== null && v.valor_frete !== undefined ? v.valor_frete : 0.04) | number:'1.3-3' }}</td>
                   <td>{{ v.data | date:'dd/MM/yyyy HH:mm' }}</td>
                   <td>{{ v.responsavel ?? '—' }}</td>
                 </tr>
               }
               @empty {
-                <tr><td colspan="5" class="empty-cell">Nenhum preço cadastrado</td></tr>
+                <tr><td colspan="6" class="empty-cell">Nenhum preço cadastrado</td></tr>
               }
             </tbody>
           </table>
@@ -133,6 +139,7 @@ import { AuthService } from '../../core/services/auth.service';
     .fuel-badge { background:#1e2d4a; color:#38bdf8; padding:3px 10px; border-radius:5px; font-size:12px; font-weight:600; }
     .branch-badge { background:#ecfeff; color:#0369a1; padding:3px 10px; border-radius:5px; font-size:12px; font-weight:700; border:1px solid #bae6fd; }
     .val-green { color:#4ade80; font-weight:700; font-size:14px; }
+    .val-frete { color:#38bdf8; font-weight:600; font-size:13px; }
     .actions { display:flex; gap:6px; }
     .action-btn { background:transparent; border:none; cursor:pointer; font-size:14px; padding:4px 6px; border-radius:5px; }
     .action-btn:hover { background:#1e2d4a; }
@@ -163,6 +170,7 @@ export class ValoresCombustivelComponent implements OnInit, OnDestroy {
     local: [this.auth.getGaragem() || this.auth.getFiliaisAcesso()[0] || 'Matriz', Validators.required],
     tipo_combustivel: ['OLEO DIESEL S10', Validators.required],
     valor: [null as number | null, [Validators.required, Validators.min(0.001)]],
+    valor_frete: [0.04 as number | null, [Validators.required, Validators.min(0)]],
   });
 
   private onGaragemChanged = () => {
@@ -185,12 +193,16 @@ export class ValoresCombustivelComponent implements OnInit, OnDestroy {
   }
 
   load() {
-    this.api.getValoresCombustivel({ per_page: 100, local: this.localSelecionado() }).subscribe(r => this.valores.set(r.data));
+    this.api.getValoresCombustivel({ per_page: 50, local: this.localSelecionado() }).subscribe(r => this.valores.set(r.data));
   }
 
   cancelForm() {
     this.showForm.set(false);
-    this.form.reset({ local: this.localSelecionado(), tipo_combustivel: 'OLEO DIESEL S10' });
+    this.form.reset({
+      local: this.localSelecionado(),
+      tipo_combustivel: 'OLEO DIESEL S10',
+      valor_frete: 0.04,
+    });
   }
 
   private localSelecionado(): string {

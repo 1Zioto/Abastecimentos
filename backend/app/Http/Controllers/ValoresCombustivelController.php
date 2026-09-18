@@ -16,6 +16,15 @@ class ValoresCombustivelController extends Controller
             DB::statement("ALTER TABLE valores_combustivel ADD COLUMN IF NOT EXISTS local VARCHAR(40) NULL");
         }
         DB::statement("UPDATE valores_combustivel SET local = 'Viana' WHERE local IS NULL OR local = ''");
+        $this->garantirColunaValorFrete();
+    }
+
+    private function garantirColunaValorFrete(): void
+    {
+        if (!$this->tabelaTemColuna('valores_combustivel', 'valor_frete')) {
+            DB::statement("ALTER TABLE valores_combustivel ADD COLUMN IF NOT EXISTS valor_frete NUMERIC(10, 3) NULL DEFAULT 0.040");
+            DB::statement("UPDATE valores_combustivel SET valor_frete = 0.040 WHERE valor_frete IS NULL");
+        }
     }
 
     private function filiaisPermitidas(): array
@@ -81,16 +90,23 @@ class ValoresCombustivelController extends Controller
         $data = $request->validate([
             'tipo_combustivel' => 'required|string',
             'valor'            => 'required|numeric|min:0',
+            'valor_frete'      => 'nullable|numeric|min:0',
             'local'            => 'nullable|string|in:Matriz,Viana',
         ]);
         $data['local'] = $this->normalizarLocal($data['local'] ?? null);
         $this->validarAcessoFilial($data['local']);
+        if (!array_key_exists('valor_frete', $data) || $data['valor_frete'] === null) {
+            $data['valor_frete'] = 0.040;
+        } else {
+            $data['valor_frete'] = round((float) $data['valor_frete'], 3);
+        }
         $currentUser = auth('api')->user();
         $data['responsavel'] = $currentUser?->nome ?: $currentUser?->login ?: 'Sistema';
         $existing = ValoresCombustivel::query()
             ->where('tipo_combustivel', $data['tipo_combustivel'])
             ->where('local', $data['local'])
             ->where('valor', $data['valor'])
+            ->where('valor_frete', $data['valor_frete'])
             ->where('data', '>=', now()->subMinutes(10))
             ->latest('data')
             ->first();

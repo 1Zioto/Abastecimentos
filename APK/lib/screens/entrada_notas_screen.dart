@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/api_client.dart';
@@ -10,6 +11,8 @@ import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../core/date_utils.dart';
 import '../core/models.dart';
+import '../core/entrada_nota_validation.dart';
+import '../core/thermal_printer.dart';
 import '../widgets/common.dart';
 import '../widgets/linked_details.dart';
 
@@ -36,6 +39,8 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   String _filtroNumeroNota = '';
   String _filtroDataInicio = '';
   String _filtroDataFim = '';
+  String _filtroFornecedor = '';
+  final _filtroFornecedorCtrl = TextEditingController();
   List<String> _tiposCombustivel = const ['OLEO DIESEL S10'];
   final _filtroNumeroNotaCtrl = TextEditingController();
 
@@ -47,7 +52,9 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   final _valorLitroCtrl = TextEditingController();
   final _valorTotalCtrl = TextEditingController();
   final _responsavelCtrl = TextEditingController();
+  final _fornecedorCtrl = TextEditingController();
   String? _fotoNotaUrl;
+  List<String> _fornecedoresDisponiveis = [];
 
   @override
   void initState() {
@@ -58,11 +65,13 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   @override
   void dispose() {
     _filtroNumeroNotaCtrl.dispose();
+    _filtroFornecedorCtrl.dispose();
     _numeroNfCtrl.dispose();
     _qtdCtrl.dispose();
     _valorLitroCtrl.dispose();
     _valorTotalCtrl.dispose();
     _responsavelCtrl.dispose();
+    _fornecedorCtrl.dispose();
     super.dispose();
   }
 
@@ -87,6 +96,7 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
         'numero_nota_fiscal': _filtroNumeroNota,
         'data_inicio': _filtroDataInicio,
         'data_fim': _filtroDataFim,
+        'fornecedor': _filtroFornecedor,
         'per_page': 100,
       });
       final listRaw = (resp is Map && resp['data'] is List)
@@ -100,6 +110,21 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
               .map((m) => EntradaNota.fromJson(Map<String, dynamic>.from(m))),
         )
         ..sort((a, b) => _notaDateTime(b).compareTo(_notaDateTime(a)));
+
+      try {
+        final fornecedoresResp = await AppState.instance.api
+            .get('/entrada-notas/fornecedores', query: {'local': localAtual});
+        final fornecedoresRaw =
+            (fornecedoresResp is Map && fornecedoresResp['data'] is List)
+                ? List<dynamic>.from(fornecedoresResp['data'] as List)
+                : <dynamic>[];
+        _fornecedoresDisponiveis = fornecedoresRaw
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      } catch (_) {
+        // Lista de fornecedores e apenas para sugestao; falha aqui nao impede a tela.
+      }
     } catch (e) {
       await _logEntradaNotaError('Falha ao carregar entrada de notas', e);
       if (mounted) {
@@ -184,6 +209,7 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
       _valorLitroCtrl.text = '';
       _valorTotalCtrl.text = '';
       _responsavelCtrl.text = nome;
+      _fornecedorCtrl.text = '';
       _fotoNotaUrl = null;
     });
     _openNotaFormModal();
@@ -207,6 +233,7 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
       _valorTotalCtrl.text = (n.valor ?? 0).toString().replaceAll('.', ',');
       _responsavelCtrl.text =
           AppState.instance.auth.nome ?? n.responsavel ?? '';
+      _fornecedorCtrl.text = n.fornecedor ?? '';
       _fotoNotaUrl = n.fotoNota;
     });
     _openNotaFormModal();
@@ -217,9 +244,11 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
       _formModalOpen = false;
       Navigator.of(context).pop();
     }
-    setState(() {
-      _editando = null;
-    });
+    if (mounted) {
+      setState(() {
+        _editando = null;
+      });
+    }
   }
 
   void _refreshFormModal() {
@@ -229,19 +258,25 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   Future<String?> _pickAttachmentAction() async {
     return showModalBottomSheet<String>(
       context: context,
+      useRootNavigator: true,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Camera'),
+              title: const Text('Tirar foto'),
               onTap: () => Navigator.of(ctx).pop('camera'),
             ),
             ListTile(
-              leading: const Icon(Icons.attach_file_outlined),
-              title: const Text('Arquivo ou galeria'),
-              onTap: () => Navigator.of(ctx).pop('arquivo'),
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Escolher da galeria'),
+              onTap: () => Navigator.of(ctx).pop('galeria'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('Escolher arquivo PDF'),
+              onTap: () => Navigator.of(ctx).pop('pdf'),
             ),
           ],
         ),
@@ -252,22 +287,39 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   Future<void> _uploadFotoNota() async {
     final action = await _pickAttachmentAction();
     if (action == null) return;
+    // Aguarda o menu fechar e libera o teclado antes de abrir uma Activity
+    // externa. Em alguns aparelhos, abrir o seletor durante a transicao do
+    // bottom sheet fazia a galeria/camera ser ignorada.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    if (!mounted) return;
     setState(() => _uploading = true);
     _refreshFormModal();
     try {
       String? path;
       if (action == 'camera') {
         final picked = await ImagePicker()
-            .pickImage(source: ImageSource.camera)
+            .pickImage(
+              source: ImageSource.camera,
+              imageQuality: 85,
+              requestFullMetadata: false,
+            )
             .timeout(const Duration(seconds: 60));
         path = picked?.path;
-      } else {
-        final picked = await FilePicker.platform.pickFiles(
-          allowMultiple: false,
-          type: FileType.custom,
-          allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
+      } else if (action == 'galeria') {
+        // O seletor de arquivos do Android e mais estavel quando esta tela
+        // volta da camera/teclado e tambem funciona sem permissao ampla para
+        // ler toda a galeria.
+        final picked = await FilePicker.pickFile(
+          type: FileType.image,
         ).timeout(const Duration(seconds: 60));
-        path = picked?.files.single.path;
+        path = picked?.path;
+      } else if (action == 'pdf') {
+        final picked = await FilePicker.pickFile(
+          type: FileType.custom,
+          allowedExtensions: ['pdf'],
+        ).timeout(const Duration(seconds: 60));
+        path = picked?.path;
       }
       if (path == null || path.trim().isEmpty) return;
       setState(() => _fotoNotaUrl = path);
@@ -302,9 +354,27 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   }
 
   Future<void> _openUrl(String url) async {
-    final uri = _isRemoteUrl(url) ? Uri.tryParse(url) : Uri.file(url);
+    if (!_isRemoteUrl(url)) {
+      await OpenFilex.open(url);
+      return;
+    }
+    // Para URLs do Google Drive, usar o proxy do backend para evitar
+    // que o Google peça autenticação da conta Google do usuário.
+    final proxyUrl = _resolveProxyUrl(url);
+    final uri = Uri.tryParse(proxyUrl);
     if (uri == null) return;
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  /// Converte URLs do Google Drive para o proxy do backend.
+  /// Isso evita que o usuário precise fazer login no Google para ver as imagens.
+  String _resolveProxyUrl(String url) {
+    if (!url.contains('drive.google.com')) return url;
+    final idMatch = RegExp(r'(?:id=|file/d/)([^&/?]+)').firstMatch(url);
+    if (idMatch != null && idMatch.group(1) != null) {
+      return '${AppConstants.apiBaseUrl}/drive-image?id=${idMatch.group(1)}';
+    }
+    return url;
   }
 
   bool _isRemoteUrl(String value) {
@@ -386,12 +456,31 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving || _uploading) return;
+    final isNew = _editando?.idFinanceiro == null;
+    late final String numeroNota;
+    try {
+      numeroNota = validateEntradaNotaNumber(_numeroNfCtrl.text);
+    } on FormatException catch (e) {
+      await _showMessageAboveModal(
+          title: 'Número obrigatório', message: e.message);
+      return;
+    }
     if (_data.trim().isEmpty) return;
     final valorTotal = parseDecimal(_valorTotalCtrl.text);
     if (valorTotal == null || valorTotal <= 0) {
       await _showMessageAboveModal(
         title: 'Dados inválidos',
         message: 'Informe o valor total da nota.',
+      );
+      return;
+    }
+    // Validação: anexo de imagem é obrigatório
+    if (_fotoNotaUrl == null || _fotoNotaUrl!.trim().isEmpty) {
+      await _showMessageAboveModal(
+        title: 'Anexo obrigatório',
+        message: 'É obrigatório anexar uma imagem/foto da nota fiscal.',
+        backgroundColor: AppTheme.warning,
       );
       return;
     }
@@ -402,8 +491,7 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
     final payload = <String, dynamic>{
       'data': dataNota,
       'data_hora': AppDates.combineDateTime(dataNota, horaNota),
-      'numero_nota_fiscal':
-          _numeroNfCtrl.text.trim().isEmpty ? null : _numeroNfCtrl.text.trim(),
+      'numero_nota_fiscal': numeroNota,
       'tipo': _tipo,
       'quantidade': parseDecimal(_qtdCtrl.text),
       'valor_litro': parseDecimal(_valorLitroCtrl.text),
@@ -412,6 +500,9 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
           ? (AppState.instance.auth.nome ?? AppState.instance.auth.login ?? '')
           : _responsavelCtrl.text.trim(),
       'foto_nota': _fotoNotaUrl,
+      'fornecedor': _fornecedorCtrl.text.trim().isEmpty
+          ? null
+          : _fornecedorCtrl.text.trim(),
       'local': _editando?.local ?? AppState.instance.auth.filialAtual,
     };
     try {
@@ -423,6 +514,7 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
           payload: payload,
         );
         _cancelForm();
+        if (isNew) await _printSavedNota(payload, pending: true);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Nota salva. O anexo sera enviado na sincronizacao.'),
@@ -431,12 +523,16 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
         return;
       }
       if (_editando?.idFinanceiro != null) {
-        await AppState.instance.api
+        final response = await AppState.instance.api
             .put('/entrada-notas/${_editando!.idFinanceiro}', payload);
+        verifyEntradaNotaResponse(response, numeroNota);
       } else {
-        await AppState.instance.api.post('/entrada-notas', payload);
+        final response =
+            await AppState.instance.api.post('/entrada-notas', payload);
+        verifyEntradaNotaResponse(response, numeroNota);
       }
       _cancelForm();
+      if (isNew) await _printSavedNota(payload);
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -451,6 +547,7 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
         payload: payload,
       );
       _cancelForm();
+      if (isNew) await _printSavedNota(payload, pending: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Sem internet: nota enfileirada para sincronizacao.'),
@@ -478,229 +575,318 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
     }
   }
 
+  Future<void> _printSavedNota(Map<String, dynamic> payload,
+      {bool pending = false}) async {
+    try {
+      if (!await ThermalPrinterService.instance.autoPrintEntradaNotaEnabled()) {
+        return;
+      }
+      await ThermalPrinterService.instance.printEntradaNota(
+        EntradaNota.fromJson(payload),
+        pending: pending,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Nota salva; impressão não concluída'),
+          content: Text(
+              'Não cadastre a nota novamente. Verifique a impressora.\n$e'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('OK'))
+          ],
+        ),
+      );
+    }
+  }
+
   Future<void> _openNotaFormModal() async {
     if (_formModalOpen) return;
     _formModalOpen = true;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setModalState) {
-            _formModalSetState = setModalState;
-            final media = MediaQuery.of(ctx);
-            final bottomInset = media.viewInsets.bottom;
-            final bottomSafePadding = media.viewPadding.bottom;
-            return Padding(
-              padding: EdgeInsets.only(bottom: bottomInset),
-              child: DraggableScrollableSheet(
-                initialChildSize: 0.96,
-                minChildSize: 0.65,
-                maxChildSize: 1.0,
-                expand: false,
-                builder: (ctx, scrollController) {
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(ctx).scaffoldBackgroundColor,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(24),
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 10, 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _editando == null
-                                      ? 'Nova Nota Fiscal'
-                                      : 'Editar Nota Fiscal',
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'Fechar',
-                                onPressed: _cancelForm,
-                                icon: const Icon(Icons.close),
-                              ),
-                            ],
+    // Uma rota opaca evita manter a lista inteira de notas sendo composta
+    // atras do formulario enquanto o teclado esta aberto. Isso elimina os
+    // atrasos de digitacao observados em aparelhos Android mais modestos e
+    // fornece um contexto estavel para abrir camera/galeria.
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (routeContext) => Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: SafeArea(
+            child: StatefulBuilder(
+              builder: (ctx, setModalState) {
+                _formModalSetState = setModalState;
+                final media = MediaQuery.of(ctx);
+                final bottomInset = media.viewInsets.bottom;
+                final bottomSafePadding = media.viewPadding.bottom;
+                return Padding(
+                  padding: EdgeInsets.only(bottom: bottomInset),
+                  child: DraggableScrollableSheet(
+                    initialChildSize: 1.0,
+                    minChildSize: 1.0,
+                    maxChildSize: 1.0,
+                    expand: false,
+                    builder: (ctx, scrollController) {
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(ctx).scaffoldBackgroundColor,
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(24),
                           ),
                         ),
-                        Expanded(
-                          child: ListView(
-                            controller: scrollController,
-                            padding: EdgeInsets.fromLTRB(
-                              20,
-                              4,
-                              20,
-                              24 + bottomSafePadding,
-                            ),
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: () async {
-                                  final p = await pickDateIso(
-                                    context,
-                                    initialIso: _data,
-                                  );
-                                  if (p != null) {
-                                    setState(() => _data = p);
-                                    _refreshFormModal();
-                                  }
-                                },
-                                icon: const Icon(Icons.event),
-                                label: Text(AppDates.formatDateBr(_data)),
-                              ),
-                              const SizedBox(height: 10),
-                              OutlinedButton.icon(
-                                onPressed: () async {
-                                  final parts = _hora.split(':');
-                                  final selected = await showTimePicker(
-                                    context: context,
-                                    initialTime: TimeOfDay(
-                                      hour: int.tryParse(parts.first) ??
-                                          DateTime.now().hour,
-                                      minute: parts.length > 1
-                                          ? (int.tryParse(parts[1]) ??
-                                              DateTime.now().minute)
-                                          : DateTime.now().minute,
-                                    ),
-                                  );
-                                  if (selected != null) {
-                                    setState(() {
-                                      _hora =
-                                          '${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}';
-                                    });
-                                    _refreshFormModal();
-                                  }
-                                },
-                                icon: const Icon(Icons.schedule_outlined),
-                                label: Text('Hora: $_hora'),
-                              ),
-                              const SizedBox(height: 14),
-                              TextField(
-                                controller: _numeroNfCtrl,
-                                decoration: const InputDecoration(
-                                  labelText: 'Numero da NF',
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              DropdownButtonFormField<String>(
-                                initialValue: _tipo,
-                                decoration:
-                                    const InputDecoration(labelText: 'Tipo'),
-                                items: _tiposCombustivel
-                                    .map((t) => DropdownMenuItem(
-                                          value: t,
-                                          child: Text(t),
-                                        ))
-                                    .toList(),
-                                onChanged: (v) {
-                                  setState(() {
-                                    _tipo = v ?? _tiposCombustivel.first;
-                                  });
-                                  _refreshFormModal();
-                                },
-                              ),
-                              const SizedBox(height: 14),
-                              DecimalField(
-                                controller: _qtdCtrl,
-                                label: 'Quantidade (L)',
-                              ),
-                              const SizedBox(height: 14),
-                              DecimalField(
-                                controller: _valorLitroCtrl,
-                                label: 'Valor por Litro (compra)',
-                              ),
-                              const SizedBox(height: 14),
-                              DecimalField(
-                                controller: _valorTotalCtrl,
-                                label: 'Valor Total',
-                                prefix: 'R\$',
-                              ),
-                              const SizedBox(height: 14),
-                              TextField(
-                                controller: _responsavelCtrl,
-                                readOnly: true,
-                                decoration: const InputDecoration(
-                                  labelText: 'Responsavel',
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed:
-                                      _uploading ? null : _uploadFotoNota,
-                                  icon: const Icon(Icons.attach_file),
-                                  label: Text(
-                                    _uploading
-                                        ? 'Enviando...'
-                                        : ((_fotoNotaUrl ?? '').trim().isEmpty
-                                            ? 'Selecionar foto ou anexo'
-                                            : 'Trocar foto ou anexo'),
-                                  ),
-                                ),
-                              ),
-                              if ((_fotoNotaUrl ?? '').trim().isNotEmpty) ...[
-                                const SizedBox(height: 14),
-                                InkWell(
-                                  onTap: () => _openUrl(_fotoNotaUrl!),
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: InputDecorator(
-                                    decoration: const InputDecoration(
-                                      labelText: 'Anexo',
-                                      suffixIcon: Icon(Icons.open_in_new),
-                                    ),
+                        child: Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 12, 10, 8),
+                              child: Row(
+                                children: [
+                                  Expanded(
                                     child: Text(
-                                      _isLocalAttachment(_fotoNotaUrl)
-                                          ? _attachmentLabel(_fotoNotaUrl!)
-                                          : _fotoNotaUrl!,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
+                                      _editando == null
+                                          ? 'Nova Nota Fiscal'
+                                          : 'Editar Nota Fiscal',
                                       style: const TextStyle(
-                                        color: AppTheme.primary,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w800,
                                       ),
                                     ),
                                   ),
-                                ),
-                              ],
-                              const SizedBox(height: 22),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: OutlinedButton(
-                                      onPressed: _cancelForm,
-                                      child: const Text('Cancelar'),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      onPressed: _saving ? null : _save,
-                                      child: const Text('Salvar Nota'),
-                                    ),
+                                  IconButton(
+                                    tooltip: 'Fechar',
+                                    onPressed: _cancelForm,
+                                    icon: const Icon(Icons.close),
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
+                            ),
+                            Expanded(
+                              child: ListView(
+                                controller: scrollController,
+                                padding: EdgeInsets.fromLTRB(
+                                  20,
+                                  4,
+                                  20,
+                                  24 + bottomSafePadding,
+                                ),
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final p = await pickDateIso(
+                                        context,
+                                        initialIso: _data,
+                                      );
+                                      if (p != null) {
+                                        setState(() => _data = p);
+                                        _refreshFormModal();
+                                      }
+                                    },
+                                    icon: const Icon(Icons.event),
+                                    label: Text(AppDates.formatDateBr(_data)),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final parts = _hora.split(':');
+                                      final selected = await showTimePicker(
+                                        context: context,
+                                        initialTime: TimeOfDay(
+                                          hour: int.tryParse(parts.first) ??
+                                              DateTime.now().hour,
+                                          minute: parts.length > 1
+                                              ? (int.tryParse(parts[1]) ??
+                                                  DateTime.now().minute)
+                                              : DateTime.now().minute,
+                                        ),
+                                      );
+                                      if (selected != null) {
+                                        setState(() {
+                                          _hora =
+                                              '${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}';
+                                        });
+                                        _refreshFormModal();
+                                      }
+                                    },
+                                    icon: const Icon(Icons.schedule_outlined),
+                                    label: Text('Hora: $_hora'),
+                                  ),
+                                  const SizedBox(height: 14),
+                                  TextField(
+                                    controller: _numeroNfCtrl,
+                                    enabled: !_saving,
+                                    keyboardType: TextInputType.number,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Número da NF *',
+                                      helperText:
+                                          'Obrigatório. Somente dígitos; zeros à esquerda são preservados.',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 14),
+                                  DropdownButtonFormField<String>(
+                                    initialValue: _tipo,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Tipo'),
+                                    items: _tiposCombustivel
+                                        .map((t) => DropdownMenuItem(
+                                              value: t,
+                                              child: Text(t),
+                                            ))
+                                        .toList(),
+                                    onChanged: (v) {
+                                      setState(() {
+                                        _tipo = v ?? _tiposCombustivel.first;
+                                      });
+                                      _refreshFormModal();
+                                    },
+                                  ),
+                                  const SizedBox(height: 14),
+                                  DecimalField(
+                                    controller: _qtdCtrl,
+                                    label: 'Quantidade (L)',
+                                  ),
+                                  const SizedBox(height: 14),
+                                  DecimalField(
+                                    controller: _valorLitroCtrl,
+                                    label: 'Valor por Litro (compra)',
+                                  ),
+                                  const SizedBox(height: 14),
+                                  DecimalField(
+                                    controller: _valorTotalCtrl,
+                                    label: 'Valor Total',
+                                    prefix: 'R\$',
+                                  ),
+                                  const SizedBox(height: 14),
+                                  TextField(
+                                    controller: _responsavelCtrl,
+                                    readOnly: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Responsavel',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 14),
+                                  Autocomplete<String>(
+                                    initialValue: TextEditingValue(
+                                        text: _fornecedorCtrl.text),
+                                    optionsBuilder: (textEditingValue) {
+                                      final query = textEditingValue.text
+                                          .trim()
+                                          .toLowerCase();
+                                      if (query.isEmpty) {
+                                        return _fornecedoresDisponiveis;
+                                      }
+                                      return _fornecedoresDisponiveis.where(
+                                        (f) => f.toLowerCase().contains(query),
+                                      );
+                                    },
+                                    onSelected: (selection) {
+                                      _fornecedorCtrl.text = selection;
+                                    },
+                                    fieldViewBuilder:
+                                        (ctx, controller, focusNode, onSubmit) {
+                                      return TextField(
+                                        controller: controller,
+                                        focusNode: focusNode,
+                                        onChanged: (value) {
+                                          _fornecedorCtrl.text = value;
+                                        },
+                                        decoration: const InputDecoration(
+                                          labelText: 'Fornecedor',
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: 14),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed:
+                                          _uploading ? null : _uploadFotoNota,
+                                      icon: const Icon(Icons.attach_file),
+                                      label: Text(
+                                        _uploading
+                                            ? 'Enviando...'
+                                            : ((_fotoNotaUrl ?? '')
+                                                    .trim()
+                                                    .isEmpty
+                                                ? 'Selecionar foto ou anexo *'
+                                                : 'Trocar foto ou anexo'),
+                                      ),
+                                    ),
+                                  ),
+                                  if ((_fotoNotaUrl ?? '').trim().isEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 6),
+                                      child: Text(
+                                        '📎 Anexar imagem é obrigatório para salvar a nota.',
+                                        style: TextStyle(
+                                          color: AppTheme.warning,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  if ((_fotoNotaUrl ?? '')
+                                      .trim()
+                                      .isNotEmpty) ...[
+                                    const SizedBox(height: 14),
+                                    InkWell(
+                                      onTap: () => _openUrl(_fotoNotaUrl!),
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: InputDecorator(
+                                        decoration: const InputDecoration(
+                                          labelText: 'Anexo',
+                                          suffixIcon: Icon(Icons.open_in_new),
+                                        ),
+                                        child: Text(
+                                          _isLocalAttachment(_fotoNotaUrl)
+                                              ? _attachmentLabel(_fotoNotaUrl!)
+                                              : _fotoNotaUrl!,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: AppTheme.primary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 22),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: _cancelForm,
+                                          child: const Text('Cancelar'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: ElevatedButton(
+                                          onPressed: (_saving || _uploading)
+                                              ? null
+                                              : _save,
+                                          child: Text(_uploading
+                                              ? 'Aguarde o anexo...'
+                                              : 'Salvar Nota'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            );
-          },
-        );
-      },
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
     );
     _formModalSetState = null;
     _formModalOpen = false;
@@ -762,7 +948,8 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
   double _custoTransporteTotal(EntradaNota nota) {
     final persisted = nota.custoTransporteTotal;
     if (persisted != null && persisted > 0) return persisted;
-    return ((nota.quantidade ?? 0) * _custoTransportePorLitro * 100).round() /
+    final custoLitro = nota.custoTransporteLitro ?? _custoTransportePorLitro;
+    return ((nota.quantidade ?? 0) * custoLitro * 100).round() /
         100;
   }
 
@@ -785,6 +972,41 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
     if (status == 'validada') return AppTheme.success;
     if (status == 'suspeita') return AppTheme.warning;
     return AppTheme.textMuted;
+  }
+
+  bool _fornecedorDivergente(EntradaNota nota) {
+    final status = (nota.fornecedorIaStatus ?? '').trim().toLowerCase();
+    return status == 'divergente' && !nota.fornecedorConfirmado;
+  }
+
+  String _fornecedorIaLabel(EntradaNota nota) {
+    if (nota.fornecedorConfirmado) return 'Fornecedor verificado';
+    final status = (nota.fornecedorIaStatus ?? '').trim().toLowerCase();
+    if (status == 'coerente') return 'Fornecedor coerente';
+    if (status == 'divergente') return 'Fornecedor divergente';
+    if (status == 'pendente') return 'Verificacao pendente';
+    return '';
+  }
+
+  Future<void> _confirmarFornecedor(EntradaNota n) async {
+    if (n.idFinanceiro == null) return;
+    try {
+      await AppState.instance.api
+          .post('/entrada-notas/${n.idFinanceiro}/confirmar-fornecedor', {});
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Fornecedor marcado como verificado.'),
+        backgroundColor: AppTheme.success,
+      ));
+    } catch (e) {
+      await _logEntradaNotaError('Falha ao confirmar fornecedor', e);
+      if (!mounted) return;
+      await _showMessageAboveModal(
+        title: 'Erro ao confirmar fornecedor',
+        message: _formatError(e),
+      );
+    }
   }
 
   Future<void> _abrirDetalhes(EntradaNota n) async {
@@ -812,6 +1034,12 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
               label: 'Abrir anexo',
               icon: Icons.open_in_new,
               action: 'attachment',
+            ),
+          if (_fornecedorDivergente(n))
+            const DetailAction(
+              label: 'Marcar fornecedor como verificado',
+              icon: Icons.verified_outlined,
+              action: 'confirmar_fornecedor',
             ),
           if (isAdmin)
             const DetailAction(
@@ -872,6 +1100,21 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
                 value: n.local,
               ),
               DetailField(
+                label: 'Fornecedor',
+                value: n.fornecedor,
+              ),
+              if (_fornecedorIaLabel(n).isNotEmpty)
+                DetailField(
+                  label: 'Verificacao fornecedor',
+                  value: _fornecedorIaLabel(n),
+                ),
+              if ((n.fornecedorIaMensagem ?? '').trim().isNotEmpty &&
+                  !n.fornecedorConfirmado)
+                DetailField(
+                  label: 'Mensagem fornecedor',
+                  value: n.fornecedorIaMensagem,
+                ),
+              DetailField(
                 label: 'Verificacao IA',
                 value: _notaVerificacaoLabel(n),
               ),
@@ -902,6 +1145,8 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
     if (!mounted || action == null) return;
     if (action == 'attachment' && (n.fotoNota ?? '').trim().isNotEmpty) {
       await _openUrl(n.fotoNota!);
+    } else if (action == 'confirmar_fornecedor') {
+      await _confirmarFornecedor(n);
     } else if (action == 'edit') {
       _edit(n);
     } else if (action == 'delete') {
@@ -1010,6 +1255,41 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
                     ),
                   ]),
                   const SizedBox(height: 10),
+                  Autocomplete<String>(
+                    initialValue:
+                        TextEditingValue(text: _filtroFornecedorCtrl.text),
+                    optionsBuilder: (textEditingValue) {
+                      final query = textEditingValue.text.trim().toLowerCase();
+                      if (query.isEmpty) {
+                        return _fornecedoresDisponiveis;
+                      }
+                      return _fornecedoresDisponiveis.where(
+                        (f) => f.toLowerCase().contains(query),
+                      );
+                    },
+                    onSelected: (selection) {
+                      _filtroFornecedorCtrl.text = selection;
+                      setState(() => _filtroFornecedor = selection);
+                      _load();
+                    },
+                    fieldViewBuilder: (ctx, controller, focusNode, onSubmit) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        onChanged: (value) {
+                          _filtroFornecedorCtrl.text = value;
+                          _filtroFornecedor = value.trim();
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Fornecedor',
+                          prefixIcon: Icon(Icons.local_shipping_outlined),
+                        ),
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (_) => _load(),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 10),
                   Align(
                     alignment: Alignment.centerRight,
                     child: OutlinedButton.icon(
@@ -1082,13 +1362,18 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
                   title:
                       Text('${n.numeroNotaFiscal ?? '—'} • ${n.tipo ?? '—'}'),
                   subtitle: Text(
-                    '${AppDates.formatDateTimeOrDateBr(n.dataHora, n.data)} • ${AppDates.number(n.quantidade)} L • final ${AppDates.money(_valorCompraFinal(n))}\nIA: ${_notaVerificacaoLabel(n)}',
+                    '${AppDates.formatDateTimeOrDateBr(n.dataHora, n.data)} • ${AppDates.number(n.quantidade)} L • final ${AppDates.money(_valorCompraFinal(n))}\nIA: ${_notaVerificacaoLabel(n)}'
+                    '${(n.fornecedor ?? '').trim().isEmpty ? '' : ' • Fornecedor: ${n.fornecedor}'}'
+                    '${_fornecedorDivergente(n) ? ' (${_fornecedorIaLabel(n)})' : ''}',
                   ),
                   leading: Icon(
-                    n.notaVerificacaoStatus == 'suspeita'
+                    n.notaVerificacaoStatus == 'suspeita' ||
+                            _fornecedorDivergente(n)
                         ? Icons.warning_amber_outlined
                         : Icons.receipt_long_outlined,
-                    color: _notaVerificacaoColor(n),
+                    color: _fornecedorDivergente(n)
+                        ? AppTheme.warning
+                        : _notaVerificacaoColor(n),
                   ),
                   isThreeLine: true,
                   dense: false,
@@ -1116,7 +1401,8 @@ class _EntradaNotasScreenState extends State<EntradaNotasScreen> {
                         ),
                     ],
                   ),
-                  selected: n.notaVerificacaoStatus == 'suspeita',
+                  selected: n.notaVerificacaoStatus == 'suspeita' ||
+                      _fornecedorDivergente(n),
                   selectedTileColor: AppTheme.warning.withValues(alpha: 0.08),
                 ),
               ),

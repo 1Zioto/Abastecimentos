@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Models\ValoresCombustivel;
 
 class Controller extends BaseController
 {
@@ -17,13 +18,47 @@ class Controller extends BaseController
     use ValidatesRequests;
 
     protected const ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO = 0.04;
-    protected const ENTRADA_NOTA_NUMEROS_AJUSTE_IGNORADOS = ['AJUSTE-INICIO-MATRIZ-20260601', '00001'];
+    protected const ENTRADA_NOTA_NUMEROS_AJUSTE_IGNORADOS = [];
     private static bool $entradaNotasCustoTransporteGarantido = false;
+    private static array $colunasAuditoriaGarantidas = [];
+    private static bool $colunasRateioRecebedorGarantidas = false;
+
+    /**
+     * Cache por processo da lista de colunas de cada tabela. Schema::hasColumn
+     * dispara uma consulta ao information_schema em TODA chamada — endpoints
+     * como o dashboard chegavam a fazer 40+ dessas consultas por request, o
+     * que em banco remoto (Neon) soma segundos de pura latência.
+     */
+    private static array $colunasPorTabela = [];
+
+    protected function colunasDaTabela(string $table): array
+    {
+        if (!array_key_exists($table, self::$colunasPorTabela)) {
+            try {
+                $rows = DB::select(
+                    'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?',
+                    [$table]
+                );
+                self::$colunasPorTabela[$table] = array_map(
+                    static fn ($r) => $r->column_name,
+                    $rows
+                );
+            } catch (\Throwable $e) {
+                self::$colunasPorTabela[$table] = [];
+            }
+        }
+        return self::$colunasPorTabela[$table];
+    }
+
+    protected static function esquecerColunasDaTabela(string $table): void
+    {
+        unset(self::$colunasPorTabela[$table]);
+    }
 
     protected function aplicarFiltroSyncToken($query, Request $request, string $table)
     {
         $token = trim((string) $request->query('sync_token_after', ''));
-        if ($token === '' || !Schema::hasColumn($table, 'sync_token_at')) {
+        if ($token === '' || !$this->tabelaTemColuna($table, 'sync_token_at')) {
             return $query;
         }
 
@@ -38,12 +73,14 @@ class Controller extends BaseController
     protected function suportaSyncIncremental(Request $request, string $table): bool
     {
         return $this->usandoSyncIncremental($request)
-            && Schema::hasColumn($table, 'sync_token_at');
+            && $this->tabelaTemColuna($table, 'sync_token_at');
     }
 
     protected function tabelaTemColuna(string $table, string $column): bool
     {
-        return Schema::hasColumn($table, $column);
+        // Uma tabela sem colunas no cache significa "tabela não existe" —
+        // mesmo comportamento de Schema::hasColumn nesse caso (false).
+        return in_array($column, $this->colunasDaTabela($table), true);
     }
 
     protected function garantirAuditoria(): void
@@ -66,7 +103,10 @@ class Controller extends BaseController
 
     protected function garantirColunasAuditoria(string $table): void
     {
-        if (!Schema::hasTable($table)) {
+        // Memoizado por processo: evita repetir o ALTER TABLE em cada request
+        // dentro do mesmo worker/processo (efeito real quando há reuso de
+        // instância, ex.: Fluid Compute/Octane; inofensivo caso contrário).
+        if (self::$colunasAuditoriaGarantidas[$table] ?? false) {
             return;
         }
 
@@ -74,12 +114,107 @@ class Controller extends BaseController
             return;
         }
 
+        // No PHP serverless da Vercel cada request é um processo novo, então o
+        // memo estático acima nunca sobrevive entre requisições: na prática
+        // este método rodava um Schema::hasTable (reflexão no pg_attribute),
+        // um ALTER TABLE e uma releitura do information_schema em TODA request,
+        // vezes cada tabela. Como as colunas já existem há muito tempo, o
+        // caminho normal agora é só conferir a lista de colunas já em cache e
+        // sair — sem DDL, sem round-trip extra. O ALTER continua aqui para o
+        // caso de uma tabela realmente estar sem alguma coluna.
+        $colunas = $this->colunasDaTabela($table);
+        if ($colunas === []) {
+            // Lista vazia = tabela não existe; mesmo efeito do hasTable antigo.
+            return;
+        }
+
+        $faltantes = array_diff(
+            ['deleted_at', 'deleted_by', 'deleted_by_id', 'status', 'sync_token_at'],
+            $colunas
+        );
+        if ($faltantes === []) {
+            self::$colunasAuditoriaGarantidas[$table] = true;
+            return;
+        }
+
         $quotedTable = '"' . str_replace('"', '""', $table) . '"';
-        DB::statement("ALTER TABLE {$quotedTable} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL");
-        DB::statement("ALTER TABLE {$quotedTable} ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL");
-        DB::statement("ALTER TABLE {$quotedTable} ADD COLUMN IF NOT EXISTS deleted_by_id VARCHAR(120) NULL");
-        DB::statement("ALTER TABLE {$quotedTable} ADD COLUMN IF NOT EXISTS status VARCHAR(40) NULL");
-        DB::statement("ALTER TABLE {$quotedTable} ADD COLUMN IF NOT EXISTS sync_token_at TIMESTAMP NULL");
+        // Uma única instrução combinando todos os ADD COLUMN: 1 round-trip
+        // ao banco em vez de 5, o que importa bastante em bancos remotos
+        // (ex.: Neon) onde cada round-trip soma 20-80ms+ de latência.
+        DB::statement(
+            "ALTER TABLE {$quotedTable} " .
+            "ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL, " .
+            "ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL, " .
+            "ADD COLUMN IF NOT EXISTS deleted_by_id VARCHAR(120) NULL, " .
+            "ADD COLUMN IF NOT EXISTS status VARCHAR(40) NULL, " .
+            "ADD COLUMN IF NOT EXISTS sync_token_at TIMESTAMP NULL"
+        );
+
+        self::esquecerColunasDaTabela($table);
+        self::$colunasAuditoriaGarantidas[$table] = true;
+    }
+
+    protected function garantirColunasRateioRecebedor(): void
+    {
+        if (self::$colunasRateioRecebedorGarantidas) {
+            return;
+        }
+
+        // Mesmo raciocínio de garantirColunasAuditoria: confere pela lista de
+        // colunas já em cache e só emite DDL se algo estiver realmente faltando.
+        $colunas = $this->colunasDaTabela('abastecimentos');
+        if ($colunas === []) {
+            return;
+        }
+
+        $faltantes = array_diff(
+            ['valor_recebedor1', 'recebedor2', 'valor_recebedor2', 'abono_desconto'],
+            $colunas
+        );
+        if ($faltantes === []) {
+            self::$colunasRateioRecebedorGarantidas = true;
+            return;
+        }
+
+        DB::statement(
+            'ALTER TABLE abastecimentos ' .
+            'ADD COLUMN IF NOT EXISTS valor_recebedor1 NUMERIC(12,2) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS recebedor2 VARCHAR(255) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS valor_recebedor2 NUMERIC(12,2) NULL, ' .
+            'ADD COLUMN IF NOT EXISTS abono_desconto NUMERIC(12,2) NULL'
+        );
+
+        self::esquecerColunasDaTabela('abastecimentos');
+        self::$colunasRateioRecebedorGarantidas = true;
+    }
+
+    /**
+     * Regra de filial da baixa: a baixa segue a filial do abastecimento. Uma
+     * mesma baixa não pode misturar abastecimentos de filiais diferentes
+     * (ex.: dar baixa na Matriz em abastecimento de Viana). Bloqueia com 422
+     * quando há mais de um `local` distinto entre os abastecimentos informados.
+     */
+    protected function validarMesmaFilialBaixa(array $idsAbastecimentos): void
+    {
+        $ids = array_values(array_filter(array_map('strval', $idsAbastecimentos), fn ($id) => $id !== ''));
+        if (count($ids) < 2 || !$this->tabelaTemColuna('abastecimentos', 'local')) {
+            return;
+        }
+
+        $locais = \App\Models\Abastecimento::query()
+            ->whereIn('id_abastecimento', $ids)
+            ->whereNotNull('local')
+            ->whereRaw("TRIM(local) <> ''")
+            ->pluck('local')
+            ->map(fn ($l) => trim((string) $l))
+            ->unique()
+            ->values();
+
+        if ($locais->count() > 1) {
+            abort(422, 'A baixa deve ser dada na mesma filial do abastecimento. '
+                . 'Não é permitido baixar abastecimentos de filiais diferentes na mesma baixa. '
+                . 'Filiais encontradas: ' . $locais->implode(', ') . '.');
+        }
     }
 
     protected function aplicarFiltroAtivos($query, string $table, Request $request)
@@ -88,11 +223,11 @@ class Controller extends BaseController
             return $query;
         }
 
-        if (Schema::hasColumn($table, 'deleted_at')) {
+        if ($this->tabelaTemColuna($table, 'deleted_at')) {
             $query->whereNull($table . '.deleted_at');
         }
 
-        if (Schema::hasColumn($table, 'status')) {
+        if ($this->tabelaTemColuna($table, 'status')) {
             $query->where(function ($q) use ($table) {
                 $q->whereNull($table . '.status')
                     ->orWhereRaw('LOWER(' . $table . '.status) <> ?', ['inativo']);
@@ -104,7 +239,26 @@ class Controller extends BaseController
 
     protected function garantirCustoTransporteEntradaNotas(): void
     {
-        if (self::$entradaNotasCustoTransporteGarantido || !Schema::hasTable('entrada_notas')) {
+        if (self::$entradaNotasCustoTransporteGarantido) {
+            return;
+        }
+
+        // Este era o pior dos três: um Schema::hasTable + quatro
+        // Schema::hasColumn (cada um uma consulta ao information_schema, sem
+        // passar pelo cache) + um UPDATE varrendo entrada_notas — tudo isso em
+        // toda request. Com as colunas já criadas, sai tudo em uma checagem
+        // sobre a lista em cache.
+        $colunas = $this->colunasDaTabela('entrada_notas');
+        if ($colunas === []) {
+            return;
+        }
+
+        $faltantes = array_diff(
+            ['custo_transporte_litro', 'custo_transporte_total', 'valor_compra_final'],
+            $colunas
+        );
+        if ($faltantes === []) {
+            self::$entradaNotasCustoTransporteGarantido = true;
             return;
         }
 
@@ -153,6 +307,55 @@ class Controller extends BaseController
         self::$entradaNotasCustoTransporteGarantido = true;
     }
 
+    protected function obterCustoFreteLitro(?string $tipoCombustivel, ?string $local, ?string $data = null): float
+    {
+        $tipo = trim((string) $tipoCombustivel) ?: 'OLEO DIESEL S10';
+        $local = trim((string) $local) ?: 'Matriz';
+
+        try {
+            if (!$this->tabelaTemColuna('valores_combustivel', 'valor_frete')) {
+                return self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO;
+            }
+
+            $query = ValoresCombustivel::query()
+                ->whereRaw('LOWER(tipo_combustivel) = LOWER(?)', [$tipo])
+                ->whereRaw('LOWER(local) = LOWER(?)', [$local]);
+
+            if (!empty($data)) {
+                $query->whereDate('data', '<=', $data);
+            }
+
+            $query->orderByDesc('data');
+            if ($this->tabelaTemColuna('valores_combustivel', 'sync_token_at')) {
+                $query->orderByDesc('sync_token_at');
+            }
+            $query->orderByDesc('id_valor');
+
+            $valorCombustivel = $query->first();
+
+            if ($valorCombustivel && $valorCombustivel->valor_frete !== null) {
+                return (float) $valorCombustivel->valor_frete;
+            }
+
+            // Fallback para o mais recente da filial e combustível
+            if (!empty($data)) {
+                $recente = ValoresCombustivel::query()
+                    ->whereRaw('LOWER(tipo_combustivel) = LOWER(?)', [$tipo])
+                    ->whereRaw('LOWER(local) = LOWER(?)', [$local])
+                    ->orderByDesc('data')
+                    ->orderByDesc('id_valor')
+                    ->first();
+                if ($recente && $recente->valor_frete !== null) {
+                    return (float) $recente->valor_frete;
+                }
+            }
+        } catch (\Throwable) {
+            // Em caso de erro, mantém fallback padrão
+        }
+
+        return self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO;
+    }
+
     protected function calcularCustoTransporteEntradaNota(array $data, ?Model $original = null): array
     {
         $quantidade = array_key_exists('quantidade', $data)
@@ -161,10 +364,23 @@ class Controller extends BaseController
         $valor = array_key_exists('valor', $data)
             ? (float) ($data['valor'] ?? 0)
             : (float) ($original?->getAttribute('valor') ?? 0);
-        $custoTotal = round($quantidade * self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO, 2);
+
+        $custoLitro = null;
+        if (array_key_exists('custo_transporte_litro', $data) && $data['custo_transporte_litro'] !== null) {
+            $custoLitro = (float) $data['custo_transporte_litro'];
+        } elseif ($original?->getAttribute('custo_transporte_litro') !== null) {
+            $custoLitro = (float) $original->getAttribute('custo_transporte_litro');
+        } else {
+            $tipo = $data['tipo'] ?? $original?->getAttribute('tipo') ?? 'OLEO DIESEL S10';
+            $local = $data['local'] ?? $original?->getAttribute('local') ?? 'Matriz';
+            $dataRef = $data['data'] ?? $original?->getAttribute('data');
+            $custoLitro = $this->obterCustoFreteLitro($tipo, $local, $dataRef ? (string) $dataRef : null);
+        }
+
+        $custoTotal = round($quantidade * $custoLitro, 2);
 
         return [
-            'custo_transporte_litro' => self::ENTRADA_NOTA_CUSTO_TRANSPORTE_LITRO,
+            'custo_transporte_litro' => $custoLitro,
             'custo_transporte_total' => $custoTotal,
             'valor_compra_final' => round($valor + $custoTotal, 2),
         ];
@@ -184,6 +400,10 @@ class Controller extends BaseController
 
     protected function aplicarFiltroNotasAjusteEntradaNotas($query, string $table = 'entrada_notas')
     {
+        if (empty(self::ENTRADA_NOTA_NUMEROS_AJUSTE_IGNORADOS)) {
+            return $query;
+        }
+
         if (!$this->tabelaTemColuna('entrada_notas', 'numero_nota_fiscal')) {
             return $query;
         }
@@ -255,19 +475,19 @@ class Controller extends BaseController
         $user = auth()->user();
         $payload = [];
 
-        if (Schema::hasColumn($model->getTable(), 'status')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'status')) {
             $payload['status'] = 'Inativo';
         }
-        if (Schema::hasColumn($model->getTable(), 'deleted_at')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'deleted_at')) {
             $payload['deleted_at'] = now();
         }
-        if (Schema::hasColumn($model->getTable(), 'deleted_by')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'deleted_by')) {
             $payload['deleted_by'] = $user?->nome ?? $user?->login ?? 'Sistema';
         }
-        if (Schema::hasColumn($model->getTable(), 'deleted_by_id')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'deleted_by_id')) {
             $payload['deleted_by_id'] = $user ? (string) $user->getAuthIdentifier() : null;
         }
-        if (Schema::hasColumn($model->getTable(), 'sync_token_at')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'sync_token_at')) {
             $payload['sync_token_at'] = now();
         }
 
@@ -282,19 +502,19 @@ class Controller extends BaseController
         $this->garantirColunasAuditoria($model->getTable());
         $payload = [];
 
-        if (Schema::hasColumn($model->getTable(), 'status')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'status')) {
             $payload['status'] = 'Ativo';
         }
-        if (Schema::hasColumn($model->getTable(), 'deleted_at')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'deleted_at')) {
             $payload['deleted_at'] = null;
         }
-        if (Schema::hasColumn($model->getTable(), 'deleted_by')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'deleted_by')) {
             $payload['deleted_by'] = null;
         }
-        if (Schema::hasColumn($model->getTable(), 'deleted_by_id')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'deleted_by_id')) {
             $payload['deleted_by_id'] = null;
         }
-        if (Schema::hasColumn($model->getTable(), 'sync_token_at')) {
+        if ($this->tabelaTemColuna($model->getTable(), 'sync_token_at')) {
             $payload['sync_token_at'] = now();
         }
 

@@ -16,7 +16,7 @@ import 'models.dart';
 ///  - sync_queue (operacoes pendentes: create/update/delete)
 class LocalDb {
   static const _dbName = 'abastecimento_vipe.db';
-  static const _dbVersion = 11;
+  static const _dbVersion = 13;
 
   Database? _db;
 
@@ -135,6 +135,18 @@ class LocalDb {
         } catch (_) {}
       }
     }
+    if (oldVersion < 12) {
+      try {
+        await db.execute(
+            'ALTER TABLE proprietarios ADD COLUMN preco_custo_automatico INTEGER NOT NULL DEFAULT 0');
+      } catch (_) {}
+    }
+    if (oldVersion < 13) {
+      try {
+        await db.execute(
+            'ALTER TABLE valores_combustivel ADD COLUMN valor_frete REAL DEFAULT 0.04');
+      } catch (_) {}
+    }
   }
 
   Future<void> _migrateValoresCombustivelToTextIds(Database db) async {
@@ -230,6 +242,7 @@ class LocalDb {
         data_registro TEXT,
         local TEXT,
         odometro_obrigatorio INTEGER NOT NULL DEFAULT 0,
+        preco_custo_automatico INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT,
         deleted_by TEXT,
         pending_sync INTEGER NOT NULL DEFAULT 0
@@ -367,6 +380,7 @@ class LocalDb {
         id_valor TEXT PRIMARY KEY,
         tipo_combustivel TEXT NOT NULL,
         valor REAL NOT NULL,
+        valor_frete REAL DEFAULT 0.04,
         data TEXT NOT NULL,
         responsavel TEXT,
         local TEXT DEFAULT 'Matriz',
@@ -838,6 +852,23 @@ class LocalDb {
     return (rows.first['c'] as num?)?.toInt() ?? 0;
   }
 
+  /// Retorna, entre os ids informados, quais já existem no banco local.
+  /// Usado pelo sync para saber quais abastecimentos baixados são novos
+  /// (e merecem notificação para administradores).
+  Future<Set<String>> abastecimentoIdsExistentes(List<String> ids) async {
+    if (ids.isEmpty) return <String>{};
+    final d = await db;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final rows = await d.rawQuery(
+      'SELECT id_abastecimento FROM abastecimentos WHERE id_abastecimento IN ($placeholders)',
+      ids,
+    );
+    return rows
+        .map((r) => (r['id_abastecimento'] ?? '').toString())
+        .where((v) => v.isNotEmpty)
+        .toSet();
+  }
+
   Future<void> replaceAbastecimentosRemotos(List<Abastecimento> items) async {
     final d = await db;
     await d.transaction((txn) async {
@@ -930,21 +961,32 @@ class LocalDb {
       'pending_sync': 1,
     };
     row.removeWhere((k, v) => v == null);
-    await d.insert('abastecimentos', row,
-        conflictAlgorithm: ConflictAlgorithm.replace);
 
-    // enfileira
     final payload = {
       ...a.toJson(),
       'id_abastecimento': remoteId,
       '_client_request_id': uuid,
     };
-    await enqueue(
-      entity: 'abastecimento',
-      action: 'create',
-      uuid: uuid,
-      payload: payload,
-    );
+
+    // Gravacao + enfileiramento numa UNICA transacao: ou os dois entram, ou
+    // nenhum. Elimina o registro "salvo mas nao enfileirado" (linha com
+    // pending_sync=1 sem item na fila), que nunca sobe e nunca aparece como
+    // erro — a causa do abastecimento que some sem virar pendente.
+    // Como e sempre um create novo (uuid unico), a insercao direta na fila e
+    // segura e dispensa a deduplicacao do enqueue().
+    await d.transaction((txn) async {
+      await txn.insert('abastecimentos', row,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('sync_queue', {
+        'entity': 'abastecimento',
+        'action': 'create',
+        'entity_uuid': uuid,
+        'entity_remote_id': null,
+        'payload': jsonEncode(payload),
+        'created_at': DateTime.now().toIso8601String(),
+        'attempts': 0,
+      });
+    });
     return uuid;
   }
 
@@ -1125,6 +1167,8 @@ class LocalDb {
     String? status,
     String? tipoCombustivel,
     String? local,
+    double? valorTotal,
+    bool? baixa,
     int limit = 200,
   }) async {
     final d = await db;
@@ -1171,6 +1215,18 @@ class LocalDb {
     if (local != null && local.isNotEmpty) {
       where.add('local = ?');
       args.add(local);
+    }
+    if (valorTotal != null) {
+      // Compara com o valor total gravado ou, na ausencia dele, com o
+      // calculado (mesma regra exibida na lista: floor(litros * valor/litro)).
+      where.add(
+        'ABS(COALESCE(valor_total, CAST(COALESCE(valor_por_litro, 0) * COALESCE(quantidade_litros, 0) + 0.000001 AS INTEGER)) - ?) < 0.005',
+      );
+      args.add(valorTotal);
+    }
+    if (baixa != null) {
+      where.add('COALESCE(baixa_abastecimento, 0) = ?');
+      args.add(baixa ? 1 : 0);
     }
     final rows = await d.query(
       'abastecimentos',
@@ -1418,6 +1474,104 @@ class LocalDb {
       );
     }
     return id;
+  }
+
+  Future<void> promoteLocalVeiculo({
+    required String localId,
+    required Veiculo remote,
+  }) async {
+    final remoteId = remote.idVeiculo?.trim();
+    if (remoteId == null || remoteId.isEmpty || !localId.startsWith('local_')) {
+      return;
+    }
+
+    final local = await findVeiculo(localId);
+    final merged = <String, dynamic>{};
+    if (local != null) {
+      merged.addAll(local.toJson());
+      if (local.proprietarioNome != null) {
+        merged['proprietario_nome'] = local.proprietarioNome;
+      }
+    }
+    for (final entry in remote.toJson().entries) {
+      final value = entry.value;
+      if (value != null && value.toString().trim().isNotEmpty) {
+        merged[entry.key] = value;
+      }
+    }
+    if (remote.proprietarioNome != null) {
+      merged['proprietario_nome'] = remote.proprietarioNome;
+    }
+    merged['id_veiculo'] = remoteId;
+    merged['pending_sync'] = 0;
+
+    final d = await db;
+    await d.transaction((txn) async {
+      await txn
+          .delete('veiculos', where: 'id_veiculo = ?', whereArgs: [localId]);
+      await txn.insert('veiculos', _clean(merged),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete(
+        'sync_queue',
+        where: 'entity = ? AND entity_uuid = ?',
+        whereArgs: ['veiculo', localId],
+      );
+    });
+    await replaceLocalReference(
+      localId: localId,
+      remoteId: remoteId,
+      column: 'id_veiculo',
+      tables: ['abastecimentos'],
+    );
+  }
+
+  Future<void> promoteLocalMotorista({
+    required String localId,
+    required Motorista remote,
+  }) async {
+    final remoteId = remote.idMotorista?.trim();
+    if (remoteId == null || remoteId.isEmpty || !localId.startsWith('local_')) {
+      return;
+    }
+
+    final local = await findMotorista(localId);
+    final merged = <String, dynamic>{};
+    if (local != null) {
+      merged.addAll(local.toJson());
+      if (local.proprietarioNome != null) {
+        merged['proprietario_nome'] = local.proprietarioNome;
+      }
+    }
+    for (final entry in remote.toJson().entries) {
+      final value = entry.value;
+      if (value != null && value.toString().trim().isNotEmpty) {
+        merged[entry.key] = value;
+      }
+    }
+    if (remote.proprietarioNome != null) {
+      merged['proprietario_nome'] = remote.proprietarioNome;
+    }
+    merged['id_motorista'] = remoteId;
+    merged['pending_sync'] = 0;
+
+    final d = await db;
+    await d.transaction((txn) async {
+      await txn.delete('motoristas',
+          where: 'id_motorista = ?', whereArgs: [localId]);
+      await txn.insert('motoristas', _clean(merged),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete(
+        'sync_queue',
+        where: 'entity = ? AND entity_uuid = ?',
+        whereArgs: ['motorista', localId],
+      );
+    });
+    await replaceLocalReference(
+      localId: localId,
+      remoteId: remoteId,
+      column: 'id_motorista',
+      tables: ['abastecimentos'],
+    );
   }
 
   Future<void> deleteMotoristaLocal(String id,

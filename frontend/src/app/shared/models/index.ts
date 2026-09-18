@@ -98,6 +98,12 @@ export interface Abastecimento {
   sofit_retorno?: string | null;
   sofit_trip_id?: string | null;
   sofit_lancado_em?: string | null;
+  /** Identificador do abastecimento (Vipe-000000) usado na integração Atua. */
+  atua_id?: string | null;
+  atua_seq?: number | null;
+  atua_caixa?: string | null;
+  atua_enviado_em?: string | null;
+  atua_erro?: string | null;
   veiculo?: Veiculo;
   motorista?: Motorista;
   proprietario?: Proprietario;
@@ -146,6 +152,7 @@ export interface ValorCombustivel {
   id_valor: string;
   tipo_combustivel: string;
   valor: number;
+  valor_frete?: number;
   data: string;
   responsavel?: string;
   local?: string;
@@ -460,4 +467,80 @@ export interface ConciliacaoSugestaoGrupo {
   valor_total: number;
   diferenca: number;
   baixas: ConciliacaoBaixaItem[];
+}
+
+export interface VariacaoEntradasSaidasPonto {
+  chave: string;
+  label: string;
+  label_completo: string;
+  data_inicio: string;
+  data_fim: string;
+  entradas_litros: number;
+  entradas_valor: number;
+  entradas_qtd: number;
+  saidas_litros: number;
+  saidas_valor: number;
+  saidas_qtd: number;
+  saldo_litros: number;
+  saldo_valor: number;
+  saldo_acumulado_litros: number;
+  preco_medio_entrada: number;
+  preco_medio_saida: number;
+}
+
+export interface VariacaoEntradasSaidasTotais {
+  entradas_litros: number;
+  entradas_valor: number;
+  entradas_qtd_notas: number;
+  entradas_media_diaria_litros: number;
+  entradas_media_diaria_valor: number;
+  preco_medio_entrada: number;
+
+  saidas_litros: number;
+  saidas_valor: number;
+  saidas_qtd_abastecimentos: number;
+  saidas_media_diaria_litros: number;
+  saidas_media_diaria_valor: number;
+  preco_medio_saida: number;
+
+  saldo_litros: number;
+  saldo_valor: number;
+  spread_medio_litro: number;
+  taxa_reposicao_percentual: number;
+}
+
+export interface VariacaoEntradasSaidasComparativo {
+  var_entradas_litros_pct: number;
+  var_entradas_valor_pct: number;
+  var_saidas_litros_pct: number;
+  var_saidas_valor_pct: number;
+  var_saldo_litros_pct: number;
+  var_saldo_valor_pct: number;
+}
+
+export interface VariacaoEntradasSaidasDestaques {
+  maior_entrada: { label: string; data: string; litros: number; valor: number } | null;
+  maior_saida: { label: string; data: string; litros: number; valor: number } | null;
+  maior_superavit: { label: string; data: string; litros: number } | null;
+  maior_deficit: { label: string; data: string; litros: number } | null;
+}
+
+export interface VariacaoEntradasSaidasData {
+  periodo: {
+    data_inicio: string;
+    data_fim: string;
+    dias_totais: number;
+    local: string;
+    agrupamento: 'dia' | 'semana' | 'mes';
+    periodo_anterior: {
+      data_inicio: string;
+      data_fim: string;
+    };
+  };
+  totais: VariacaoEntradasSaidasTotais;
+  totais_anterior: VariacaoEntradasSaidasTotais;
+  comparativo: VariacaoEntradasSaidasComparativo;
+  destaques: VariacaoEntradasSaidasDestaques;
+  serie_temporal: VariacaoEntradasSaidasPonto[];
+  por_filial?: Record<string, VariacaoEntradasSaidasTotais>;
 }

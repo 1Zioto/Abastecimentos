@@ -205,8 +205,9 @@ class _GraficosScreenState extends State<GraficosScreen> {
       _Metric(
         'Custo transporte',
         AppDates.money(t.custoTransporteTotal),
-        detail:
-            '${AppDates.number(t.compradoLitros, digits: 2)} L x ${AppDates.money(0.04)}/L',
+        detail: t.compradoLitros > 0 && t.custoTransporteTotal > 0
+            ? '${AppDates.number(t.compradoLitros, digits: 2)} L (${AppDates.money(t.custoTransporteTotal / t.compradoLitros)}/L)'
+            : '${AppDates.number(t.compradoLitros, digits: 2)} L',
         tone: _MetricTone.warning,
       ),
       _Metric(
@@ -1114,13 +1115,17 @@ class _UltimaEntradaNota {
   double get valorFinal {
     if (valorCompraFinal > 0) return valorCompraFinal;
     if (custoTransporteTotal > 0) return valor + custoTransporteTotal;
-    return valor + (quantidade * _custoTransportePorLitro);
+    final frete = custoTransporteLitro > 0 ? custoTransporteLitro : _custoTransportePorLitro;
+    return valor + (quantidade * frete);
   }
 
   factory _UltimaEntradaNota.fromJson(Map<String, dynamic> json) {
     final quantidade = _toDouble(json['quantidade']);
     final valor = _toDouble(json['valor']);
+    final custoLitro = _toDouble(json['custo_transporte_litro']);
+    final freteEfetivo = custoLitro > 0 ? custoLitro : _custoTransportePorLitro;
     final custoTotal = _toDouble(json['custo_transporte_total']);
+    final custoCalculado = custoTotal > 0 ? custoTotal : quantidade * freteEfetivo;
     return _UltimaEntradaNota(
       idFinanceiro: (json['id_financeiro'] ?? '').toString(),
       data: (json['data'] ?? '').toString(),
@@ -1129,15 +1134,11 @@ class _UltimaEntradaNota {
       quantidade: quantidade,
       valor: valor,
       valorLitro: _toDouble(json['valor_litro']),
-      custoTransporteLitro: _toDouble(json['custo_transporte_litro']),
-      custoTransporteTotal:
-          custoTotal > 0 ? custoTotal : quantidade * _custoTransportePorLitro,
+      custoTransporteLitro: custoLitro,
+      custoTransporteTotal: custoCalculado,
       valorCompraFinal: _toDouble(json['valor_compra_final']) > 0
           ? _toDouble(json['valor_compra_final'])
-          : valor +
-              (custoTotal > 0
-                  ? custoTotal
-                  : quantidade * _custoTransportePorLitro),
+          : valor + custoCalculado,
       tipo: json['tipo']?.toString(),
       local: json['local']?.toString(),
     );

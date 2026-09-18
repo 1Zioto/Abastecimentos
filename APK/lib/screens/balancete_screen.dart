@@ -364,7 +364,9 @@ class _LocalBalanceteCard extends StatelessWidget {
                 _Metric(
                   'Transporte',
                   AppDates.money(-item.compras.custoTransporte),
-                  detail: '${AppDates.money(0.04)}/L embutido',
+                  detail: item.compras.litros > 0 && item.compras.custoTransporte > 0
+                      ? '${AppDates.money(item.compras.custoTransporte / item.compras.litros)}/L embutido'
+                      : 'Custo embutido',
                   negative: true,
                 ),
                 _Metric(
@@ -482,7 +484,9 @@ class _FinanceFlowCard extends StatelessWidget {
       _FlowRow(
         'Transporte das notas',
         -item.compras.custoTransporte,
-        detail: '${AppDates.money(0.04)}/L incluido no custo final',
+        detail: item.compras.litros > 0 && item.compras.custoTransporte > 0
+            ? '${AppDates.money(item.compras.custoTransporte / item.compras.litros)}/L incluido no custo final'
+            : 'Incluido no custo final',
       ),
       _FlowRow(
         'Despesas avulsas',
