@@ -1,5 +1,5 @@
 // src/app/features/relatorio-faturamento/relatorio-faturamento.component.ts
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, ElementRef, ViewChild, AfterViewInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/services/api.service';
@@ -61,7 +61,7 @@ interface TopProprietarioItem {
         </div>
         <div class="header-actions">
           <button class="btn-action btn-pdf" [disabled]="loading()" (click)="exportarPdf()">
-            📄 Baixar PDF
+            📄 Baixar PDF com Gráficos
           </button>
           <button class="btn-action btn-excel" [disabled]="loading()" (click)="exportarExcel()">
             📊 Baixar Excel
@@ -119,7 +119,7 @@ interface TopProprietarioItem {
       @if (loading()) {
         <div class="loading-state">
           <div class="spinner"></div>
-          <span>Processando faturamento operacional...</span>
+          <span>Processando faturamento operacional e renderizando gráficos...</span>
         </div>
       }
 
@@ -154,6 +154,52 @@ interface TopProprietarioItem {
             <span class="kpi-title">Pendente a Receber</span>
             <span class="kpi-value text-orange">{{ t.valor_pendente | currency:'BRL':'symbol':'1.2-2' }}</span>
             <span class="kpi-sub text-orange font-bold">{{ pctRecebido(t.valor_pendente, t.valor_total) | number:'1.1-1' }}% pendente</span>
+          </div>
+        </div>
+
+        <!-- PAINEL DE GRÁFICOS VISUAIS -->
+        <div class="charts-grid">
+          <!-- Gráfico 1: Faturamento Mensal por Filial (Barras) -->
+          <div class="chart-card chart-large">
+            <div class="chart-head">
+              <div>
+                <h3>Evolução do Faturamento por Filial</h3>
+                <span class="chart-desc">Comparativo de vendas mensais (em Mil R$) entre Matriz e Viana</span>
+              </div>
+              <div class="chart-legend">
+                <span class="leg-item"><i class="leg-dot bg-navy"></i> Matriz</span>
+                <span class="leg-item"><i class="leg-dot bg-cyan"></i> Viana</span>
+              </div>
+            </div>
+            <div class="canvas-wrap">
+              <canvas #chartFiliais></canvas>
+            </div>
+          </div>
+
+          <!-- Gráfico 2: Donut Segmentos -->
+          <div class="chart-card">
+            <div class="chart-head">
+              <div>
+                <h3>Distribuição por Segmento</h3>
+                <span class="chart-desc">Frota Própria vs Terceiros</span>
+              </div>
+            </div>
+            <div class="canvas-wrap donut-wrap">
+              <canvas #chartSegmento></canvas>
+            </div>
+          </div>
+
+          <!-- Gráfico 3: Donut Baixas -->
+          <div class="chart-card">
+            <div class="chart-head">
+              <div>
+                <h3>Status Financeiro</h3>
+                <span class="chart-desc">Recebido vs Pendente</span>
+              </div>
+            </div>
+            <div class="canvas-wrap donut-wrap">
+              <canvas #chartBaixas></canvas>
+            </div>
           </div>
         </div>
 
@@ -548,6 +594,65 @@ interface TopProprietarioItem {
     .text-amber { color: #FBBF24; }
     .font-bold { font-weight: 700; }
 
+    /* Painel de Gráficos */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .chart-card {
+      grid-column: span 3;
+      background: #0D1427;
+      border: 1px solid #1E2D4A;
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+    }
+    .chart-large {
+      grid-column: span 6;
+    }
+    @media (max-width: 1100px) {
+      .chart-large { grid-column: span 12; }
+      .chart-card:not(.chart-large) { grid-column: span 6; }
+    }
+    @media (max-width: 700px) {
+      .chart-card { grid-column: span 12 !important; }
+    }
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chart-head h3 { font-size: 14px; font-weight: 700; color: #F8FAFC; margin: 0; }
+    .chart-desc { font-size: 11px; color: #64748B; display: block; margin-top: 2px; }
+    .chart-legend { display: flex; gap: 12px; }
+    .leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: #94A3B8; }
+    .leg-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+    .bg-navy { background: #3B82F6; }
+    .bg-cyan { background: #06B6D4; }
+
+    .canvas-wrap {
+      width: 100%;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .donut-wrap {
+      height: 220px;
+    }
+    .canvas-wrap canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+
     /* Tabs */
     .tabs-bar {
       display: flex;
@@ -728,9 +833,13 @@ interface TopProprietarioItem {
     .empty-text { text-align: center; padding: 24px; color: #64748B; font-style: italic; }
   `]
 })
-export class RelatorioFaturamentoComponent implements OnInit {
+export class RelatorioFaturamentoComponent implements OnInit, AfterViewInit {
   private api = inject(ApiService);
   private toastr = inject(ToastrService);
+
+  @ViewChild('chartFiliais') chartFiliaisRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('chartSegmento') chartSegmentoRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('chartBaixas') chartBaixasRef!: ElementRef<HTMLCanvasElement>;
 
   loading = signal(false);
   tabAtiva = signal<'resumo' | 'filial' | 'segmento' | 'proprietarios' | 'detalhado'>('resumo');
@@ -759,6 +868,13 @@ export class RelatorioFaturamentoComponent implements OnInit {
 
   ngOnInit() {
     this.load();
+  }
+
+  ngAfterViewInit() {
+    // Redraw on window resize
+    window.addEventListener('resize', () => {
+      this.renderCharts();
+    });
   }
 
   setPeriodo(tipo: 'ano' | 'ultimos_3_meses' | 'mes_atual' | 'todos') {
@@ -795,6 +911,9 @@ export class RelatorioFaturamentoComponent implements OnInit {
         this.topProprietarios.set(res.top_proprietarios || []);
         this.totais.set(res.totais || null);
         this.loading.set(false);
+
+        // Render charts after DOM updates
+        setTimeout(() => this.renderCharts(), 50);
       },
       error: (err) => {
         console.error('Erro ao carregar relatório de faturamento:', err);
@@ -806,6 +925,244 @@ export class RelatorioFaturamentoComponent implements OnInit {
     if (this.tabAtiva() === 'detalhado') {
       this.carregarDetalhes(1);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // RENDERIZAÇÃO DOS GRÁFICOS NO CANVAS (HIGH-DPI)
+  // ---------------------------------------------------------------------------
+  renderCharts() {
+    this.renderChartFiliais();
+    this.renderChartSegmento();
+    this.renderChartBaixas();
+  }
+
+  private setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || canvas.parentElement?.clientWidth || 300;
+    const height = rect.height || 220;
+    const dpr = Math.max(window.devicePixelRatio || 1, 2);
+
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.scale(dpr, dpr);
+    }
+    return ctx;
+  }
+
+  private renderChartFiliais() {
+    if (!this.chartFiliaisRef?.nativeElement) return;
+    const canvas = this.chartFiliaisRef.nativeElement;
+    const ctx = this.setupCanvas(canvas);
+    if (!ctx) return;
+
+    const width = parseFloat(canvas.style.width);
+    const height = parseFloat(canvas.style.height);
+    ctx.clearRect(0, 0, width, height);
+
+    // Meses em ordem cronológica (inverte o array desc para asc)
+    const meses = [...this.resumoMensal()].reverse();
+    if (!meses.length) return;
+
+    // Mapeia valores por filial e mês
+    const filialMap = new Map<string, number>();
+    this.porFilial().forEach(f => {
+      filialMap.set(`${f.mes}_${f.local}`, Number(f.valor_total || 0));
+    });
+
+    const maxVal = Math.max(...meses.map(m => {
+      const vMatriz = filialMap.get(`${m.mes}_Matriz`) || 0;
+      const vViana = filialMap.get(`${m.mes}_Viana`) || 0;
+      return Math.max(vMatriz, vViana);
+    }), 1000);
+
+    const padding = { top: 24, right: 20, bottom: 32, left: 55 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    // Grid e Eixo Y
+    const steps = 4;
+    ctx.strokeStyle = '#1E2D4A';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#64748B';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'right';
+
+    for (let i = 0; i <= steps; i++) {
+      const yVal = (maxVal / steps) * i;
+      const yPos = padding.top + chartH - (i / steps) * chartH;
+
+      ctx.beginPath();
+      ctx.moveTo(padding.left, yPos);
+      ctx.lineTo(width - padding.right, yPos);
+      ctx.stroke();
+
+      const label = `R$ ${(yVal / 1000).toFixed(0)}k`;
+      ctx.fillText(label, padding.left - 8, yPos + 3);
+    }
+
+    // Barras agrupadas
+    const groupW = chartW / meses.length;
+    const barW = Math.min(groupW * 0.35, 24);
+
+    meses.forEach((m, idx) => {
+      const groupX = padding.left + (idx * groupW) + (groupW / 2);
+      const vMatriz = filialMap.get(`${m.mes}_Matriz`) || 0;
+      const vViana = filialMap.get(`${m.mes}_Viana`) || 0;
+
+      const hMatriz = (vMatriz / maxVal) * chartH;
+      const hViana = (vViana / maxVal) * chartH;
+
+      const yMatriz = padding.top + chartH - hMatriz;
+      const yViana = padding.top + chartH - hViana;
+
+      // Barra Matriz (Blue 500)
+      ctx.fillStyle = '#3B82F6';
+      this.drawRoundedRect(ctx, groupX - barW - 2, yMatriz, barW, hMatriz, 3);
+
+      // Barra Viana (Cyan 500)
+      ctx.fillStyle = '#06B6D4';
+      this.drawRoundedRect(ctx, groupX + 2, yViana, barW, hViana, 3);
+
+      // Label do mês no Eixo X
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '10px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      const mesAbrev = this.formatMes(m.mes).split('/')[0].slice(0, 3);
+      ctx.fillText(mesAbrev, groupX, height - 10);
+    });
+  }
+
+  private renderChartSegmento() {
+    if (!this.chartSegmentoRef?.nativeElement) return;
+    const canvas = this.chartSegmentoRef.nativeElement;
+    const ctx = this.setupCanvas(canvas);
+    if (!ctx) return;
+
+    const width = parseFloat(canvas.style.width);
+    const height = parseFloat(canvas.style.height);
+    ctx.clearRect(0, 0, width, height);
+
+    let totFrota = 0;
+    let totTerceiros = 0;
+    this.porSegmento().forEach(s => {
+      if (s.segmento.includes('VIPE')) {
+        totFrota += Number(s.valor_total || 0);
+      } else {
+        totTerceiros += Number(s.valor_total || 0);
+      }
+    });
+
+    const total = totFrota + totTerceiros;
+    if (total <= 0) return;
+
+    const slices = [
+      { label: 'Frota Própria (VIPE)', val: totFrota, color: '#3B82F6' },
+      { label: 'Terceiros / Parceiros', val: totTerceiros, color: '#06B6D4' }
+    ];
+
+    this.drawDonut(ctx, width, height, slices, total, 'Segmentos');
+  }
+
+  private renderChartBaixas() {
+    if (!this.chartBaixasRef?.nativeElement) return;
+    const canvas = this.chartBaixasRef.nativeElement;
+    const ctx = this.setupCanvas(canvas);
+    if (!ctx) return;
+
+    const width = parseFloat(canvas.style.width);
+    const height = parseFloat(canvas.style.height);
+    ctx.clearRect(0, 0, width, height);
+
+    const t = this.totais();
+    if (!t) return;
+
+    const rec = Number(t.valor_recebido || 0);
+    const pend = Number(t.valor_pendente || 0);
+    const total = rec + pend;
+    if (total <= 0) return;
+
+    const slices = [
+      { label: 'Recebido / Baixado', val: rec, color: '#10B981' },
+      { label: 'Pendente', val: pend, color: '#F59E0B' }
+    ];
+
+    this.drawDonut(ctx, width, height, slices, total, 'Status Baixa');
+  }
+
+  private drawDonut(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    slices: { label: string; val: number; color: string }[],
+    total: number,
+    centerTitle: string
+  ) {
+    const cx = width / 2;
+    const cy = (height / 2) - 15;
+    const radius = Math.min(cx, cy) - 16;
+    const innerRadius = radius * 0.62;
+
+    let startAngle = -Math.PI / 2;
+
+    slices.forEach(s => {
+      const sliceAngle = (s.val / total) * (Math.PI * 2);
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, startAngle, startAngle + sliceAngle);
+      ctx.arc(cx, cy, innerRadius, startAngle + sliceAngle, startAngle, true);
+      ctx.closePath();
+      ctx.fillStyle = s.color;
+      ctx.fill();
+      startAngle += sliceAngle;
+    });
+
+    // Centro do Donut
+    ctx.fillStyle = '#F8FAFC';
+    ctx.font = 'bold 13px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    const mainPct = ((slices[0].val / total) * 100).toFixed(1);
+    ctx.fillText(`${mainPct}%`, cx, cy + 1);
+
+    ctx.fillStyle = '#64748B';
+    ctx.font = '9px Inter, sans-serif';
+    ctx.fillText(centerTitle, cx, cy + 14);
+
+    // Legenda inferior
+    const legY = height - 12;
+    ctx.font = '10px Inter, sans-serif';
+    const itemW = width / slices.length;
+
+    slices.forEach((s, i) => {
+      const itemX = (i * itemW) + (itemW / 2);
+      const pct = ((s.val / total) * 100).toFixed(1);
+
+      ctx.fillStyle = s.color;
+      ctx.fillRect(itemX - 35, legY - 7, 7, 7);
+
+      ctx.fillStyle = '#CBD5E1';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${pct}% ${s.label.split(' ')[0]}`, itemX - 24, legY);
+    });
+  }
+
+  private drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    if (h <= 0) return;
+    r = Math.min(r, h / 2, w / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h);
+    ctx.lineTo(x, y + h);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
   }
 
   abrirAbaDetalhado() {
@@ -945,7 +1302,7 @@ export class RelatorioFaturamentoComponent implements OnInit {
   }
 
   // ---------------------------------------------------------------------------
-  // EXPORTAÇÃO PDF EXECUTIVO (JSPDF)
+  // EXPORTAÇÃO PDF EXECUTIVO (JSPDF COM GRÁFICOS DO CANVAS)
   // ---------------------------------------------------------------------------
   async exportarPdf() {
     const t = this.totais();
@@ -960,7 +1317,7 @@ export class RelatorioFaturamentoComponent implements OnInit {
       const left = 36;
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      let y = 40;
+      let y = 38;
 
       // Cabeçalho
       doc.setFont('helvetica', 'bold');
@@ -973,18 +1330,18 @@ export class RelatorioFaturamentoComponent implements OnInit {
       doc.setTextColor(100, 116, 139);
       const dataHora = new Date().toLocaleString('pt-BR');
       doc.text(`Emissão: ${dataHora} | Filial: ${this.filters.local === 'todas' ? 'Todas' : this.filters.local} | Sistema VIPE`, pageWidth - 260, y - 4);
-      y += 18;
+      y += 16;
 
       doc.setDrawColor(27, 54, 93);
       doc.setLineWidth(1.5);
       doc.line(left, y, pageWidth - left, y);
-      y += 18;
+      y += 14;
 
       // KPIs Box
       doc.setFillColor(248, 250, 252);
       doc.setDrawColor(203, 213, 225);
       doc.setLineWidth(0.8);
-      doc.roundedRect(left, y, pageWidth - (left * 2), 48, 6, 6, 'FD');
+      doc.roundedRect(left, y, pageWidth - (left * 2), 44, 6, 6, 'FD');
 
       const colW = (pageWidth - (left * 2)) / 5;
       const kpis = [
@@ -998,100 +1355,124 @@ export class RelatorioFaturamentoComponent implements OnInit {
       kpis.forEach((k, idx) => {
         const xPos = left + (idx * colW) + (colW / 2);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
+        doc.setFontSize(7.5);
         doc.setTextColor(100, 116, 139);
-        doc.text(k.label, xPos, y + 16, { align: 'center' });
+        doc.text(k.label, xPos, y + 15, { align: 'center' });
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11);
+        doc.setFontSize(10.5);
         doc.setTextColor(27, 54, 93);
-        doc.text(k.val, xPos, y + 34, { align: 'center' });
+        doc.text(k.val, xPos, y + 32, { align: 'center' });
       });
-      y += 68;
+      y += 56;
 
       // Título Tabela 1
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12);
+      doc.setFontSize(11);
       doc.setTextColor(27, 54, 93);
       doc.text('1. Demonstrativo Consolidado Mês a Mês', left, y);
-      y += 12;
+      y += 10;
 
       // Cabeçalho da Tabela
       const tableW = pageWidth - (left * 2);
       doc.setFillColor(27, 54, 93);
-      doc.rect(left, y, tableW, 22, 'F');
+      doc.rect(left, y, tableW, 20, 'F');
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
+      doc.setFontSize(8);
       doc.setTextColor(255, 255, 255);
 
       const tCols = [
         { title: 'Mês', x: left + 10, align: 'left' },
-        { title: 'Abastecimentos', x: left + 140, align: 'right' },
-        { title: 'Volume (L)', x: left + 230, align: 'right' },
-        { title: 'Faturamento Total (R$)', x: left + 350, align: 'right' },
-        { title: 'Preço Médio/L', x: left + 430, align: 'right' },
-        { title: 'Recebido (R$)', x: left + 540, align: 'right' },
-        { title: 'Pendente (R$)', x: left + 650, align: 'right' },
+        { title: 'Abastecimentos', x: left + 130, align: 'right' },
+        { title: 'Volume (L)', x: left + 220, align: 'right' },
+        { title: 'Faturamento Total (R$)', x: left + 340, align: 'right' },
+        { title: 'Preço Médio/L', x: left + 420, align: 'right' },
+        { title: 'Recebido (R$)', x: left + 530, align: 'right' },
+        { title: 'Pendente (R$)', x: left + 640, align: 'right' },
         { title: '% Recebido', x: left + tableW - 14, align: 'right' },
       ];
 
       tCols.forEach(c => {
-        doc.text(c.title, c.x, y + 14, { align: c.align as any });
+        doc.text(c.title, c.x, y + 13, { align: c.align as any });
       });
-      y += 22;
+      y += 20;
 
       // Linhas da Tabela
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
 
       this.resumoMensal().forEach((r, idx) => {
         if (idx % 2 === 0) {
           doc.setFillColor(248, 250, 252);
-          doc.rect(left, y, tableW, 18, 'F');
+          doc.rect(left, y, tableW, 16, 'F');
         }
 
         doc.setTextColor(15, 23, 42);
-        doc.text(this.formatMes(r.mes), left + 10, y + 12);
-        doc.text(Number(r.total_abastecimentos).toLocaleString('pt-BR'), left + 140, y + 12, { align: 'right' });
-        doc.text(`${Number(r.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 230, y + 12, { align: 'right' });
-        doc.text(`R$ ${Number(r.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 350, y + 12, { align: 'right' });
-        doc.text(`R$ ${Number(r.preco_medio).toFixed(3).replace('.', ',')}`, left + 430, y + 12, { align: 'right' });
-        doc.text(`R$ ${Number(r.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 540, y + 12, { align: 'right' });
-        doc.text(`R$ ${Number(r.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 650, y + 12, { align: 'right' });
-        doc.text(`${this.pctRecebido(r.valor_recebido, r.valor_total).toFixed(1)}%`, left + tableW - 14, y + 12, { align: 'right' });
+        doc.text(this.formatMes(r.mes), left + 10, y + 11);
+        doc.text(Number(r.total_abastecimentos).toLocaleString('pt-BR'), left + 130, y + 11, { align: 'right' });
+        doc.text(`${Number(r.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 220, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(r.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 340, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(r.preco_medio).toFixed(3).replace('.', ',')}`, left + 420, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(r.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 530, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(r.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 640, y + 11, { align: 'right' });
+        doc.text(`${this.pctRecebido(r.valor_recebido, r.valor_total).toFixed(1)}%`, left + tableW - 14, y + 11, { align: 'right' });
 
-        y += 18;
+        y += 16;
       });
 
       // Linha de Total
       doc.setFillColor(226, 232, 240);
-      doc.rect(left, y, tableW, 20, 'F');
+      doc.rect(left, y, tableW, 18, 'F');
       doc.setFont('helvetica', 'bold');
-      doc.text('TOTAL CONSOLIDADO', left + 10, y + 13);
-      doc.text(Number(t.total_abastecimentos).toLocaleString('pt-BR'), left + 140, y + 13, { align: 'right' });
-      doc.text(`${Number(t.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 230, y + 13, { align: 'right' });
-      doc.text(`R$ ${Number(t.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 350, y + 13, { align: 'right' });
-      doc.text(`R$ ${(Number(t.valor_total) / Number(t.litros)).toFixed(3).replace('.', ',')}`, left + 430, y + 13, { align: 'right' });
-      doc.text(`R$ ${Number(t.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 540, y + 13, { align: 'right' });
-      doc.text(`R$ ${Number(t.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 650, y + 13, { align: 'right' });
-      doc.text(`${this.pctRecebido(t.valor_recebido, t.valor_total).toFixed(1)}%`, left + tableW - 14, y + 13, { align: 'right' });
-      y += 30;
+      doc.text('TOTAL CONSOLIDADO', left + 10, y + 12);
+      doc.text(Number(t.total_abastecimentos).toLocaleString('pt-BR'), left + 130, y + 12, { align: 'right' });
+      doc.text(`${Number(t.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 220, y + 12, { align: 'right' });
+      doc.text(`R$ ${Number(t.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 340, y + 12, { align: 'right' });
+      doc.text(`R$ ${(Number(t.valor_total) / Number(t.litros)).toFixed(3).replace('.', ',')}`, left + 420, y + 12, { align: 'right' });
+      doc.text(`R$ ${Number(t.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 530, y + 12, { align: 'right' });
+      doc.text(`R$ ${Number(t.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 640, y + 12, { align: 'right' });
+      doc.text(`${this.pctRecebido(t.valor_recebido, t.valor_total).toFixed(1)}%`, left + tableW - 14, y + 12, { align: 'right' });
+      y += 28;
 
-      // Página 2: Quebra por Filial
+      // -----------------------------------------------------------------------
+      // INSERÇÃO DOS GRÁFICOS NO PDF (PÁGINA 1)
+      // -----------------------------------------------------------------------
+      const canvasFiliais = this.chartFiliaisRef?.nativeElement;
+      const canvasSegmento = this.chartSegmentoRef?.nativeElement;
+      const canvasBaixas = this.chartBaixasRef?.nativeElement;
+
+      if (canvasFiliais && canvasSegmento && canvasBaixas) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(27, 54, 93);
+        doc.text('Gráficos Gerenciais de Apoio', left, y);
+        y += 8;
+
+        const imgFiliais = canvasFiliais.toDataURL('image/png');
+        const imgSegmento = canvasSegmento.toDataURL('image/png');
+        const imgBaixas = canvasBaixas.toDataURL('image/png');
+
+        // Layout: Gráfico Barras (420 pt de largura) + 2 Donuts lado a lado (165 pt cada)
+        doc.addImage(imgFiliais, 'PNG', left, y, 410, 165);
+        doc.addImage(imgSegmento, 'PNG', left + 420, y, 165, 165);
+        doc.addImage(imgBaixas, 'PNG', left + 595, y, 165, 165);
+      }
+
+      // Página 2: Quebra por Filial e Segmento
       doc.addPage('a4', 'landscape');
       y = 40;
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(14);
+      doc.setFontSize(13);
       doc.setTextColor(27, 54, 93);
       doc.text('2. Demonstrativo por Filial (Matriz vs Viana)', left, y);
-      y += 16;
+      y += 14;
 
       doc.setFillColor(44, 62, 80);
-      doc.rect(left, y, tableW, 20, 'F');
+      doc.rect(left, y, tableW, 18, 'F');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
+      doc.setFontSize(8);
       doc.setTextColor(255, 255, 255);
 
       const fCols = [
@@ -1104,25 +1485,119 @@ export class RelatorioFaturamentoComponent implements OnInit {
         { title: 'Recebido (R$)', x: left + 660, align: 'right' },
         { title: 'Pendente (R$)', x: left + tableW - 14, align: 'right' },
       ];
-      fCols.forEach(c => doc.text(c.title, c.x, y + 13, { align: c.align as any }));
-      y += 20;
+      fCols.forEach(c => doc.text(c.title, c.x, y + 12, { align: c.align as any }));
+      y += 18;
 
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
       this.porFilial().forEach((f, idx) => {
+        if (idx % 2 === 0) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(left, y, tableW, 15, 'F');
+        }
+        doc.setTextColor(15, 23, 42);
+        doc.text(this.formatMes(f.mes), left + 10, y + 10);
+        doc.text(f.local, left + 110, y + 10);
+        doc.text(Number(f.total_abastecimentos).toLocaleString('pt-BR'), left + 220, y + 10, { align: 'right' });
+        doc.text(`${Number(f.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 320, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(f.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 460, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(f.preco_medio).toFixed(3).replace('.', ',')}`, left + 550, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(f.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 660, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(f.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + tableW - 14, y + 10, { align: 'right' });
+        y += 15;
+      });
+      y += 24;
+
+      // Tabela de Segmentos na Página 2
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(27, 54, 93);
+      doc.text('3. Faturamento por Segmento (Frota Própria vs Terceiros)', left, y);
+      y += 14;
+
+      doc.setFillColor(30, 41, 59);
+      doc.rect(left, y, tableW, 18, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(255, 255, 255);
+
+      const sCols = [
+        { title: 'Mês', x: left + 10, align: 'left' },
+        { title: 'Segmento', x: left + 110, align: 'left' },
+        { title: 'Abastecimentos', x: left + 230, align: 'right' },
+        { title: 'Volume (L)', x: left + 330, align: 'right' },
+        { title: 'Faturamento Total (R$)', x: left + 460, align: 'right' },
+        { title: 'Preço Médio/L', x: left + 550, align: 'right' },
+        { title: 'Recebido (R$)', x: left + 660, align: 'right' },
+        { title: 'Pendente (R$)', x: left + tableW - 14, align: 'right' },
+      ];
+      sCols.forEach(c => doc.text(c.title, c.x, y + 12, { align: c.align as any }));
+      y += 18;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      this.porSegmento().forEach((s, idx) => {
+        if (idx % 2 === 0) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(left, y, tableW, 15, 'F');
+        }
+        doc.setTextColor(15, 23, 42);
+        doc.text(this.formatMes(s.mes), left + 10, y + 10);
+        doc.text(s.segmento, left + 110, y + 10);
+        doc.text(Number(s.total_abastecimentos).toLocaleString('pt-BR'), left + 230, y + 10, { align: 'right' });
+        doc.text(`${Number(s.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 330, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(s.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 460, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(s.preco_medio).toFixed(3).replace('.', ',')}`, left + 550, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(s.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 660, y + 10, { align: 'right' });
+        doc.text(`R$ ${Number(s.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + tableW - 14, y + 10, { align: 'right' });
+        y += 15;
+      });
+
+      // Página 3: Ranking Top 15 Proprietários
+      doc.addPage('a4', 'landscape');
+      y = 40;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(27, 54, 93);
+      doc.text('4. Ranking dos Maiores Proprietários / Clientes (Top 15)', left, y);
+      y += 14;
+
+      doc.setFillColor(27, 54, 93);
+      doc.rect(left, y, tableW, 18, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(255, 255, 255);
+
+      const pCols = [
+        { title: '#', x: left + 10, align: 'left' },
+        { title: 'Proprietário / Razão Social', x: left + 40, align: 'left' },
+        { title: 'Abastecimentos', x: left + 260, align: 'right' },
+        { title: 'Volume Total (L)', x: left + 370, align: 'right' },
+        { title: 'Faturamento Total (R$)', x: left + 490, align: 'right' },
+        { title: 'Part. %', x: left + 560, align: 'right' },
+        { title: 'Recebido (R$)', x: left + 660, align: 'right' },
+        { title: 'Pendente (R$)', x: left + tableW - 14, align: 'right' },
+      ];
+      pCols.forEach(c => doc.text(c.title, c.x, y + 12, { align: c.align as any }));
+      y += 18;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      this.topProprietarios().slice(0, 15).forEach((p, idx) => {
         if (idx % 2 === 0) {
           doc.setFillColor(248, 250, 252);
           doc.rect(left, y, tableW, 16, 'F');
         }
         doc.setTextColor(15, 23, 42);
-        doc.text(this.formatMes(f.mes), left + 10, y + 11);
-        doc.text(f.local, left + 110, y + 11);
-        doc.text(Number(f.total_abastecimentos).toLocaleString('pt-BR'), left + 220, y + 11, { align: 'right' });
-        doc.text(`${Number(f.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 320, y + 11, { align: 'right' });
-        doc.text(`R$ ${Number(f.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 460, y + 11, { align: 'right' });
-        doc.text(`R$ ${Number(f.preco_medio).toFixed(3).replace('.', ',')}`, left + 550, y + 11, { align: 'right' });
-        doc.text(`R$ ${Number(f.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 660, y + 11, { align: 'right' });
-        doc.text(`R$ ${Number(f.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + tableW - 14, y + 11, { align: 'right' });
+        doc.text(`${idx + 1}º`, left + 10, y + 11);
+        doc.text(p.proprietario, left + 40, y + 11);
+        doc.text(Number(p.total_abastecimentos).toLocaleString('pt-BR'), left + 260, y + 11, { align: 'right' });
+        doc.text(`${Number(p.litros).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} L`, left + 370, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(p.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 490, y + 11, { align: 'right' });
+        doc.text(`${this.pctRecebido(p.valor_total, t.valor_total).toFixed(1)}%`, left + 560, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(p.valor_recebido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + 660, y + 11, { align: 'right' });
+        doc.text(`R$ ${Number(p.valor_pendente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, left + tableW - 14, y + 11, { align: 'right' });
         y += 16;
       });
 
@@ -1142,7 +1617,7 @@ export class RelatorioFaturamentoComponent implements OnInit {
 
       const dataHoje = new Date().toISOString().slice(0, 10);
       doc.save(`Relatorio_Faturamento_Mensal_${dataHoje}.pdf`);
-      this.toastr.success('Relatório PDF gerado com sucesso!');
+      this.toastr.success('Relatório PDF com gráficos gerado com sucesso!');
     } catch (err) {
       console.error('Erro ao exportar PDF:', err);
       this.toastr.error('Falha ao gerar relatório PDF.');
