@@ -48,10 +48,10 @@ class RelatorioController extends Controller
 
         $normalizado = mb_strtolower($status);
         if ($normalizado === 'pago') {
-            return $query->whereRaw('COALESCE(baixa_abastecimento, false) = true');
+            return $query->whereRaw('baixa_abastecimento IS TRUE');
         }
         if ($normalizado === 'pendente') {
-            return $query->whereRaw('COALESCE(baixa_abastecimento, false) = false');
+            return $query->whereRaw('baixa_abastecimento IS NOT TRUE');
         }
 
         return $query->where('status', $status);
@@ -71,6 +71,9 @@ class RelatorioController extends Controller
         if ($request->filled('id_proprietario')) {
             $query->where('id_proprietario', $request->id_proprietario);
         }
+        // Excluir abastecimentos excluídos/inativados do relatório (senão um
+        // abastecimento apagado ainda aparece, inclusive como pendente).
+        $this->aplicarFiltroAtivos($query, 'abastecimentos', $request);
         $this->aplicarFiltroFiliais($query, $request);
 
         if ($request->filled('data_inicio')) {
@@ -117,6 +120,7 @@ class RelatorioController extends Controller
 
             $query = Abastecimento::with(['veiculo','motorista'])
                 ->where('id_proprietario', $request->id_proprietario);
+            $this->aplicarFiltroAtivos($query, 'abastecimentos', $request);
             $this->aplicarFiltroFiliais($query, $request);
 
             if ($request->filled('data_inicio')) $query->whereDate('data', '>=', $request->data_inicio);
@@ -143,7 +147,6 @@ class RelatorioController extends Controller
             Log::error('Erro ao gerar PDF de relatório por proprietário', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'filters' => $request->all(),
             ]);
 
             return new \Illuminate\Http\JsonResponse([
@@ -152,4 +155,158 @@ class RelatorioController extends Controller
             ], 500);
         }
     }
+
+    public function faturamentoMensal(Request $request)
+    {
+        $local = trim((string) $request->query('local', ''));
+        $dataInicio = $request->query('data_inicio');
+        $dataFim = $request->query('data_fim');
+        $segmentoFiltro = trim((string) $request->query('segmento', '')); // 'frota', 'terceiros'
+
+        $baseQuery = Abastecimento::query();
+        $this->aplicarFiltroAtivos($baseQuery, 'abastecimentos', $request);
+        $this->aplicarFiltroFiliais($baseQuery, $request);
+
+        if (!empty($dataInicio)) {
+            $baseQuery->whereDate('data', '>=', $dataInicio);
+        }
+        if (!empty($dataFim)) {
+            $baseQuery->whereDate('data', '<=', $dataFim);
+        }
+        if ($segmentoFiltro === 'frota') {
+            $baseQuery->whereRaw("UPPER(COALESCE(nome_proprietario, '')) LIKE '%VIPE%'");
+        } elseif ($segmentoFiltro === 'terceiros') {
+            $baseQuery->whereRaw("UPPER(COALESCE(nome_proprietario, '')) NOT LIKE '%VIPE%'");
+        }
+
+        // 1. Resumo consolidado mês a mês
+        $resumoMensal = (clone $baseQuery)
+            ->selectRaw("
+                TO_CHAR(data, 'YYYY-MM') as mes,
+                COUNT(*) as total_abastecimentos,
+                ROUND(COALESCE(SUM(quantidade_litros), 0)::numeric, 2) as litros,
+                ROUND(COALESCE(SUM(valor_total), 0)::numeric, 2) as valor_total,
+                ROUND(COALESCE(AVG(valor_por_litro), 0)::numeric, 3) as preco_medio,
+                ROUND((COALESCE(SUM(valor_total), 0) / NULLIF(COUNT(*), 0))::numeric, 2) as ticket_medio,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_recebido,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS NOT TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_pendente
+            ")
+            ->groupByRaw("TO_CHAR(data, 'YYYY-MM')")
+            ->orderByRaw("TO_CHAR(data, 'YYYY-MM') DESC")
+            ->get();
+
+        // 2. Resumo por filial e mês
+        $porFilial = (clone $baseQuery)
+            ->selectRaw("
+                TO_CHAR(data, 'YYYY-MM') as mes,
+                COALESCE(local, 'Não Informado') as local,
+                COUNT(*) as total_abastecimentos,
+                ROUND(COALESCE(SUM(quantidade_litros), 0)::numeric, 2) as litros,
+                ROUND(COALESCE(SUM(valor_total), 0)::numeric, 2) as valor_total,
+                ROUND(COALESCE(AVG(valor_por_litro), 0)::numeric, 3) as preco_medio,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_recebido,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS NOT TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_pendente
+            ")
+            ->groupByRaw("TO_CHAR(data, 'YYYY-MM'), local")
+            ->orderByRaw("TO_CHAR(data, 'YYYY-MM') DESC, local ASC")
+            ->get();
+
+        // 3. Resumo por segmento (Frota Própria vs Terceiros) e mês
+        $porSegmento = (clone $baseQuery)
+            ->selectRaw("
+                TO_CHAR(data, 'YYYY-MM') as mes,
+                CASE 
+                    WHEN UPPER(COALESCE(nome_proprietario, '')) LIKE '%VIPE%' THEN 'Frota Própria (VIPE)'
+                    ELSE 'Terceiros / Parceiros'
+                END as segmento,
+                COUNT(*) as total_abastecimentos,
+                ROUND(COALESCE(SUM(quantidade_litros), 0)::numeric, 2) as litros,
+                ROUND(COALESCE(SUM(valor_total), 0)::numeric, 2) as valor_total,
+                ROUND(COALESCE(AVG(valor_por_litro), 0)::numeric, 3) as preco_medio,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_recebido,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS NOT TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_pendente
+            ")
+            ->groupByRaw("TO_CHAR(data, 'YYYY-MM'), 2")
+            ->orderByRaw("TO_CHAR(data, 'YYYY-MM') DESC, 2 ASC")
+            ->get();
+
+        // 4. Top Proprietários / Clientes
+        $topProprietarios = (clone $baseQuery)
+            ->selectRaw("
+                COALESCE(nome_proprietario, 'Não Identificado') as proprietario,
+                COUNT(*) as total_abastecimentos,
+                ROUND(COALESCE(SUM(quantidade_litros), 0)::numeric, 2) as litros,
+                ROUND(COALESCE(SUM(valor_total), 0)::numeric, 2) as valor_total,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_recebido,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS NOT TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_pendente
+            ")
+            ->groupByRaw("COALESCE(nome_proprietario, 'Não Identificado')")
+            ->orderByDesc('valor_total')
+            ->limit(50)
+            ->get();
+
+        // 5. Totais Gerais do Período
+        $totaisGerais = (clone $baseQuery)
+            ->selectRaw("
+                COUNT(*) as total_abastecimentos,
+                ROUND(COALESCE(SUM(quantidade_litros), 0)::numeric, 2) as litros,
+                ROUND(COALESCE(SUM(valor_total), 0)::numeric, 2) as valor_total,
+                ROUND(COALESCE(AVG(valor_por_litro), 0)::numeric, 3) as preco_medio,
+                ROUND((COALESCE(SUM(valor_total), 0) / NULLIF(COUNT(*), 0))::numeric, 2) as ticket_medio,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_recebido,
+                ROUND(COALESCE(SUM(CASE WHEN baixa_abastecimento IS NOT TRUE THEN valor_total ELSE 0 END), 0)::numeric, 2) as valor_pendente
+            ")
+            ->first();
+
+        return new \Illuminate\Http\JsonResponse([
+            'resumo_mensal' => $resumoMensal,
+            'por_filial' => $porFilial,
+            'por_segmento' => $porSegmento,
+            'top_proprietarios' => $topProprietarios,
+            'totais' => $totaisGerais,
+            'filtros' => [
+                'local' => $local,
+                'data_inicio' => $dataInicio,
+                'data_fim' => $dataFim,
+                'segmento' => $segmentoFiltro,
+            ]
+        ]);
+    }
+
+    public function faturamentoMensalDetalhado(Request $request)
+    {
+        $query = Abastecimento::with(['veiculo', 'motorista', 'proprietario']);
+        $this->aplicarFiltroAtivos($query, 'abastecimentos', $request);
+        $this->aplicarFiltroFiliais($query, $request);
+
+        if ($request->filled('data_inicio')) {
+            $query->whereDate('data', '>=', $request->data_inicio);
+        }
+        if ($request->filled('data_fim')) {
+            $query->whereDate('data', '<=', $request->data_fim);
+        }
+        if ($request->filled('mes')) {
+            $query->whereRaw("TO_CHAR(data, 'YYYY-MM') = ?", [$request->mes]);
+        }
+        if ($request->filled('status')) {
+            $this->aplicarFiltroBaixaOuStatusImagem($query, $request->status);
+        }
+        if ($request->query('segmento') === 'frota') {
+            $query->whereRaw("UPPER(COALESCE(nome_proprietario, '')) LIKE '%VIPE%'");
+        } elseif ($request->query('segmento') === 'terceiros') {
+            $query->whereRaw("UPPER(COALESCE(nome_proprietario, '')) NOT LIKE '%VIPE%'");
+        }
+        if ($request->filled('id_proprietario')) {
+            $query->where('id_proprietario', $request->id_proprietario);
+        }
+        if ($request->filled('id_veiculo')) {
+            $query->where('id_veiculo', $request->id_veiculo);
+        }
+
+        // Paginação rigorosa de 50 registros por página (conforme AGENTS.md)
+        $abastecimentos = $query->orderByDesc('data_hora')->paginate(50);
+
+        return new \Illuminate\Http\JsonResponse($abastecimentos);
+    }
 }
+

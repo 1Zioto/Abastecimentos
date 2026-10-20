@@ -1,7 +1,10 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
+import { conferenciaVipeGuard } from './core/guards/conferencia-vipe.guard';
+import { adminVisualizadorGuard } from './core/guards/admin-visualizador.guard';
 import { garagemGuard } from './core/guards/garagem.guard';
+import { operationalGuard } from './core/guards/operational.guard';
 
 export const routes: Routes = [
   {
@@ -40,6 +43,16 @@ export const routes: Routes = [
         loadComponent: () => import('./features/graficos-gerenciais/graficos-gerenciais.component').then(m => m.GraficosGerenciaisComponent)
       },
       {
+        path: 'variacao-entradas-saidas',
+        canActivate: [adminVisualizadorGuard],
+        loadComponent: () => import('./features/variacao-entradas-saidas/variacao-entradas-saidas.component').then(m => m.VariacaoEntradasSaidasComponent)
+      },
+      {
+        path: 'dashboard-operacional',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/dashboard-operacional/dashboard-operacional.component').then(m => m.DashboardOperacionalComponent)
+      },
+      {
         path: 'abastecimentos',
         loadComponent: () => import('./features/abastecimentos/list/abastecimentos-list.component').then(m => m.AbastecimentosListComponent)
       },
@@ -48,8 +61,9 @@ export const routes: Routes = [
         loadComponent: () => import('./features/abastecimentos/form/abastecimento-form.component').then(m => m.AbastecimentoFormComponent)
       },
       {
-        path: 'lancar-sofit',
-        loadComponent: () => import('./features/lancar-sofit/lancar-sofit.component').then(m => m.LancarSofitComponent)
+        path: 'integracao-atua',
+        canActivate: [adminVisualizadorGuard],
+        loadComponent: () => import('./features/integracao-atua/integracao-atua.component').then(m => m.IntegracaoAtuaComponent)
       },
       {
         path: 'abastecimentos/:id/editar',
@@ -72,6 +86,11 @@ export const routes: Routes = [
         loadComponent: () => import('./features/auditoria-abastecimentos/auditoria-abastecimentos.component').then(m => m.AuditoriaAbastecimentosComponent)
       },
       {
+        path: 'conferencia-vipe',
+        canActivate: [conferenciaVipeGuard],
+        loadComponent: () => import('./features/conferencia-vipe/conferencia-vipe.component').then(m => m.ConferenciaVipeComponent)
+      },
+      {
         path: 'entrada-notas',
         loadComponent: () => import('./features/entrada-notas/entrada-notas.component').then(m => m.EntradaNotasComponent)
       },
@@ -79,6 +98,11 @@ export const routes: Routes = [
         path: 'relatorios',
         canActivate: [adminGuard],
         loadComponent: () => import('./features/relatorios/relatorios.component').then(m => m.RelatoriosComponent)
+      },
+      {
+        path: 'relatorio-faturamento',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/relatorio-faturamento/relatorio-faturamento.component').then(m => m.RelatorioFaturamentoComponent)
       },
       {
         path: 'valores-combustivel',
@@ -96,6 +120,11 @@ export const routes: Routes = [
         loadComponent: () => import('./features/conciliacao-bancaria/conciliacao-bancaria.component').then(m => m.ConciliacaoBancariaComponent)
       },
       {
+        path: 'conferencia-recebedores',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/conferencia-recebedores/conferencia-recebedores.component').then(m => m.ConferenciaRecebedoresComponent)
+      },
+      {
         path: 'proprietarios',
         loadComponent: () => import('./features/proprietarios/proprietarios.component').then(m => m.ProprietariosComponent)
       },
@@ -105,7 +134,7 @@ export const routes: Routes = [
       },
       {
         path: 'transferencia-veiculo',
-        canActivate: [adminGuard],
+        canActivate: [operationalGuard],
         loadComponent: () => import('./features/transferencia-veiculo/transferencia-veiculo.component').then(m => m.TransferenciaVeiculoComponent)
       },
       {
@@ -131,6 +160,11 @@ export const routes: Routes = [
         path: 'encerrantes-bomba',
         canActivate: [adminGuard],
         loadComponent: () => import('./features/encerrantes-bomba/encerrantes-bomba.component').then(m => m.EncerrantesBombaComponent)
+      },
+      {
+        path: 'encerrante-diario',
+        canActivate: [operationalGuard],
+        loadComponent: () => import('./features/encerrante-diario/encerrante-diario.component').then(m => m.EncerranteDiarioComponent)
       },
       {
         path: 'controle-encerrante-privado',

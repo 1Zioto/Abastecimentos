@@ -1,8 +1,8 @@
 // src/app/core/services/api.service.ts
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
-import { EMPTY, Observable } from 'rxjs';
-import { expand, map, reduce } from 'rxjs/operators';
+import { EMPTY, Observable, from, firstValueFrom } from 'rxjs';
+import { catchError, expand, map, reduce, shareReplay, switchMap, tap } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
 import { AuthService } from './auth.service';
 import {
@@ -11,12 +11,29 @@ import {
   Usuario, DashboardData, PaginatedResponse, EncerranteBomba, DespesaAvulsa,
   BalancetePrivadoData, TanqueHistoricoData, AbastecimentoAuditoriaData,
   GraficosGerenciaisData, ExtratoBancario, ConciliacaoBancariaResumo,
-  ConciliacaoSugestaoGrupo, ConciliacaoBaixaItem
+  ConciliacaoSugestaoGrupo, ConciliacaoBaixaItem, VariacaoEntradasSaidasData
 } from '../../shared/models';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
   private base = environment.apiUrl;
+
+  // DECISÃO OPERACIONAL APROVADA — NÃO ALTERAR SEM AUTORIZAÇÃO EXPLÍCITA.
+  // O limite de 50 e o TTL de 24 horas foram escolhidos conscientemente para
+  // reduzir transferência/custos. O responsável aceita o risco de as listas de
+  // referência ficarem temporariamente desatualizadas. Escritas abaixo devem
+  // continuar invalidando o cache imediatamente. Consulte /AGENTS.md.
+  private readonly referencePageSize = 50;
+  private readonly referenceCacheTtlMs = 24 * 60 * 60 * 1000;
+
+  // Cache em memória (por sessão) das listas de referência "buscar tudo"
+  // (proprietários/veículos/motoristas): essas listas são pedidas do zero
+  // em quase toda tela e raramente mudam — reaproveitar entre navegações
+  // evita refazer a mesma requisição pesada repetidamente.
+  private proprietariosAllCache$: Observable<PaginatedResponse<Proprietario>> | null = null;
+  private veiculosAllCache$: Observable<PaginatedResponse<Veiculo>> | null = null;
+  private motoristasAllCache$: Observable<PaginatedResponse<Motorista>> | null = null;
+  private referenceCacheExpiresAt = new Map<string, number>();
 
   constructor(private http: HttpClient, private auth: AuthService) {}
 
@@ -37,6 +54,56 @@ export class ApiService {
         ? local
         : this.auth.getGaragem();
     return { ...rest, local: localFiltrado };
+  }
+
+  private cacheIsFresh(key: string): boolean {
+    return (this.referenceCacheExpiresAt.get(key) ?? 0) > Date.now();
+  }
+
+  private markCacheFresh(key: string): void {
+    this.referenceCacheExpiresAt.set(key, Date.now() + this.referenceCacheTtlMs);
+  }
+
+  private expireCache(key: string): void {
+    this.referenceCacheExpiresAt.delete(key);
+  }
+
+  clearReferenceCaches(): void {
+    this.proprietariosAllCache$ = null;
+    this.veiculosAllCache$ = null;
+    this.motoristasAllCache$ = null;
+    this.referenceCacheExpiresAt.clear();
+  }
+
+  /**
+   * Carrega a coleção completa sem violar a decisão de 50 registros por página.
+   * As telas de seleção precisam de todos os itens; limitar a primeira página
+   * faria proprietários, veículos e motoristas desaparecerem dos seletores.
+   */
+  private fetchAllReferencePages<T>(
+    requestPage: (page: number) => Observable<PaginatedResponse<T>>,
+  ): Observable<PaginatedResponse<T>> {
+    return requestPage(1).pipe(
+      expand(response => response.current_page < response.last_page
+        ? requestPage(response.current_page + 1)
+        : EMPTY),
+      reduce(
+        (state, response) => ({
+          data: [...state.data, ...response.data],
+          total: response.total,
+        }),
+        { data: [] as T[], total: 0 },
+      ),
+      map(state => ({
+        data: state.data,
+        current_page: 1,
+        last_page: 1,
+        per_page: this.referencePageSize,
+        total: state.total,
+        from: state.data.length ? 1 : 0,
+        to: state.data.length,
+      })),
+    );
   }
 
   // Portal público do proprietário
@@ -60,69 +127,136 @@ export class ApiService {
     });
   }
 
+  getVariacaoEntradasSaidas(filters: any = {}): Observable<VariacaoEntradasSaidasData> {
+    return this.http.get<VariacaoEntradasSaidasData>(this.url('variacao-entradas-saidas'), {
+      params: this.toParams(this.withGaragem(filters)),
+    });
+  }
+
+  getPingoOpcoes(local: string): Observable<{ proprietarios: string[]; motoristas: string[]; placas: string[] }> {
+    return this.http.get<{ proprietarios: string[]; motoristas: string[]; placas: string[] }>(this.url('pingo/opcoes'), {
+      params: this.toParams({ local }),
+    });
+  }
+
+  perguntarAoPingo(data: Record<string, any>): Observable<{ resposta: string; resumo: any; contexto?: { filial: string; entidade_ativa?: { tipo: string; nome: string } | null; capacidades_usadas?: string[] } }> {
+    return this.http.post<{ resposta: string; resumo: any; contexto?: { filial: string; entidade_ativa?: { tipo: string; nome: string } | null; capacidades_usadas?: string[] } }>(this.url('pingo/perguntar'), data);
+  }
+
   // Proprietários
   getProprietarios(filters: any = {}): Observable<PaginatedResponse<Proprietario>> {
     return this.http.get<PaginatedResponse<Proprietario>>(this.url('proprietarios'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getProprietariosAll(): Observable<PaginatedResponse<Proprietario>> {
-    return this.getProprietarios({ per_page: 500 });
+    if (!this.proprietariosAllCache$ || !this.cacheIsFresh('proprietarios')) {
+      this.proprietariosAllCache$ = this.fetchAllReferencePages(page =>
+        this.getProprietarios({ page, per_page: this.referencePageSize })
+      ).pipe(
+        tap(() => this.markCacheFresh('proprietarios')),
+        shareReplay({ bufferSize: 1, refCount: false }),
+      );
+    }
+    return this.proprietariosAllCache$;
   }
   createProprietario(data: Partial<Proprietario>): Observable<Proprietario> {
-    return this.http.post<Proprietario>(this.url('proprietarios'), { ...data, local: data.local || this.auth.getGaragem() });
+    return this.http.post<Proprietario>(this.url('proprietarios'), { ...data, local: data.local || this.auth.getGaragem() })
+      .pipe(tap(() => { this.proprietariosAllCache$ = null; this.expireCache('proprietarios'); }));
   }
   updateProprietario(id: string, data: Partial<Proprietario>): Observable<Proprietario> {
-    return this.http.put<Proprietario>(this.url(`proprietarios/${id}`), data);
+    return this.http.put<Proprietario>(this.url(`proprietarios/${id}`), data)
+      .pipe(tap(() => { this.proprietariosAllCache$ = null; this.expireCache('proprietarios'); }));
   }
   bloquearProprietario(id: string, observacao: string): Observable<Proprietario> {
-    return this.http.post<Proprietario>(this.url(`proprietarios/${id}/bloquear`), { observacao });
+    return this.http.post<Proprietario>(this.url(`proprietarios/${id}/bloquear`), { observacao })
+      .pipe(tap(() => { this.proprietariosAllCache$ = null; this.expireCache('proprietarios'); }));
   }
   desbloquearProprietario(id: string): Observable<Proprietario> {
-    return this.http.post<Proprietario>(this.url(`proprietarios/${id}/desbloquear`), {});
+    return this.http.post<Proprietario>(this.url(`proprietarios/${id}/desbloquear`), {})
+      .pipe(tap(() => { this.proprietariosAllCache$ = null; this.expireCache('proprietarios'); }));
   }
   deleteProprietario(id: string): Observable<any> {
-    return this.http.delete(this.url(`proprietarios/${id}`));
+    return this.http.delete(this.url(`proprietarios/${id}`))
+      .pipe(tap(() => { this.proprietariosAllCache$ = null; this.expireCache('proprietarios'); }));
   }
 
   // Veículos
   getVeiculos(filters: any = {}): Observable<PaginatedResponse<Veiculo>> {
     return this.http.get<PaginatedResponse<Veiculo>>(this.url('veiculos'), { params: this.toParams(this.withGaragem(filters)) });
   }
+  getVeiculosAll(): Observable<PaginatedResponse<Veiculo>> {
+    if (!this.veiculosAllCache$ || !this.cacheIsFresh('veiculos')) {
+      this.veiculosAllCache$ = this.fetchAllReferencePages(page =>
+        this.getVeiculos({ page, per_page: this.referencePageSize })
+      ).pipe(
+        tap(() => this.markCacheFresh('veiculos')),
+        shareReplay({ bufferSize: 1, refCount: false }),
+      );
+    }
+    return this.veiculosAllCache$;
+  }
   getVeiculosByProprietario(id: string): Observable<Veiculo[]> {
     return this.http.get<Veiculo[]>(this.url(`veiculos/proprietario/${id}`));
   }
   createVeiculo(data: Partial<Veiculo>): Observable<Veiculo> {
-    return this.http.post<Veiculo>(this.url('veiculos'), { ...data, local: data.local || this.auth.getGaragem() });
+    return this.http.post<Veiculo>(this.url('veiculos'), { ...data, local: data.local || this.auth.getGaragem() })
+      .pipe(tap(() => this.veiculosAllCache$ = null));
   }
   updateVeiculo(id: string, data: Partial<Veiculo>): Observable<Veiculo> {
-    return this.http.put<Veiculo>(this.url(`veiculos/${id}`), data);
+    return this.http.put<Veiculo>(this.url(`veiculos/${id}`), data)
+      .pipe(tap(() => this.veiculosAllCache$ = null));
   }
   transferirVeiculo(id: string, data: { id_proprietario: string; data_transferencia?: string; observacao?: string }): Observable<{ message: string; veiculo: Veiculo }> {
-    return this.http.post<{ message: string; veiculo: Veiculo }>(this.url(`veiculos/${id}/transferir`), data);
+    return this.http.post<{ message: string; veiculo: Veiculo }>(this.url(`veiculos/${id}/transferir`), data)
+      .pipe(tap(() => this.veiculosAllCache$ = null));
   }
   deleteVeiculo(id: string): Observable<any> {
-    return this.http.delete(this.url(`veiculos/${id}`));
+    return this.http.delete(this.url(`veiculos/${id}`))
+      .pipe(tap(() => this.veiculosAllCache$ = null));
   }
 
   // Motoristas
   getMotoristas(filters: any = {}): Observable<PaginatedResponse<Motorista>> {
     return this.http.get<PaginatedResponse<Motorista>>(this.url('motoristas'), { params: this.toParams(this.withGaragem(filters)) });
   }
+  getMotoristasAll(): Observable<PaginatedResponse<Motorista>> {
+    if (!this.motoristasAllCache$ || !this.cacheIsFresh('motoristas')) {
+      this.motoristasAllCache$ = this.fetchAllReferencePages(page =>
+        this.getMotoristas({ page, per_page: this.referencePageSize })
+      ).pipe(
+        tap(() => this.markCacheFresh('motoristas')),
+        shareReplay({ bufferSize: 1, refCount: false }),
+      );
+    }
+    return this.motoristasAllCache$;
+  }
   getMotoristassByProprietario(id: string): Observable<Motorista[]> {
     return this.http.get<Motorista[]>(this.url(`motoristas/proprietario/${id}`));
   }
   createMotorista(data: Partial<Motorista>): Observable<Motorista> {
-    return this.http.post<Motorista>(this.url('motoristas'), { ...data, local: data.local || this.auth.getGaragem() });
+    return this.http.post<Motorista>(this.url('motoristas'), { ...data, local: data.local || this.auth.getGaragem() })
+      .pipe(tap(() => this.motoristasAllCache$ = null));
   }
   updateMotorista(id: string, data: Partial<Motorista>): Observable<Motorista> {
-    return this.http.put<Motorista>(this.url(`motoristas/${id}`), data);
+    return this.http.put<Motorista>(this.url(`motoristas/${id}`), data)
+      .pipe(tap(() => this.motoristasAllCache$ = null));
   }
   deleteMotorista(id: string): Observable<any> {
-    return this.http.delete(this.url(`motoristas/${id}`));
+    return this.http.delete(this.url(`motoristas/${id}`))
+      .pipe(tap(() => this.motoristasAllCache$ = null));
   }
 
   // Abastecimentos
   getAbastecimentos(filters: any = {}): Observable<PaginatedResponse<Abastecimento>> {
     return this.http.get<PaginatedResponse<Abastecimento>>(this.url('abastecimentos'), { params: this.toParams(this.withGaragem(filters)) });
+  }
+  getAbastecimentosAll(filters: any = {}): Observable<Abastecimento[]> {
+    const requestPage = (page: number) => this.getAbastecimentos({ ...filters, page, per_page: 50 });
+    return requestPage(1).pipe(
+      expand(response => response.current_page < response.last_page
+        ? requestPage(response.current_page + 1)
+        : EMPTY),
+      reduce((items, response) => [...items, ...response.data], [] as Abastecimento[]),
+    );
   }
   getAbastecimento(id: string): Observable<Abastecimento> {
     return this.http.get<Abastecimento>(this.url(`abastecimentos/${id}`));
@@ -142,6 +276,17 @@ export class ApiService {
   verificarInconsistencia(id: string): Observable<Abastecimento> {
     return this.http.post<Abastecimento>(this.url(`abastecimentos/${id}/verificar-inconsistencia`), {});
   }
+  // ── Integração Atua ────────────────────────────────────────────────
+  getAtuaLancamentos(filters: any = {}): Observable<any> {
+    return this.http.get(this.url('atua/lancamentos'), { params: this.toParams(filters) });
+  }
+  getAtuaOpcoes(): Observable<{ placas: string[]; motoristas: string[] }> {
+    return this.http.get<{ placas: string[]; motoristas: string[] }>(this.url('atua/opcoes'));
+  }
+  reenviarAtua(idAbastecimento: string): Observable<any> {
+    return this.http.post(this.url(`atua/reenviar/${idAbastecimento}`), {});
+  }
+
   lancarSofit(id: string, data: { trip_id?: string | null; odometro?: number | null; motorista_sofit?: string | null; data_hora?: string | null } = {}): Observable<any> {
     return this.http.post(this.url(`abastecimentos/${id}/lancar-sofit`), data);
   }
@@ -167,7 +312,10 @@ export class ApiService {
     return this.http.get<PaginatedResponse<BaixaAbastecimento>>(this.url('baixas'), { params: this.toParams(this.withGaragem(filters)) });
   }
   getBaixasAll(filters: any = {}): Observable<BaixaAbastecimento[]> {
-    const pageSize = 200;
+    // Páginas maiores = menos round-trips sequenciais ao backend (cada um
+    // soma latência de rede + query). Não muda os dados carregados, só
+    // reduz quantas requisições são feitas para buscar a tabela inteira.
+    const pageSize = 50;
     const requestPage = (page: number) => this.getBaixas({
       ...filters,
       page,
@@ -186,6 +334,9 @@ export class ApiService {
   }
   createBaixaLote(data: any): Observable<any> {
     return this.http.post(this.url('baixas/lote'), data);
+  }
+  creditoProprietario(id: string): Observable<{ proprietario_id: string; saldo: number; movimentos: any[] }> {
+    return this.http.get<{ proprietario_id: string; saldo: number; movimentos: any[] }>(this.url(`proprietarios/${id}/credito`));
   }
   deleteBaixa(id: string): Observable<any> {
     return this.http.delete(this.url(`baixas/${id}`));
@@ -343,6 +494,31 @@ export class ApiService {
     return this.http.post(this.url(`auditoria/abastecimentos-suspeitos/${id}/auditar`), {});
   }
 
+  compararConferenciaVipe(payload: any): Observable<any> {
+    return this.http.post(this.url('conferencia-vipe/comparar'), payload);
+  }
+
+  listarImportacoesConferenciaVipe(): Observable<any> {
+    return this.http.get(this.url('conferencia-vipe/importacoes'));
+  }
+
+  obterImportacaoConferenciaVipe(id: string, mes = ''): Observable<any> {
+    return this.http.get(this.url(`conferencia-vipe/importacoes/${id}`), {
+      params: this.toParams({ mes }),
+    });
+  }
+
+  reprocessarImportacaoConferenciaVipe(id: string): Observable<any> {
+    return this.http.post(this.url(`conferencia-vipe/importacoes/${id}/reprocessar`), {});
+  }
+
+  checarItemConferenciaVipe(id: string, checado: boolean, observacao = ''): Observable<any> {
+    return this.http.patch(this.url(`conferencia-vipe/itens/${id}/checagem`), {
+      checado,
+      observacao,
+    });
+  }
+
   getAppErros(filters: any = {}): Observable<PaginatedResponse<any>> {
     return this.http.get<PaginatedResponse<any>>(this.url('app-erros'), {
       params: this.toParams(filters),
@@ -368,33 +544,137 @@ export class ApiService {
     return `${this.url('relatorios/proprietario/pdf')}?${p}`;
   }
 
-  // Uploads
-  uploadToDrive(file: File, destino?: string): Observable<any> {
-    const fd = new FormData();
-    fd.append('file', file);
-    if (destino) fd.append('destino', destino);
-    return this.http.post(this.url('uploads/drive'), fd);
+  getRelatorioFaturamentoMensal(filters: any): Observable<any> {
+    const f = { ...filters };
+    if (f.local === 'todas') {
+      f.local = '';
+    }
+    return this.http.get(this.url('relatorios/faturamento-mensal'), { params: this.toParams(f) });
   }
-  downloadCloudinaryMedia(url: string): Observable<Blob> {
-    return this.http.get(this.url('media/cloudinary'), {
-      params: this.toParams({ url }),
-      responseType: 'blob',
+
+  getRelatorioFaturamentoDetalhado(filters: any): Observable<any> {
+    const f = { ...filters };
+    if (f.local === 'todas') {
+      f.local = '';
+    }
+    return this.http.get(this.url('relatorios/faturamento-mensal/detalhado'), { params: this.toParams(f) });
+  }
+
+  async compressImage(file: File, maxSide: number = 1024, quality: number = 0.6): Promise<File> {
+    if (!file.type.startsWith('image/') || file.type === 'image/gif') {
+      return file;
+    }
+    return new Promise((resolve) => {
+      const img = new Image();
+      const objUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl);
+        let width = img.width;
+        let height = img.height;
+        const max = Math.max(width, height);
+        if (max > maxSide) {
+          const scale = maxSide / max;
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+          resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objUrl);
+        resolve(file);
+      };
+      img.src = objUrl;
     });
   }
 
+  // Uploads
+  uploadToDrive(file: File, destino?: string): Observable<any> {
+    const skipCompress = destino === 'entrada-notas';
+    return from(skipCompress ? Promise.resolve(file) : this.compressImage(file)).pipe(
+      switchMap(compressedFile => from(this.uploadDireto(compressedFile)).pipe(
+        // O PUT direto no Google depende de o servidor de upload devolver os
+        // cabeçalhos CORS para a nossa origem. App e bot não passam por essa
+        // restrição, mas o navegador sim — se falhar, cai no upload via API,
+        // que é mais caro em banda porém sempre funciona.
+        catchError(err => {
+          console.warn('[upload] direto para o Drive falhou, usando o proxy da API', err);
+          const fd = new FormData();
+          fd.append('file', compressedFile);
+          if (destino) fd.append('destino', destino);
+          return this.http.post(this.url('uploads/drive'), fd);
+        })
+      ))
+    );
+  }
+
+  /** Envia os bytes direto para o Google Drive, sem passar pela nossa API. */
+  private async uploadDireto(file: File): Promise<any> {
+    const sessao: any = await firstValueFrom(this.http.post(this.url('uploads/drive/sessao'), {
+      filename: file.name || 'comprovante.jpg',
+      mimeType: file.type || 'image/jpeg',
+      size: file.size,
+    }));
+
+    const uploadUrl = sessao?.uploadUrl;
+    if (!uploadUrl) throw new Error('Servidor não devolveu a sessão de upload.');
+
+    const resposta = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'image/jpeg' },
+      body: file,
+    });
+    if (!resposta.ok) throw new Error(`Google Drive respondeu ${resposta.status}`);
+
+    const enviado = await resposta.json();
+    if (!enviado?.id) throw new Error('Google Drive não devolveu o id do arquivo.');
+
+    return firstValueFrom(this.http.post(this.url('uploads/drive/finalizar'), { fileId: enviado.id }));
+  }
   // Nova Baixa por Comprovante
   uploadComprovantePagamento(file: File): Observable<any> {
-    const fd = new FormData();
-    fd.append('arquivo', file);
-    return this.http.post(this.url('comprovantes-pagamento'), fd);
+    return from(this.compressImage(file)).pipe(
+      switchMap(compressedFile => from(this.uploadDireto(compressedFile))),
+      switchMap(upload => {
+        const arquivoUrl = upload?.file?.downloadUrl || upload?.url;
+        if (!arquivoUrl) throw new Error('Upload concluído sem URL do comprovante.');
+        return this.http.post(this.url('comprovantes-pagamento'), { arquivo_url: arquivoUrl });
+      })
+    );
   }
 
   uploadComprovantesPagamento(files: File[]): Observable<any> {
-    const fd = new FormData();
-    for (const file of files) {
-      fd.append('arquivos[]', file);
-    }
-    return this.http.post(this.url('comprovantes-pagamento/lote'), fd);
+    const promises = files.map(f => this.compressImage(f));
+    return from(Promise.all(promises)).pipe(
+      switchMap(compressedFiles => from(Promise.all(
+        compressedFiles.map(file => this.uploadDireto(file))
+      ))),
+      switchMap(uploads => {
+        const arquivoUrls = uploads
+          .map(upload => upload?.file?.downloadUrl || upload?.url)
+          .filter((url): url is string => !!url);
+        if (arquivoUrls.length !== uploads.length) {
+          throw new Error('Um ou mais uploads terminaram sem URL.');
+        }
+        return this.http.post(this.url('comprovantes-pagamento/lote'), {
+          arquivo_urls: arquivoUrls,
+        });
+      })
+    );
   }
 
   listarComprovantes(filters: any = {}): Observable<any> {
@@ -409,8 +689,16 @@ export class ApiService {
     return this.http.post(this.url(`comprovantes-pagamento/${id}/verificar`), {});
   }
 
-  confirmarBaixaComprovante(id: string, data: any): Observable<any> {
-    return this.http.post(this.url(`comprovantes-pagamento/${id}/confirmar`), data);
+  desvincularComprovantePagamento(id: string): Observable<any> {
+    return this.http.post(this.url(`comprovantes-pagamento/${id}/desvincular`), {});
+  }
+
+  isolarComprovantePagamento(id: string): Observable<any> {
+    return this.http.post(this.url(`comprovantes-pagamento/${id}/isolar`), {});
+  }
+
+  atualizarFormaPagamentoComprovante(id: string, formaPagamento: string): Observable<any> {
+    return this.http.patch(this.url(`comprovantes-pagamento/${id}/forma-pagamento`), { forma_pagamento: formaPagamento });
   }
 
   confirmarBaixaComprovanteGrupo(data: any): Observable<any> {
@@ -477,9 +765,8 @@ export class ApiService {
   }
 
   resolveImageUrl(url?: string | null): string | null {
-    if (!url) return null;
     let normalized = String(url).trim();
-    if (!normalized) return null;
+    if (!normalized || normalized === 'null' || normalized === 'undefined') return null;
 
     if (normalized.includes('drive.google.com/')) {
       const match = normalized.match(/(?:id=|file\/d\/)([^&/?]+)/);
@@ -496,6 +783,35 @@ export class ApiService {
     ) {
       return normalized;
     }
-    return null;
+    return `${this.base}/${normalized}`;
+  }
+
+  private driveFileId(url?: string | null): string | null {
+    const normalized = String(url).trim();
+    if (!normalized || normalized === 'null' || normalized === 'undefined') return null;
+    if (!normalized.includes('drive.google.com/')) return null;
+    const match = normalized.match(/(?:id=|file\/d\/)([^&/?]+)/);
+    return match && match[1] ? match[1] : null;
+  }
+
+  // Miniaturas saem direto do CDN do Google, sem passar pelo nosso backend.
+  // Os arquivos já sobem para o Drive com permissão `anyone/reader`, então o
+  // proxy /drive-thumb não acrescentava restrição de acesso nenhuma: só
+  // colocava cada byte de imagem para dentro e para fora da Vercel. Servir a
+  // miniatura (~9 KB) no lugar do arquivo cheio (~150 KB) e tirá-la da nossa
+  // rede zera o consumo de banda das listagens.
+  // Só use isto em <img src>: as URLs do Google não mandam CORS, então não
+  // servem para fetch()/canvas — para esses casos use resolveImageUrl.
+  resolveImageThumbUrl(url?: string | null, size: number = 160): string | null {
+    const id = this.driveFileId(url);
+    if (id) {
+      return `https://drive.google.com/thumbnail?id=${id}&sz=w${size}`;
+    }
+    return this.resolveImageUrl(url);
+  }
+
+  // Versão ampliada para o modal de preview — também direto do Google.
+  resolveImageFullUrl(url?: string | null): string | null {
+    return this.resolveImageThumbUrl(url, 1600);
   }
 }

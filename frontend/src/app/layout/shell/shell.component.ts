@@ -3,13 +3,18 @@ import { Component, signal, inject } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../core/services/auth.service';
+import { ApiService } from '../../core/services/api.service';
+import { forkJoin } from 'rxjs';
+import { finalize } from 'rxjs/operators';
 
 interface NavItem {
   label: string;
   icon: string;
+  image?: string;
   route: string;
   group: NavGroup;
   adminOnly?: boolean;
+  allowedRoles?: string[];
   privateOnly?: boolean;
 }
 
@@ -31,11 +36,12 @@ interface VisibleNavGroup {
           <span class="logo-icon">⛽</span>
           <span>Abastecimento Vipe</span>
         </div>
-        <select class="branch-select mobile-branch" [value]="filialAtual()" (change)="trocarFilial($any($event.target).value)">
+        <select class="branch-select mobile-branch" [value]="filialSelecionada()" (change)="filialSelecionada.set($any($event.target).value)">
           @for (filial of filiaisAcesso(); track filial) {
             <option [value]="filial">{{ filial }}</option>
           }
         </select>
+        <button class="branch-apply-btn mobile-apply" type="button" [disabled]="atualizandoFilial()" (click)="trocarFilial()">Trocar</button>
         <button class="logout-btn" (click)="auth.logout()" title="Sair">⏻</button>
       </header>
 
@@ -69,7 +75,7 @@ interface VisibleNavGroup {
               <div class="nav-group-items">
                 @for (item of group.items; track item.route) {
                   <a [routerLink]="item.route" routerLinkActive="active" class="nav-item">
-                    <span class="nav-icon">{{ item.icon }}</span>
+                    <span class="nav-icon">@if (item.image) {<img [src]="item.image" alt="">} @else {{{ item.icon }}}</span>
                     <span class="nav-label">{{ item.label }}</span>
                   </a>
                 }
@@ -100,11 +106,14 @@ interface VisibleNavGroup {
           </div>
           <label class="branch-control">
             <span>Trocar filial</span>
-            <select class="branch-select" [value]="filialAtual()" (change)="trocarFilial($any($event.target).value)">
+            <select class="branch-select" [value]="filialSelecionada()" (change)="filialSelecionada.set($any($event.target).value)">
               @for (filial of filiaisAcesso(); track filial) {
                 <option [value]="filial">{{ filial }}</option>
               }
             </select>
+            <button class="branch-apply-btn" type="button" [disabled]="atualizandoFilial() || filialSelecionada() === filialAtual()" (click)="trocarFilial()">
+              {{ atualizandoFilial() ? 'Atualizando...' : 'Trocar' }}
+            </button>
           </label>
         </div>
         @if (routeReady()) {
@@ -304,7 +313,8 @@ interface VisibleNavGroup {
     }
     .nav-item.active .nav-icon { color: #D19700; }
 
-    .nav-icon { font-size: 16px; flex-shrink: 0; width: 24px; text-align: center; }
+    .nav-icon { font-size: 16px; flex-shrink: 0; width: 24px; height:24px; display:grid; place-items:center; text-align: center; }
+    .nav-icon img { width:30px; height:30px; object-fit:contain; }
     .nav-label { font-size: 14px; font-weight: 600; color: #1F2937; }
     .sidebar-collapsed .nav-group { gap: 4px; }
     .sidebar-collapsed .nav-group-toggle { display: none; }
@@ -433,6 +443,29 @@ interface VisibleNavGroup {
     .branch-select:focus {
       border-color: #2563EB;
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .branch-apply-btn {
+      height: 38px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 16px;
+      background: #2563EB;
+      color: #FFFFFF;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .branch-apply-btn:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+
+    .mobile-apply {
+      height: 34px;
+      padding: 0 10px;
+      font-size: 11px;
     }
 
     .mobile-topbar {
@@ -597,9 +630,12 @@ interface VisibleNavGroup {
 })
 export class ShellComponent {
   auth = inject(AuthService);
+  private api = inject(ApiService);
   private router = inject(Router);
   sidebarCollapsed = signal(false);
   routeReady = signal(true);
+  atualizandoFilial = signal(false);
+  filialSelecionada = signal(this.auth.getGaragem() ?? this.auth.getFiliaisAcesso()[0] ?? 'Matriz');
   collapsedNavGroups = signal<Record<NavGroup, boolean>>({
     Principal: false,
     Financeiro: true,
@@ -613,24 +649,30 @@ export class ShellComponent {
   navItems: NavItem[] = [
     { label: 'Dashboard',        icon: '📊', route: '/dashboard', group: 'Principal', adminOnly: true },
     { label: 'Gráficos',         icon: '📉', route: '/graficos', group: 'Principal', adminOnly: true },
+    { label: 'Variação Entradas/Saídas', icon: '🔄', route: '/variacao-entradas-saidas', group: 'Principal', allowedRoles: ['admin', 'visualizador'] },
+    { label: 'Pergunte ao Pingo', icon: '', image: 'assets/pingo-mascote.png', route: '/dashboard-operacional', group: 'Principal', adminOnly: true },
     { label: 'Abastecimentos',   icon: '⛽', route: '/abastecimentos', group: 'Principal' },
     { label: 'Histórico do Tanque', icon: '🧪', route: '/tanques-privado', group: 'Principal', adminOnly: true },
-    { label: 'Lançar no Sofit',   icon: '↗', route: '/lancar-sofit', group: 'Principal' },
+    { label: 'Integração Atua',  icon: '🔗', route: '/integracao-atua', group: 'Principal', allowedRoles: ['admin', 'visualizador'] },
     { label: 'Entrada de Notas', icon: '🧾', route: '/entrada-notas', group: 'Principal' },
     { label: 'Baixa',            icon: '✅', route: '/baixa', group: 'Financeiro', adminOnly: true },
     { label: 'Baixa por Comprovante', icon: '📲', route: '/nova-baixa-comprovante', group: 'Financeiro', adminOnly: true },
+    { label: 'Relatório Detalhado de Baixas', icon: '🧾', route: '/conferencia-recebedores', group: 'Financeiro', adminOnly: true },
     { label: 'Despesas',         icon: '💸', route: '/despesas-avulsas', group: 'Financeiro', adminOnly: true },
     { label: 'Conciliação Bancária', icon: '🏦', route: '/conciliacao-bancaria', group: 'Financeiro', adminOnly: true },
     { label: 'Relatórios',       icon: '📈', route: '/relatorios', group: 'Financeiro', adminOnly: true },
+    { label: 'Faturamento Mensal', icon: '📑', route: '/relatorio-faturamento', group: 'Financeiro', adminOnly: true },
     { label: 'Balancete',        icon: '▦', route: '/balancete-privado', group: 'Financeiro', adminOnly: true },
     { label: 'Proprietários',    icon: '🏢', route: '/proprietarios', group: 'Cadastros' },
     { label: 'Veículos',         icon: '🚗', route: '/veiculos', group: 'Cadastros' },
-    { label: 'Transferir Veículo', icon: '⇄', route: '/transferencia-veiculo', group: 'Cadastros', adminOnly: true },
+    { label: 'Transferir Veículo', icon: '⇄', route: '/transferencia-veiculo', group: 'Cadastros', allowedRoles: ['admin', 'operador'] },
     { label: 'Motoristas',       icon: '👤', route: '/motoristas', group: 'Cadastros' },
     { label: 'Combustível',      icon: '💲', route: '/valores-combustivel', group: 'Cadastros', adminOnly: true },
     { label: 'Usuários',         icon: '🔐', route: '/usuarios', group: 'Cadastros', adminOnly: true },
     { label: 'Auditoria',        icon: '🔎', route: '/auditoria-abastecimentos', group: 'Controle', adminOnly: true },
+    { label: 'Conferência Vipe', icon: '📋', route: '/conferencia-vipe', group: 'Controle', allowedRoles: ['admin', 'visualizador'] },
     { label: 'Encerrantes',      icon: '⏱', route: '/encerrantes-bomba', group: 'Controle', adminOnly: true },
+    { label: 'Encerrante diário', icon: '📏', route: '/encerrante-diario', group: 'Controle', allowedRoles: ['admin', 'operador'] },
     { label: 'Controle Encerrante', icon: '🛢', route: '/controle-encerrante-privado', group: 'Controle', adminOnly: true, privateOnly: true },
     { label: 'Histórico',        icon: '🕘', route: '/historico-alteracoes', group: 'Sistema', adminOnly: true },
     { label: 'Erros do App',     icon: '⚠', route: '/app-erros', group: 'Sistema', adminOnly: true },
@@ -640,6 +682,7 @@ export class ShellComponent {
   visibleNavItems() {
     return this.navItems.filter(i => {
       if (i.adminOnly && !this.auth.isAdmin()) return false;
+      if (i.allowedRoles && !i.allowedRoles.includes(String(this.auth.currentUser()?.tipo ?? '').toLowerCase())) return false;
       if (i.privateOnly && !this.canAccessPrivateScreens()) return false;
       return true;
     });
@@ -698,11 +741,24 @@ export class ShellComponent {
     return this.filiaisAcesso()[0] ?? 'Matriz';
   }
 
-  trocarFilial(filial: string) {
-    if (!this.auth.canAccessGaragem(filial) || filial === this.auth.getGaragem()) return;
-    this.auth.setGaragem(filial);
+  trocarFilial() {
+    const filial = this.filialSelecionada();
+    if (!this.auth.canAccessGaragem(filial) || filial === this.auth.getGaragem() || this.atualizandoFilial()) return;
+
+    this.atualizandoFilial.set(true);
     this.routeReady.set(false);
-    window.setTimeout(() => this.routeReady.set(true), 0);
+    this.api.clearReferenceCaches();
+    this.auth.setGaragem(filial);
+
+    forkJoin({
+      proprietarios: this.api.getProprietariosAll(),
+      veiculos: this.api.getVeiculosAll(),
+    }).pipe(
+      finalize(() => {
+        this.atualizandoFilial.set(false);
+        this.routeReady.set(true);
+      }),
+    ).subscribe({ error: () => undefined });
   }
 
   trocarGaragem() {
