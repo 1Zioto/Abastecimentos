@@ -8,6 +8,7 @@ Este arquivo registra as versões e os `versionCodes` (códigos de versão) já 
 | 2.0.26 | 6001 | Tentativa de upload |
 | 2.0.37 | 6014 | Correção de desempenho e anexos no lançamento de notas |
 | 2.0.38 | 6015 | Painel administrativo de conferência Vipe por XLSX |
+| 2.0.52 | 6031 | App Bundle (AAB) com Central de Notificações Críticas para Administradores (Play Store) |
 | 2.0.51 | 6030 | Central de Notificações Críticas para Administradores (com registro de quando foi vista e usuário logado) |
 | 2.0.49 | 6027 | Atualização de versão para publicação na Play Store (6026 já utilizado) |
 | 2.0.48 | 6026 | Campo 'Valor do frete/ L' na Tabela de Preços e cálculo dinâmico de frete (já utilizado na Play Store) |
