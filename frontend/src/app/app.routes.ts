@@ -147,6 +147,11 @@ export const routes: Routes = [
         loadComponent: () => import('./features/usuarios/usuarios.component').then(m => m.UsuariosComponent)
       },
       {
+        path: 'notificacoes-criticas',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/notificacoes-criticas/notificacoes-criticas.component').then(m => m.NotificacoesCriticasComponent)
+      },
+      {
         path: 'historico-alteracoes',
         canActivate: [adminGuard],
         loadComponent: () => import('./features/historico-alteracoes/historico-alteracoes.component').then(m => m.HistoricoAlteracoesComponent)

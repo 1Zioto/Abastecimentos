@@ -418,6 +418,12 @@ export class ApiService {
       data,
     );
   }
+  getCentavosConfig(): Observable<{ configurar_centavos: boolean; data_inicio: string }> {
+    return this.http.get<{ configurar_centavos: boolean; data_inicio: string }>(this.url('configuracoes/centavos'));
+  }
+  updateCentavosConfig(data: { configurar_centavos: boolean }): Observable<{ configurar_centavos: boolean; data_inicio: string }> {
+    return this.http.put<{ configurar_centavos: boolean; data_inicio: string }>(this.url('configuracoes/centavos'), data);
+  }
   getEncerrantesBomba(filters: any = {}): Observable<PaginatedResponse<EncerranteBomba>> {
     return this.http.get<PaginatedResponse<EncerranteBomba>>(this.url('encerrantes-bomba'), {
       params: this.toParams(this.withGaragem(filters)),
@@ -813,5 +819,29 @@ export class ApiService {
   // Versão ampliada para o modal de preview — também direto do Google.
   resolveImageFullUrl(url?: string | null): string | null {
     return this.resolveImageThumbUrl(url, 1600);
+  }
+
+  // Notificações críticas (somente admin — monitora todas as filiais do admin)
+  listarNotificacoesCriticas(filters: Record<string, any> = {}): Observable<any> {
+    return this.http.get(this.url('notificacoes-criticas'), { params: this.toParams(filters) });
+  }
+
+  resumoNotificacoesCriticas(params: { after_id?: number; check_tanques?: number } = {}): Observable<any> {
+    return this.http.get(this.url('notificacoes-criticas/resumo'), { params: this.toParams(params) });
+  }
+
+  marcarNotificacaoCriticaVista(id: number, dispositivo = 'Web Admin'): Observable<any> {
+    return this.http.post(this.url(`notificacoes-criticas/${id}/marcar-vista`), { dispositivo }).pipe(
+      tap(() => window.dispatchEvent(new CustomEvent('notificacoes-criticas:updated')))
+    );
+  }
+
+  marcarNotificacoesCriticasVistasLote(payload: { ids?: number[]; todas?: boolean; dispositivo?: string }): Observable<any> {
+    return this.http.post(this.url('notificacoes-criticas/marcar-vistas'), {
+      dispositivo: 'Web Admin',
+      ...payload,
+    }).pipe(
+      tap(() => window.dispatchEvent(new CustomEvent('notificacoes-criticas:updated')))
+    );
   }
 }

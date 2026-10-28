@@ -1,9 +1,10 @@
 // src/app/layout/shell/shell.component.ts
-import { Component, signal, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, inject } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../core/services/auth.service';
 import { ApiService } from '../../core/services/api.service';
+import { ToastrService } from 'ngx-toastr';
 import { forkJoin } from 'rxjs';
 import { finalize } from 'rxjs/operators';
 
@@ -42,6 +43,20 @@ interface VisibleNavGroup {
           }
         </select>
         <button class="branch-apply-btn mobile-apply" type="button" [disabled]="atualizandoFilial()" (click)="trocarFilial()">Trocar</button>
+        @if (auth.isAdmin()) {
+          <button
+            type="button"
+            class="notif-bell-btn mobile-bell"
+            [class.has-unread]="naoVistasCriticas() > 0"
+            (click)="abrirNotificacoesCriticas()"
+            title="Notificações Críticas (Admin)"
+          >
+            <span>🔔</span>
+            @if (naoVistasCriticas() > 0) {
+              <span class="notif-bell-badge">{{ naoVistasCriticas() > 99 ? '99+' : naoVistasCriticas() }}</span>
+            }
+          </button>
+        }
         <button class="logout-btn" (click)="auth.logout()" title="Sair">⏻</button>
       </header>
 
@@ -77,6 +92,9 @@ interface VisibleNavGroup {
                   <a [routerLink]="item.route" routerLinkActive="active" class="nav-item">
                     <span class="nav-icon">@if (item.image) {<img [src]="item.image" alt="">} @else {{{ item.icon }}}</span>
                     <span class="nav-label">{{ item.label }}</span>
+                    @if (item.route === '/notificacoes-criticas' && naoVistasCriticas() > 0) {
+                      <span class="nav-unread-pill">{{ naoVistasCriticas() > 99 ? '99+' : naoVistasCriticas() }}</span>
+                    }
                   </a>
                 }
               </div>
@@ -104,17 +122,34 @@ interface VisibleNavGroup {
             <span class="topbar-label">Filial atual</span>
             <strong>{{ filialAtual() }}</strong>
           </div>
-          <label class="branch-control">
-            <span>Trocar filial</span>
-            <select class="branch-select" [value]="filialSelecionada()" (change)="filialSelecionada.set($any($event.target).value)">
-              @for (filial of filiaisAcesso(); track filial) {
-                <option [value]="filial">{{ filial }}</option>
-              }
-            </select>
-            <button class="branch-apply-btn" type="button" [disabled]="atualizandoFilial() || filialSelecionada() === filialAtual()" (click)="trocarFilial()">
-              {{ atualizandoFilial() ? 'Atualizando...' : 'Trocar' }}
-            </button>
-          </label>
+          <div class="topbar-right-actions">
+            @if (auth.isAdmin()) {
+              <button
+                type="button"
+                class="notif-bell-btn"
+                [class.has-unread]="naoVistasCriticas() > 0"
+                (click)="abrirNotificacoesCriticas()"
+                title="Central de Notificações Críticas (Exclusivo Administrador)"
+              >
+                <span class="bell-emoji">🔔</span>
+                <span class="bell-text">Alertas Críticos</span>
+                @if (naoVistasCriticas() > 0) {
+                  <span class="notif-bell-badge">{{ naoVistasCriticas() > 99 ? '99+' : naoVistasCriticas() }}</span>
+                }
+              </button>
+            }
+            <label class="branch-control">
+              <span>Trocar filial</span>
+              <select class="branch-select" [value]="filialSelecionada()" (change)="filialSelecionada.set($any($event.target).value)">
+                @for (filial of filiaisAcesso(); track filial) {
+                  <option [value]="filial">{{ filial }}</option>
+                }
+              </select>
+              <button class="branch-apply-btn" type="button" [disabled]="atualizandoFilial() || filialSelecionada() === filialAtual()" (click)="trocarFilial()">
+                {{ atualizandoFilial() ? 'Atualizando...' : 'Trocar' }}
+              </button>
+            </label>
+          </div>
         </div>
         @if (routeReady()) {
           <router-outlet />
@@ -426,6 +461,78 @@ interface VisibleNavGroup {
       gap: 10px;
     }
 
+    .topbar-right-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .notif-bell-btn {
+      position: relative;
+      height: 38px;
+      border: 1px solid #E2E8F0;
+      border-radius: 10px;
+      background: #FFFFFF;
+      color: #1E293B;
+      padding: 0 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .notif-bell-btn:hover {
+      background: #F8FAFC;
+      border-color: #CBD5E1;
+    }
+
+    .notif-bell-btn.has-unread {
+      border-color: #FCA5A5;
+      background: #FEF2F2;
+      color: #991B1B;
+    }
+
+    .notif-bell-badge {
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #DC2626;
+      color: #FFFFFF;
+      font-size: 11px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mobile-bell {
+      height: 34px;
+      padding: 0 8px;
+    }
+
+    .nav-unread-pill {
+      margin-left: auto;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #DC2626;
+      color: #FFFFFF;
+      font-size: 11px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sidebar-collapsed .nav-unread-pill {
+      display: none;
+    }
+
     .branch-select {
       min-width: 150px;
       height: 38px;
@@ -628,13 +735,19 @@ interface VisibleNavGroup {
     }
   `]
 })
-export class ShellComponent {
+export class ShellComponent implements OnInit, OnDestroy {
   auth = inject(AuthService);
   private api = inject(ApiService);
   private router = inject(Router);
+  private toastr = inject(ToastrService);
   sidebarCollapsed = signal(false);
   routeReady = signal(true);
   atualizandoFilial = signal(false);
+  naoVistasCriticas = signal(0);
+  private ultimoIdNotificado = 0;
+  private tanquesAlertadosSessao = new Set<string>();
+  private pollTimer?: ReturnType<typeof setInterval>;
+  private readonly onCriticasUpdated = () => this.carregarResumoCritico(false);
   filialSelecionada = signal(this.auth.getGaragem() ?? this.auth.getFiliaisAcesso()[0] ?? 'Matriz');
   collapsedNavGroups = signal<Record<NavGroup, boolean>>({
     Principal: false,
@@ -674,10 +787,85 @@ export class ShellComponent {
     { label: 'Encerrantes',      icon: '⏱', route: '/encerrantes-bomba', group: 'Controle', adminOnly: true },
     { label: 'Encerrante diário', icon: '📏', route: '/encerrante-diario', group: 'Controle', allowedRoles: ['admin', 'operador'] },
     { label: 'Controle Encerrante', icon: '🛢', route: '/controle-encerrante-privado', group: 'Controle', adminOnly: true, privateOnly: true },
+    { label: 'Notificações Críticas', icon: '🔔', route: '/notificacoes-criticas', group: 'Sistema', adminOnly: true },
     { label: 'Histórico',        icon: '🕘', route: '/historico-alteracoes', group: 'Sistema', adminOnly: true },
     { label: 'Erros do App',     icon: '⚠', route: '/app-erros', group: 'Sistema', adminOnly: true },
     { label: 'Configurações',    icon: '⚙', route: '/configuracoes', group: 'Sistema', adminOnly: true },
   ];
+
+  ngOnInit(): void {
+    if (this.auth.isAdmin()) {
+      window.addEventListener('notificacoes-criticas:updated', this.onCriticasUpdated);
+      this.carregarResumoCritico(true);
+      this.pollTimer = setInterval(() => {
+        if (this.auth.isAdmin()) {
+          this.carregarResumoCritico(true);
+        }
+      }, 5 * 60 * 1000);
+    }
+  }
+
+  ngOnDestroy(): void {
+    window.removeEventListener('notificacoes-criticas:updated', this.onCriticasUpdated);
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+    }
+  }
+
+  abrirNotificacoesCriticas(): void {
+    this.router.navigate(['/notificacoes-criticas']);
+  }
+
+  carregarResumoCritico(checkTanques: boolean): void {
+    if (!this.auth.isAdmin()) return;
+    this.api.resumoNotificacoesCriticas({
+      after_id: this.ultimoIdNotificado,
+      check_tanques: checkTanques ? 1 : 0,
+    }).subscribe({
+      next: (res: any) => {
+        const count = Number(res?.nao_vistas_count ?? 0);
+        this.naoVistasCriticas.set(count);
+
+        // Verifica tanques de todas as filiais do admin independente da filial selecionada
+        if (Array.isArray(res?.tanques)) {
+          for (const t of res.tanques) {
+            const loc = String(t?.local || '');
+            const saldo = Number(t?.saldo_litros ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            if (t?.zerado && !this.tanquesAlertadosSessao.has(`zero_${loc}`)) {
+              this.tanquesAlertadosSessao.add(`zero_${loc}`);
+              this.toastr.error(
+                `O tanque da filial ${loc} atingiu ${saldo} L (ZERADO).`,
+                `🚨 Tanque Zerado — ${loc}`,
+                { timeOut: 10000 }
+              );
+            } else if (!t?.zerado && t?.critico && !this.tanquesAlertadosSessao.has(`crit_${loc}`)) {
+              this.tanquesAlertadosSessao.add(`crit_${loc}`);
+              this.toastr.warning(
+                `O tanque da filial ${loc} está com ${saldo} L (< 2.000 L).`,
+                `⚠ Estoque Crítico — ${loc}`,
+                { timeOut: 8000 }
+              );
+            }
+          }
+        }
+
+        const recentes = Array.isArray(res?.recentes_nao_vistas) ? res.recentes_nao_vistas : [];
+        if (recentes.length > 0) {
+          const maiorId = Math.max(...recentes.map((x: any) => Number(x?.id ?? 0)));
+          if (this.ultimoIdNotificado > 0 && maiorId > this.ultimoIdNotificado) {
+            const maisRecente = recentes[0];
+            if (maisRecente?.titulo) {
+              this.toastr.warning(maisRecente.mensagem || '', `🔔 ${maisRecente.titulo}`, { timeOut: 7000 });
+            }
+          }
+          if (maiorId > this.ultimoIdNotificado) {
+            this.ultimoIdNotificado = maiorId;
+          }
+        }
+      },
+      error: () => undefined,
+    });
+  }
 
   visibleNavItems() {
     return this.navItems.filter(i => {
