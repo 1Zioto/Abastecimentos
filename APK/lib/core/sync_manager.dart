@@ -1,6 +1,8 @@
 import 'api_client.dart';
+import 'entrada_nota_validation.dart';
 import 'app_error_reporter.dart';
 import 'local_db.dart';
+import 'local_notifications.dart';
 import 'models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
@@ -32,7 +34,79 @@ class SyncManager {
   final LocalDb db;
   final AppErrorReporter? errorReporter;
 
+  /// Preenchidos pelo AppState (evita import circular com auth): permitem
+  /// decidir se o usuário logado deve receber notificação de novos
+  /// abastecimentos baixados na sincronização.
+  String? Function()? currentUserTipo;
+  String? Function()? currentUserNome;
+
   SyncManager(this.api, this.db, {this.errorReporter});
+
+  /// Entre os abastecimentos baixados no sync incremental, retorna os que
+  /// são novos no aparelho E foram registrados por outra pessoa — os que
+  /// merecem notificação para o administrador logado.
+  Future<List<Abastecimento>> _detectarAbastecimentosNovos(
+    List<Abastecimento> baixados,
+  ) async {
+    try {
+      final tipo = (currentUserTipo?.call() ?? '').toLowerCase().trim();
+      if (tipo != 'admin' || baixados.isEmpty) return const [];
+
+      final ids = baixados
+          .map((a) => (a.idAbastecimento ?? '').trim())
+          .where((id) => id.isNotEmpty)
+          .toList();
+      if (ids.isEmpty) return const [];
+
+      final existentes = await db.abastecimentoIdsExistentes(ids);
+      final meuNome = (currentUserNome?.call() ?? '').toLowerCase().trim();
+
+      return baixados.where((a) {
+        final id = (a.idAbastecimento ?? '').trim();
+        if (id.isEmpty || existentes.contains(id)) return false;
+        final responsavel = (a.responsavel ?? '').toLowerCase().trim();
+        // Não notifica os próprios registros do admin.
+        return meuNome.isEmpty || responsavel != meuNome;
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _notificarNovosAbastecimentos(
+    List<Abastecimento> novos,
+  ) async {
+    if (novos.isEmpty) return;
+    try {
+      if (novos.length == 1) {
+        final a = novos.first;
+        final placa = (a.veiculoPlaca ?? '').trim();
+        final litros = a.quantidadeLitros.toStringAsFixed(1);
+        final quem = (a.responsavel ?? '').trim();
+        await LocalNotifications.instance.mostrar(
+          titulo: 'Novo abastecimento',
+          corpo: [
+            if (placa.isNotEmpty) placa,
+            '$litros L',
+            if (quem.isNotEmpty) 'por $quem',
+          ].join(' — '),
+        );
+        return;
+      }
+
+      final placas = novos
+          .map((a) => (a.veiculoPlaca ?? '').trim())
+          .where((p) => p.isNotEmpty)
+          .take(4)
+          .join(', ');
+      await LocalNotifications.instance.mostrar(
+        titulo: '${novos.length} novos abastecimentos',
+        corpo: placas.isEmpty ? 'Abra o app para ver os detalhes.' : placas,
+      );
+    } catch (_) {
+      // Notificação nunca pode quebrar a sincronização.
+    }
+  }
 
   Future<int> _runDownloadStep(
     SyncReport r, {
@@ -142,7 +216,7 @@ class SyncManager {
       // Depois de enviar tudo o que estava pendente no aparelho, a base local
       // e recarregada do online para garantir que os cadastros e lancamentos
       // fiquem no mesmo estado do servidor.
-      final downloadFullDatabase = !forceFull;
+      final downloadFullDatabase = forceFull;
       onProgress?.call('Baixando proprietarios...');
       r.baixados += await _runDownloadStep(
         r,
@@ -250,7 +324,9 @@ class SyncManager {
           },
           onUpsert: (rows) async {
             final list = rows.map(Abastecimento.fromJson).toList();
+            final novos = await _detectarAbastecimentosNovos(list);
             await db.upsertAbastecimentosRemotos(list);
+            await _notificarNovosAbastecimentos(novos);
           },
         ),
       );
@@ -575,22 +651,51 @@ class SyncManager {
           '_client_request_id': item.uuid ?? 'queue-${item.id}',
         });
         return null;
+      case 'encerrante_diario':
+        final daily = Map<String, dynamic>.from(item.payload);
+        if (daily['_registro_login'] != api.auth.login) {
+          throw const FormatException(
+              'Entre com o usuário que registrou este encerrante para sincronizar.');
+        }
+        for (final key in ['foto_regua', 'foto_medidor']) {
+          await _uploadLocalFiles(daily, [key]);
+          await db.updateQueuePayload(item.id, daily);
+        }
+        final result = await api.post('/encerrantes-diarios', daily);
+        if (result is! Map || result['id'] == null) {
+          throw const FormatException(
+              'Servidor não confirmou o encerrante diário.');
+        }
+        return result['id'].toString();
       case 'entrada_notas':
+        if (item.action == 'create' || item.action == 'update') {
+          validateEntradaNotaNumber(item.payload['numero_nota_fiscal']);
+        }
         final payload = await _prepareEntradaNotaPayload(item.payload);
+        if (item.action == 'create' || item.action == 'update') {
+          payload['numero_nota_fiscal'] =
+              validateEntradaNotaNumber(payload['numero_nota_fiscal']);
+        }
         if (item.action == 'create') {
           final resp = await api.post('/entrada-notas', {
             ...payload,
             '_client_request_id': item.uuid ?? 'queue-${item.id}',
           });
           if (resp is Map && resp['id_financeiro'] != null) {
+            verifyEntradaNotaResponse(
+                resp, payload['numero_nota_fiscal'].toString());
             final remoteId = resp['id_financeiro'].toString();
             await _analyzeEntradaNotaIfNeeded(remoteId, payload, item.id);
             return remoteId;
           }
-          return null;
+          throw const FormatException(
+              'Servidor não confirmou o cadastro da nota.');
         }
         if (item.action == 'update' && item.remoteId != null) {
-          await api.put('/entrada-notas/${item.remoteId}', payload);
+          final resp =
+              await api.put('/entrada-notas/${item.remoteId}', payload);
+          verifyEntradaNotaResponse(
+              resp, payload['numero_nota_fiscal'].toString());
           await _analyzeEntradaNotaIfNeeded(item.remoteId!, payload, item.id);
           return item.remoteId;
         }
@@ -740,7 +845,8 @@ class SyncManager {
     return payload;
   }
 
-  Future<Map<String, dynamic>> _prepareProprietarioPayload(SyncItem item) async {
+  Future<Map<String, dynamic>> _prepareProprietarioPayload(
+      SyncItem item) async {
     final payload = Map<String, dynamic>.from(item.payload);
     final localAtual = payload['local']?.toString().trim();
     if (localAtual == null || localAtual.isEmpty) {
@@ -780,7 +886,11 @@ class SyncManager {
       return;
     }
 
-    final remoteId = await db.resolveRemoteIdForLocalReference(
+    var remoteId = await db.resolveRemoteIdForLocalReference(
+      entity: 'proprietario',
+      localId: ownerId,
+    );
+    remoteId ??= await _sendLocalReferenceNow(
       entity: 'proprietario',
       localId: ownerId,
     );
@@ -805,6 +915,46 @@ class SyncManager {
     }
     throw Exception(
         'Proprietario local nao encontrado para sincronizar $parentLabel ($ownerId). Abra o cadastro, selecione a empresa e salve novamente.');
+  }
+
+  Future<String?> _sendLocalReferenceNow({
+    required String entity,
+    required String localId,
+  }) async {
+    if (!localId.startsWith('local_')) return localId;
+
+    var remoteId = await db.resolveRemoteIdForLocalReference(
+      entity: entity,
+      localId: localId,
+    );
+    if (remoteId != null && remoteId.trim().isNotEmpty) return remoteId;
+
+    await db.ensureCreateQueuedForLocalReference(
+      entity: entity,
+      localId: localId,
+    );
+    final queue = await db.listQueue();
+    SyncItem? item;
+    for (final candidate in queue) {
+      if (candidate.entity == entity &&
+          candidate.action == 'create' &&
+          candidate.uuid == localId) {
+        item = candidate;
+        break;
+      }
+    }
+    if (item == null) return null;
+
+    final sentId = await _sendItem(item);
+    remoteId = sentId?.toString().trim();
+    if (remoteId == null || remoteId.isEmpty) return null;
+    await db.markQueueSuccess(item, remoteId);
+    await db.addSyncLog(
+      level: 'info',
+      message: 'Dependencia local sincronizada antes do abastecimento',
+      context: 'entity=$entity localId=$localId remoteId=$remoteId',
+    );
+    return remoteId;
   }
 
   Future<Map<String, dynamic>> _prepareAbastecimentoPayload(
@@ -853,7 +1003,11 @@ class SyncManager {
         return;
       }
 
-      final remoteId = await db.resolveRemoteIdForLocalReference(
+      var remoteId = await db.resolveRemoteIdForLocalReference(
+        entity: entity,
+        localId: localId,
+      );
+      remoteId ??= await _sendLocalReferenceNow(
         entity: entity,
         localId: localId,
       );
@@ -1055,10 +1209,11 @@ class SyncManager {
         throw Exception('Arquivo de imagem não encontrado para "$key": $raw');
       }
 
-      final resp = await api.postMultipartFile(
-        '/uploads/drive',
-        filePath: file.path,
-        fieldName: 'file',
+      final isEntradaNota =
+          key == 'foto_nota' && payload.containsKey('numero_nota_fiscal');
+      final resp = await api.uploadDriveDireto(
+        file.path,
+        compress: !isEntradaNota,
       );
       if (resp is! Map) {
         throw Exception('Upload de "$key" retornou resposta inválida.');

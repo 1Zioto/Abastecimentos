@@ -287,7 +287,7 @@ class BalancetePrivadoController extends Controller
             return $query->whereRaw("LOWER(COALESCE(status, '')) <> 'pago'");
         }
 
-        return $query->whereRaw('COALESCE(baixa_abastecimento, false) = false');
+        return $query->whereRaw('baixa_abastecimento IS NOT TRUE');
     }
 
     private function aplicarFiltroBaixado($query)
@@ -296,7 +296,7 @@ class BalancetePrivadoController extends Controller
             return $query->whereRaw("LOWER(COALESCE(status, '')) = 'pago'");
         }
 
-        return $query->whereRaw('COALESCE(baixa_abastecimento, false) = true');
+        return $query->whereRaw('baixa_abastecimento IS TRUE');
     }
 
     private function filiaisPermitidas(): array

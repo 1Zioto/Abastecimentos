@@ -45,6 +45,39 @@ class ThermalPrinterService {
   static const _nameKey = 'thermal_printer_name';
   static const _addressKey = 'thermal_printer_address';
   static const _autoPrintAbastecimentoKey = 'thermal_auto_print_abastecimento';
+  static const _autoPrintEntradaNotaKey = 'thermal_auto_print_entrada_nota';
+
+  Future<bool> autoPrintEntradaNotaEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoPrintEntradaNotaKey) ?? false;
+  }
+
+  Future<void> saveAutoPrintEntradaNotaEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoPrintEntradaNotaKey, enabled);
+  }
+
+  Future<void> printEntradaNota(EntradaNota item, {bool pending = false}) =>
+      printText(formatEntradaNota(item, pending: pending));
+
+  String formatEntradaNota(EntradaNota item, {bool pending = false}) => [
+        _receiptStart,
+        _center('RECIBO DE ENTRADA DE NOTA', width: 32),
+        '-' * 32,
+        'NOTA: ${item.numeroNotaFiscal ?? '-'}',
+        'DATA/HORA: ${_formatDateTime(item.dataHora ?? item.data)}',
+        'FILIAL: ${item.local ?? '-'}',
+        'FORNECEDOR: ${item.fornecedor ?? '-'}',
+        'RESPONSAVEL: ${item.responsavel ?? '-'}',
+        'COMBUSTIVEL: ${item.tipo ?? '-'}',
+        'LITROS: ${_number(item.quantidade ?? 0, digits: 2)}',
+        'VALOR/LITRO: ${_money(item.valorLitro ?? 0)}',
+        'VALOR TOTAL: ${_money(item.valor ?? 0)}',
+        if (pending) 'PENDENTE DE SINCRONIZACAO',
+        'RECIBO INTERNO - SEM VALOR FISCAL',
+        '-' * 32,
+        _receiptEnd,
+      ].join('\n');
 
   Future<List<ThermalPrinterDevice>> listPairedDevices() async {
     final raw = await _channel.invokeMethod<List<dynamic>>('listPairedDevices');

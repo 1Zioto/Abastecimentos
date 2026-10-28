@@ -30,12 +30,14 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace "com.vipe.abastecimento"
-    compileSdk 36
+    compileSdk 37
     ndkVersion flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+        // Exigido pelo flutter_local_notifications (APIs java.time em minSdk < 26)
+        coreLibraryDesugaringEnabled true
     }
 
     kotlinOptions {
@@ -72,4 +74,8 @@ android {
 
 flutter {
     source '../..'
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }

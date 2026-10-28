@@ -54,9 +54,18 @@ class Abastecimento extends Model
         'valor',
         'placa1',
         'recebedor',
+        'valor_recebedor1',
+        'recebedor2',
+        'valor_recebedor2',
         'observacao',
         'anexo',
         'sync_token_at',
+        'atua_seq',
+        'atua_id',
+        'atua_nr_nota',
+        'atua_caixa',
+        'atua_enviado_em',
+        'atua_erro',
     ];
 
     protected $casts = [
@@ -66,6 +75,8 @@ class Abastecimento extends Model
         'valor_por_litro' => 'decimal:3',
         'valor_total' => 'decimal:2',
         'valor' => 'decimal:2',
+        'valor_recebedor1' => 'decimal:2',
+        'valor_recebedor2' => 'decimal:2',
         'odometro' => 'integer',
         'lancado_sofit' => 'boolean',
         'selecionado' => 'boolean',
@@ -93,12 +104,45 @@ class Abastecimento extends Model
             if (static::supportsSyncToken()) {
                 $model->sync_token_at = now();
             }
+            static::atribuirIdentificadorAtua($model);
         });
         static::updating(function ($model) {
             if (static::supportsSyncToken()) {
                 $model->sync_token_at = now();
             }
         });
+    }
+
+    /**
+     * Identificador sequencial do abastecimento no padrão "Vipe-000000".
+     *
+     * O número da sequência é usado como `nrNota` na integração com a Atua
+     * (que exige inteiro e deduplica por ele), e o texto "Vipe-XXXXXX" vai no
+     * campo descritivo do lançamento. Assim o mesmo abastecimento reenviado
+     * nunca duplica — o número é estável desde a criação.
+     */
+    private static function atribuirIdentificadorAtua($model): void
+    {
+        if (!empty($model->atua_seq)) {
+            return;
+        }
+
+        try {
+            if (!Schema::hasColumn((new static)->getTable(), 'atua_seq')) {
+                return;
+            }
+            $seq = (int) \Illuminate\Support\Facades\DB::selectOne(
+                "SELECT nextval('abastecimentos_atua_seq') AS seq"
+            )->seq;
+            $model->atua_seq = $seq;
+            $model->atua_id = 'Vipe-' . str_pad((string) $seq, 6, '0', STR_PAD_LEFT);
+            // Número enviado à Atua. Igual à sequência no primeiro envio; ganha
+            // um número novo se o lançamento for excluído na Atua e reenviado
+            // (a Atua deduplica por nrNota e ignoraria o mesmo número).
+            $model->atua_nr_nota = $seq;
+        } catch (\Throwable) {
+            // Não pode impedir a gravação do abastecimento.
+        }
     }
 
     private static function supportsSyncToken(): bool

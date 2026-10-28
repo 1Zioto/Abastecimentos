@@ -44,21 +44,34 @@ class AuthStore {
   bool get isAuthenticated => _token != null && _token!.isNotEmpty;
 
   Future<void> load() async {
-    final p = await SharedPreferences.getInstance();
-    _token = p.getString(_prefsToken);
-    _nome = p.getString(_prefsNome);
-    _login = p.getString(_prefsLogin);
-    _tipo = p.getString(_prefsTipo);
-    _id = p.getInt(_prefsId);
-    final expiresAtRaw = p.getString(_prefsTokenExpiresAt);
-    _tokenExpiresAt =
-        expiresAtRaw == null ? null : DateTime.tryParse(expiresAtRaw);
-    _filiaisAcesso = _normalizarFiliais(p.getStringList(_prefsFiliaisAcesso));
-    final filialSalva = p.getString(_prefsFilialAtual);
-    _filialAtual = canAccessFilial(filialSalva)
-        ? _normalizarFilial(filialSalva!)
-        : _filiaisAcesso.first;
-    filialAtualNotifier.value = filialAtual;
+    try {
+      final p = await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 4));
+      _token = p.getString(_prefsToken);
+      _nome = p.getString(_prefsNome);
+      _login = p.getString(_prefsLogin);
+      _tipo = p.getString(_prefsTipo);
+      final rawId = p.get(_prefsId);
+      _id = rawId is int ? rawId : int.tryParse('${rawId ?? ''}');
+      final expiresAtRaw = p.getString(_prefsTokenExpiresAt);
+      _tokenExpiresAt =
+          expiresAtRaw == null ? null : DateTime.tryParse(expiresAtRaw);
+      List<String>? filiaisRaw;
+      try {
+        filiaisRaw = p.getStringList(_prefsFiliaisAcesso);
+      } catch (_) {}
+      _filiaisAcesso = _normalizarFiliais(filiaisRaw);
+      final filialSalva = p.getString(_prefsFilialAtual);
+      _filialAtual = canAccessFilial(filialSalva)
+          ? _normalizarFilial(filialSalva!)
+          : _filiaisAcesso.first;
+      filialAtualNotifier.value = filialAtual;
+    } catch (e) {
+      debugPrint('[AuthStore] Falha ao carregar preferencias: $e');
+      _filiaisAcesso = [...AppConstants.locais];
+      _filialAtual = _filiaisAcesso.first;
+      filialAtualNotifier.value = _filialAtual;
+    }
   }
 
   Future<void> save({

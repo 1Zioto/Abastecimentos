@@ -114,6 +114,35 @@ PROMPT;
             $prompt .= "\n\nOrientação operacional configurada pelo sistema:\n" . $aiOrientation;
         }
 
+        if (str_contains($imageUrl, 'drive.google.com')) {
+            $fileId = null;
+            if (preg_match('/\/file\/d\/([a-zA-Z0-9_-]+)/', $imageUrl, $matches)) {
+                $fileId = $matches[1];
+            } elseif (str_contains($imageUrl, 'id=')) {
+                parse_str(parse_url($imageUrl, PHP_URL_QUERY) ?? '', $query);
+                $fileId = $query['id'] ?? null;
+            }
+
+            if ($fileId) {
+                try {
+                    $driveService = app(\App\Services\GoogleDriveService::class);
+                    $accessToken = $driveService->accessToken();
+                    $fileResponse = Http::withToken($accessToken)
+                        ->timeout(15)
+                        ->get("https://www.googleapis.com/drive/v3/files/{$fileId}?alt=media");
+                    
+                    if ($fileResponse->successful()) {
+                        $contentType = $fileResponse->header('Content-Type') ?: 'image/jpeg';
+                        $base64 = base64_encode($fileResponse->body());
+                        $imageUrl = "data:{$contentType};base64,{$base64}";
+                    }
+                } catch (\Throwable $e) {
+                    // Fallback to direct link if download fails
+                    $imageUrl = "https://drive.google.com/uc?id={$fileId}";
+                }
+            }
+        }
+
         $response = Http::withToken($apiKey)
             ->connectTimeout(10)
             ->timeout(45)

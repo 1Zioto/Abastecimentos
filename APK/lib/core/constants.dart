@@ -6,7 +6,7 @@ class AppConstants {
       'https://backend-seven-gilt-97.vercel.app/api';
 
   static const String appName = 'Abastecimento Vipe';
-  static const String appVersion = '2.0.4';
+  static const String appVersion = '2.0.51';
 
   // ---- valores fixos de dominio ----
   static const List<String> tiposCombustivel = [

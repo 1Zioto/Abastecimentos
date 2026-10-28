@@ -63,6 +63,7 @@ class _RelatoriosScreenState extends State<RelatoriosScreen> {
           'data_inicio': _inicio,
           'data_fim': _fim,
           'status': _status,
+          'local': AppState.instance.auth.filialAtual,
         },
       );
       await openDownloadedFile(file);
@@ -144,17 +145,19 @@ class _RelatoriosScreenState extends State<RelatoriosScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: _abrindoPdf ? null : _abrirRelatorio,
-                  icon: _abrindoPdf
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.picture_as_pdf_outlined),
-                  label: Text(
-                      _abrindoPdf ? 'Abrindo...' : 'Abrir PDF do relatorio'),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _abrindoPdf ? null : _abrirRelatorio,
+                    icon: _abrindoPdf
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.picture_as_pdf_outlined),
+                    label: Text(_abrindoPdf ? 'Gerando...' : 'Gerar relatório'),
+                  ),
                 ),
               ],
             ),

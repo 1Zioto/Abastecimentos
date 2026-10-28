@@ -113,8 +113,18 @@ class ValoresCombustivelController extends Controller
         if ($existing) {
             return new \Illuminate\Http\JsonResponse($existing);
         }
+        $anterior = ValoresCombustivel::query()
+            ->where('tipo_combustivel', $data['tipo_combustivel'])
+            ->where('local', $data['local'])
+            ->orderByDesc('data')
+            ->orderByDesc('id_valor')
+            ->first();
+
         $data['data'] = now();
-        return new \Illuminate\Http\JsonResponse(ValoresCombustivel::create($data), 201);
+        $novo = ValoresCombustivel::create($data);
+        \App\Services\NotificacaoCriticaService::aoAlterarPrecoCombustivel($novo, $anterior);
+
+        return new \Illuminate\Http\JsonResponse($novo, 201);
     }
 
     public function show(string $id)

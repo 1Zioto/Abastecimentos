@@ -219,6 +219,7 @@ class _VeiculosScreenState extends State<VeiculosScreen> {
   Future<void> _abrirDetalhes(Veiculo v) async {
     final local = AppState.instance.auth.filialAtual;
     final canManage = Roles.isAdmin(AppState.instance.auth.tipo);
+    final canTransfer = Roles.canCreate(AppState.instance.auth.tipo);
     final proprietario = (v.idProprietario ?? '').trim().isEmpty
         ? null
         : await AppState.instance.db.findProprietario(v.idProprietario!);
@@ -235,7 +236,8 @@ class _VeiculosScreenState extends State<VeiculosScreen> {
     final totalValor = abastecimentos.fold<double>(
       0,
       (total, a) =>
-          total + (a.valorTotal ?? ((a.valorPorLitro ?? 0) * a.quantidadeLitros)),
+          total +
+          (a.valorTotal ?? ((a.valorPorLitro ?? 0) * a.quantidadeLitros)),
     );
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -245,26 +247,27 @@ class _VeiculosScreenState extends State<VeiculosScreen> {
         title: v.placa,
         subtitle: v.modelo ?? v.marca ?? v.tipoCombustivel,
         icon: Icons.directions_car_outlined,
-        actions: canManage
-            ? const [
-                DetailAction(
-                  label: 'Editar',
-                  icon: Icons.edit_outlined,
-                  action: 'edit',
-                ),
-                DetailAction(
-                  label: 'Transferir',
-                  icon: Icons.swap_horiz_outlined,
-                  action: 'transfer',
-                ),
-                DetailAction(
-                  label: 'Excluir',
-                  icon: Icons.delete_outline,
-                  action: 'delete',
-                  color: AppTheme.danger,
-                ),
-              ]
-            : const [],
+        actions: [
+          if (canManage)
+            const DetailAction(
+              label: 'Editar',
+              icon: Icons.edit_outlined,
+              action: 'edit',
+            ),
+          if (canTransfer)
+            const DetailAction(
+              label: 'Transferir',
+              icon: Icons.swap_horiz_outlined,
+              action: 'transfer',
+            ),
+          if (canManage)
+            const DetailAction(
+              label: 'Excluir',
+              icon: Icons.delete_outline,
+              action: 'delete',
+              color: AppTheme.danger,
+            ),
+        ],
         children: [
           DetailInfoGrid(
             fields: [

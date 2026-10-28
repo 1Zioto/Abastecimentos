@@ -69,7 +69,7 @@ class BaixaAbastecimentoController extends Controller
             return $query->whereRaw("LOWER(COALESCE(status, '')) <> 'pago'");
         }
 
-        return $query->whereRaw('COALESCE(baixa_abastecimento, false) = false');
+        return $query->whereRaw('baixa_abastecimento IS NOT TRUE');
     }
 
     private function normalizarLocalBaixa(string $local): string
@@ -267,7 +267,7 @@ class BaixaAbastecimentoController extends Controller
 
     private function buildAbastecimentoBaixaUpdate(array $data): array
     {
-        return [
+        $update = [
             'baixa_abastecimento' => $this->sqlBoolean(true),
             'data_baixa'   => $data['data_baixa'] ?? now(),
             'tipo_despesa' => $data['tipo_despesa'] ?? null,
@@ -279,6 +279,18 @@ class BaixaAbastecimentoController extends Controller
             'anexo'        => $data['anexo'] ?? null,
             'sync_token_at' => now(),
         ];
+
+        if ($this->tabelaTemColuna('abastecimentos', 'valor_recebedor1')) {
+            $update['valor_recebedor1'] = $data['valor_recebedor1'] ?? null;
+            $update['recebedor2']       = $data['recebedor2'] ?? null;
+            $update['valor_recebedor2'] = $data['valor_recebedor2'] ?? null;
+        }
+
+        if ($this->tabelaTemColuna('abastecimentos', 'abono_desconto')) {
+            $update['abono_desconto'] = $data['abono_desconto'] ?? null;
+        }
+
+        return $update;
     }
 
     private function upsertBaixa(string $idAbastecimento, array $data): void
@@ -314,8 +326,71 @@ class BaixaAbastecimentoController extends Controller
         DB::table('baixa_abastecimento')->insert($payload);
     }
 
+    /**
+     * Versão em lote do upsertBaixa: em vez de SELECT + INSERT/UPDATE por
+     * abastecimento (2 round-trips × N itens no banco remoto), resolve tudo
+     * em até 3 queries — busca dos existentes, um UPDATE whereIn e um bulk
+     * INSERT. O payload é idêntico para todos os itens do lote.
+     */
+    private function upsertBaixasEmLote(array $idsAbastecimentos, array $data): void
+    {
+        if (empty($idsAbastecimentos)) {
+            return;
+        }
+
+        $payloadComum = [
+            'data_hora'        => now(),
+            'usuario'          => auth()->user()?->nome ?? 'sistema',
+            'forma_pagamento'  => $data['forma_pagamento'] ?? '',
+            'data_pagamento'   => $data['data_pagamento'] ?? now(),
+            'nota_entrada'     => $data['nota_entrada'] ?? '',
+            'sync_token_at'    => now(),
+        ];
+
+        foreach (['deleted_at', 'deleted_by', 'deleted_by_id', 'status'] as $column) {
+            if ($this->tabelaTemColuna('baixa_abastecimento', $column)) {
+                $payloadComum[$column] = null;
+            }
+        }
+
+        $existentes = DB::table('baixa_abastecimento')
+            ->whereIn('id_abastecimento', $idsAbastecimentos)
+            ->pluck('id_baixa', 'id_abastecimento');
+
+        if ($existentes->isNotEmpty()) {
+            DB::table('baixa_abastecimento')
+                ->whereIn('id_baixa', $existentes->values()->all())
+                ->update($payloadComum);
+        }
+
+        $novos = [];
+        foreach ($idsAbastecimentos as $id) {
+            if ($existentes->has($id)) {
+                continue;
+            }
+            $novos[] = array_merge($payloadComum, [
+                'id_baixa'         => (string) Str::uuid(),
+                'id_abastecimento' => $id,
+            ]);
+        }
+        if (!empty($novos)) {
+            DB::table('baixa_abastecimento')->insert($novos);
+        }
+    }
+
+    private static bool $recebedoresNormalizados = false;
+
     private function normalizarRecebedoresExistentes(): void
     {
+        // Normalização de dados legados: precisa rodar no máximo uma vez por
+        // processo, não a cada página listada (o frontend pagina a tabela
+        // inteira — isso repetia um scan DISTINCT + UPDATEs várias vezes
+        // por carregamento da tela Baixas).
+        if (self::$recebedoresNormalizados) {
+            return;
+        }
+        self::$recebedoresNormalizados = true;
+
         if (!$this->tabelaTemColuna('abastecimentos', 'recebedor')) {
             return;
         }
@@ -357,6 +432,17 @@ class BaixaAbastecimentoController extends Controller
             $query->whereHas('abastecimento', fn ($q) => $q->whereIn('local', $permitidas));
         }
         $this->aplicarFiltroSyncToken($query, $request, 'baixa_abastecimento');
+
+        // Filtro de período sobre a data da baixa (bounds diretos em data_hora
+        // para aproveitar o índice, em vez de whereDate que aplica função).
+        $dataInicio = (string) $request->query('data_inicio', '');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataInicio)) {
+            $query->where('data_hora', '>=', $dataInicio . ' 00:00:00');
+        }
+        $dataFim = (string) $request->query('data_fim', '');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataFim)) {
+            $query->where('data_hora', '<=', $dataFim . ' 23:59:59.999999');
+        }
 
         if ($request->filled('id_abastecimento')) {
             $query->where('id_abastecimento', $request->id_abastecimento);
@@ -447,39 +533,97 @@ class BaixaAbastecimentoController extends Controller
             'descricao'        => 'nullable|string',
             'valor'            => 'nullable|numeric',
             'recebedor'        => 'nullable|string',
+            'recebedor2'       => 'nullable|string',
+            'valor_recebedor1' => 'nullable|numeric|min:0',
+            'valor_recebedor2' => 'nullable|numeric|min:0',
+            'abono_desconto'   => 'nullable|numeric|min:0',
+            'valor_recebido'   => 'nullable|numeric|min:0',
+            'credito_usado'    => 'nullable|numeric|min:0',
             'observacao'       => 'nullable|string',
             'anexo'            => 'nullable|string',
             'anexos'           => 'nullable|array|max:4',
             'anexos.*'         => 'nullable|string',
         ]);
 
+        $this->garantirColunasRateioRecebedor();
+
         $data['data_pagamento'] = $this->emptyToNull($data['data_pagamento'] ?? null);
         $data['data_baixa'] = $this->emptyToNull($data['data_baixa'] ?? null);
         $data['tipo_despesa'] = $this->emptyToNull($data['tipo_despesa'] ?? null) ?? 'Combustível';
         $data['descricao'] = $this->emptyToNull($data['descricao'] ?? null);
         $data['recebedor'] = RecebedorBaixa::normalizar($data['recebedor'] ?? null);
+        $data['recebedor2'] = $this->emptyToNull($data['recebedor2'] ?? null);
+        $data['valor_recebedor1'] = $this->emptyToNull($data['valor_recebedor1'] ?? null);
+        $data['valor_recebedor2'] = $this->emptyToNull($data['valor_recebedor2'] ?? null);
+        $data['abono_desconto'] = $this->emptyToNull($data['abono_desconto'] ?? null);
         $data['observacao'] = $this->emptyToNull($data['observacao'] ?? null);
         $data['anexo'] = $this->normalizarAnexos($data);
         $data['valor'] = $this->emptyToNull($data['valor'] ?? null);
         $data['nota_entrada'] = $this->emptyToNull($data['nota_entrada'] ?? null) ?? ('lote:' . (string) Str::uuid());
 
         $this->validarMesmoProprietario($data['ids']);
+        $this->validarMesmaFilialBaixa($data['ids']);
 
         $errors = [];
         $success = 0;
 
-        foreach ($data['ids'] as $idAbastecimento) {
-            try {
-                $this->validarAcessoAbastecimento($idAbastecimento);
-                $this->upsertBaixa($idAbastecimento, $data);
-                Abastecimento::where('id_abastecimento', $idAbastecimento)
-                    ->update($this->buildAbastecimentoBaixaUpdate($data));
-                $success++;
-            } catch (\Throwable $e) {
+        // Validação de acesso às filiais em UMA query (antes era um EXISTS
+        // por id): busca os ids realmente acessíveis e aponta os demais.
+        $permitidas = $this->filiaisPermitidas();
+        $idsPermitidos = Abastecimento::query()
+            ->whereIn('id_abastecimento', $data['ids'])
+            ->when(
+                $this->tabelaTemColuna('abastecimentos', 'local'),
+                fn ($q) => $q->whereIn('local', $permitidas)
+            )
+            ->pluck('id_abastecimento')
+            ->map(fn ($id) => (string) $id)
+            ->all();
+
+        foreach (array_map('strval', $data['ids']) as $id) {
+            if (!in_array($id, $idsPermitidos, true)) {
                 $errors[] = [
-                    'id_abastecimento' => $idAbastecimento,
-                    'message' => $e->getMessage(),
+                    'id_abastecimento' => $id,
+                    'message' => 'Usuário sem acesso à filial deste abastecimento.',
                 ];
+            }
+        }
+
+        if (!empty($idsPermitidos)) {
+            DB::beginTransaction();
+            try {
+                $this->upsertBaixasEmLote($idsPermitidos, $data);
+                Abastecimento::whereIn('id_abastecimento', $idsPermitidos)
+                    ->update($this->buildAbastecimentoBaixaUpdate($data));
+
+                // Crédito do proprietário: excedente vira crédito; saldo pode ser
+                // usado para cobrir parte do total. Roda dentro da transação para
+                // que qualquer inconsistência reverta a baixa inteira.
+                $proprietarioId = (string) Abastecimento::whereIn('id_abastecimento', $idsPermitidos)->value('id_proprietario');
+                if ($proprietarioId !== '') {
+                    $totalBaixa = round((float) Abastecimento::whereIn('id_abastecimento', $idsPermitidos)->sum('valor_total'), 2);
+                    CreditoProprietarioController::aplicarNaBaixa(
+                        $proprietarioId,
+                        $totalBaixa,
+                        $data['valor_recebido'] ?? null,
+                        $data['credito_usado'] ?? null,
+                        (float) ($data['abono_desconto'] ?? 0),
+                        'baixa_manual',
+                        $data['nota_entrada'],
+                        auth()->user()
+                    );
+                }
+
+                DB::commit();
+                $success = count($idsPermitidos);
+            } catch (\Throwable $e) {
+                DB::rollBack();
+                foreach ($idsPermitidos as $id) {
+                    $errors[] = [
+                        'id_abastecimento' => $id,
+                        'message' => $e->getMessage(),
+                    ];
+                }
             }
         }
 
@@ -541,7 +685,7 @@ class BaixaAbastecimentoController extends Controller
                 ->where('observacao', 'like', '%' . $marker . '%')
                 ->when(
                     $this->tabelaTemColuna('abastecimentos', 'baixa_abastecimento'),
-                    fn ($q) => $q->whereRaw('COALESCE(baixa_abastecimento, false) = true')
+                    fn ($q) => $q->whereRaw('baixa_abastecimento IS TRUE')
                 )
                 ->orderBy('data')
                 ->orderBy('data_hora')
@@ -725,8 +869,21 @@ class BaixaAbastecimentoController extends Controller
         $baixa = BaixaAbastecimento::findOrFail($id);
         $this->validarAcessoAbastecimento($baixa->id_abastecimento);
         $nota = $baixa->nota_entrada;
-        // Reverter o abastecimento para não baixado
-        Abastecimento::where('id_abastecimento', $baixa->id_abastecimento)->update([
+
+        $ehNotaComprovante = $nota && is_string($nota) && str_starts_with($nota, 'comprovantes:');
+
+        // Abastecimentos a reverter. Numa baixa por comprovante um mesmo lote
+        // (nota "comprovantes:...") cobre VÁRIOS abastecimentos; excluir a baixa
+        // tem de devolver TODOS eles para Pendente — antes só o abastecimento
+        // desta linha voltava e os irmãos ficavam baixados sem baixa ativa
+        // (estado órfão, some do relatório e não volta como pendente).
+        $idsReverter = $ehNotaComprovante
+            ? DB::table('baixa_abastecimento')->where('nota_entrada', $nota)->pluck('id_abastecimento')->all()
+            : [$baixa->id_abastecimento];
+        $idsReverter = array_values(array_unique(array_filter($idsReverter)));
+
+        // Reverter os abastecimentos para não baixado
+        Abastecimento::whereIn('id_abastecimento', $idsReverter)->update([
             'baixa_abastecimento' => $this->sqlBoolean(false),
             'data_baixa' => null,
             'tipo_despesa' => null,
@@ -741,10 +898,18 @@ class BaixaAbastecimentoController extends Controller
 
         // Se a baixa veio da tela "Baixa por Comprovante" (nota "comprovantes:..."),
         // devolve os comprovantes vinculados para lá (status pendente), em vez de
-        // deixá-los presos como "aplicado".
-        if ($nota && is_string($nota) && str_starts_with($nota, 'comprovantes:')) {
+        // deixá-los presos como "aplicado", e inativa TODAS as linhas da baixa do
+        // lote (não só a clicada) para não deixar irmãos órfãos.
+        if ($ehNotaComprovante) {
             $this->reabrirComprovantesDaNota($nota);
+            BaixaAbastecimento::where('nota_entrada', $nota)
+                ->where('id_baixa', '<>', $baixa->id_baixa)
+                ->get()
+                ->each(fn ($outra) => $this->inativarRegistro($outra));
         }
+
+        // Reverte também os movimentos de crédito gerados/usados nesta baixa.
+        CreditoProprietarioController::removerPorNota($nota);
 
         return $this->inativarRegistro($baixa, 'Baixa inativada e abastecimento retornou para Pendente');
     }
@@ -801,7 +966,11 @@ class BaixaAbastecimentoController extends Controller
         try { $temTabela = DB::getSchemaBuilder()->hasTable('comprovantes_pagamento'); } catch (\Throwable $e) {}
 
         // Libera o comprovante correspondente (volta para "Baixa por Comprovante").
+        // Marcado como "isolado" para não se misturar com outro grupo pendente
+        // do mesmo proprietário: aparece sozinho em uma caixinha separada.
         if ($temTabela) {
+            try { DB::statement('ALTER TABLE comprovantes_pagamento ADD COLUMN IF NOT EXISTS isolado BOOLEAN NOT NULL DEFAULT FALSE'); } catch (\Throwable $e) {}
+
             $comp = DB::table('comprovantes_pagamento')
                 ->where('nota_entrada', $nota)
                 ->where('arquivo_url', $url)
@@ -810,6 +979,7 @@ class BaixaAbastecimentoController extends Controller
                 DB::table('comprovantes_pagamento')->where('id', $comp->id)->update([
                     'status'       => $comp->proprietario_id ? 'aguardando_confirmacao' : 'aguardando_proprietario',
                     'nota_entrada' => null,
+                    'isolado'      => DB::raw('true'),
                     'updated_at'   => now(),
                 ]);
             }
@@ -846,6 +1016,24 @@ class BaixaAbastecimentoController extends Controller
             DB::table('baixa_abastecimento')->where('nota_entrada', $nota)->delete();
             $baixaRevertida = true;
         }
+
+        $autor = auth()->user()?->nome ?? auth()->user()?->login ?? 'Administrador';
+        \App\Services\NotificacaoCriticaService::aoMovimentarComprovanteOuBaixa(
+            $baixaRevertida ? 'baixa_excluida_estornada' : 'comprovante_credito_alterado_excluido',
+            $baixaRevertida
+                ? "Baixa Revertida (" . count($idsAbast) . " abastecimento(s))"
+                : "Comprovante Removido de Baixa",
+            "Comprovante removido da baixa #{$id} por {$autor}."
+                . ($baixaRevertida ? ' Todos os ' . count($idsAbast) . ' abastecimento(s) do lote voltaram para Pendente.' : ''),
+            'baixa_abastecimento',
+            $id,
+            'Geral',
+            [
+                'id_baixa'        => $id,
+                'baixa_revertida' => $baixaRevertida,
+                'abastecimentos'  => $idsAbast,
+            ]
+        );
 
         return new \Illuminate\Http\JsonResponse([
             'message' => $baixaRevertida

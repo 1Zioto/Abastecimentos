@@ -22,6 +22,7 @@ class _EncerranteBombaScreenState extends State<EncerranteBombaScreen> {
   bool _obrigatorio = false;
   String _horaObrigatoria = '08:00';
   Map<String, dynamic>? _ultimo;
+  List<Map<String, dynamic>> _registros = [];
 
   String _data = AppDates.todayIso();
   final _tanqueCtrl = TextEditingController();
@@ -48,6 +49,11 @@ class _EncerranteBombaScreenState extends State<EncerranteBombaScreen> {
         '/encerrantes-bomba/status',
         query: {'local': AppState.instance.auth.filialAtual ?? 'Matriz'},
       );
+      final registros = await AppState.instance.api.getPaginated(
+        '/encerrantes-bomba',
+        query: {'local': AppState.instance.auth.filialAtual ?? 'Matriz'},
+        perPage: 200,
+      );
       if (resp is Map) {
         setState(() {
           _obrigatorio = resp['obrigatorio'] == true;
@@ -56,6 +62,10 @@ class _EncerranteBombaScreenState extends State<EncerranteBombaScreen> {
           _ultimo = resp['ultimo'] is Map
               ? Map<String, dynamic>.from(resp['ultimo'] as Map)
               : null;
+          _registros = registros
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
         });
       }
     } catch (e) {
@@ -104,10 +114,7 @@ class _EncerranteBombaScreenState extends State<EncerranteBombaScreen> {
 
     setState(() => _uploading = true);
     try {
-      final resp = await AppState.instance.api.postMultipartFile(
-        '/uploads/drive',
-        filePath: picked.path,
-      );
+      final resp = await AppState.instance.api.uploadDriveDireto(picked.path);
       final file = (resp is Map && resp['file'] is Map)
           ? Map<String, dynamic>.from(resp['file'] as Map)
           : <String, dynamic>{};
@@ -132,9 +139,9 @@ class _EncerranteBombaScreenState extends State<EncerranteBombaScreen> {
   Future<void> _save() async {
     final tanque = _parseLitrosEncerrante(_tanqueCtrl.text);
     final bomba = _parseLitrosEncerrante(_bombaCtrl.text);
-    if (tanque == null || bomba == null || (_fotoUrl ?? '').trim().isEmpty) {
+    if (tanque == null || bomba == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Preencha tanque, litros da bomba e foto.'),
+        content: Text('Preencha tanque e litros da bomba.'),
         backgroundColor: AppTheme.warning,
       ));
       return;
@@ -344,6 +351,36 @@ class _EncerranteBombaScreenState extends State<EncerranteBombaScreen> {
               ),
             ),
           ],
+          const SectionHeader(texto: 'Registros feitos'),
+          if (_registros.isEmpty)
+            const EmptyState(
+              icone: Icons.speed_outlined,
+              titulo: 'Nenhum encerrante registrado',
+            )
+          else
+            ..._registros.map((r) => Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.speed_outlined),
+                    title: Text(
+                      '${AppDates.formatDateBr(r['data']?.toString())} · ${r['local'] ?? '-'}',
+                    ),
+                    subtitle: Text([
+                      '${r['quantidade_tanque'] ?? '-'} L no tanque',
+                      '${r['litros_bomba'] ?? '-'} L na bomba',
+                      if (r['usuario_nome'] != null)
+                        'Usuário: ${r['usuario_nome']}',
+                      if (r['created_at'] != null)
+                        'Criado em: ${AppDates.formatDateTimeBr(r['created_at'])}',
+                    ].join('\n')),
+                    isThreeLine: true,
+                    trailing: (r['foto']?.toString().trim().isNotEmpty ?? false)
+                        ? IconButton(
+                            onPressed: () => _openUrl(r['foto'].toString()),
+                            icon: const Icon(Icons.image_outlined),
+                          )
+                        : null,
+                  ),
+                )),
         ],
       ),
     );

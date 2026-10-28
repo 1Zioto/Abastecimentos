@@ -1,42 +1,55 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:shorebird_code_push/shorebird_code_push.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import 'abastecimentos/list_screen.dart';
+import 'app_erros_screen.dart';
+import 'auditoria_abastecimentos_screen.dart';
 import 'baixa_screen.dart';
 import 'balancete_screen.dart';
+import 'conciliacao_bancaria_screen.dart';
+import 'conferencia_vipe_screen.dart';
 import 'configuracoes_screen.dart';
+import 'controle_encerrante_screen.dart';
 import 'dashboard_screen.dart';
+import 'despesas_avulsas_screen.dart';
 import 'encerrante_bomba_screen.dart';
+import 'encerrante_diario_screen.dart';
 import 'entrada_notas_screen.dart';
 import 'graficos_screen.dart';
+import 'historico_alteracoes_screen.dart';
+import 'integracao_atua/integracao_atua_screen.dart';
 import 'login_screen.dart';
 import 'motoristas_screen.dart';
 import 'precos_screen.dart';
+import 'pingo_screen.dart';
 import 'proprietarios_screen.dart';
 import 'relatorios_screen.dart';
 import 'sync_logs_screen.dart';
+import 'tanques_historico_screen.dart';
+import 'transferencia_veiculo_screen.dart';
 import 'usuarios_screen.dart';
 import 'veiculos_screen.dart';
+import 'nova_baixa_comprovante_screen.dart';
+import '../core/background_tank_monitor.dart';
+import 'notificacoes_criticas_screen.dart';
 
 class _NavItem {
   final String label;
   final IconData icon;
   final Widget Function() build;
   final bool adminOnly;
-  final bool operadorOnly;
+  final bool operationalOnly;
   final bool privateOnly;
   _NavItem(this.label, this.icon, this.build,
       {this.adminOnly = false,
-      this.operadorOnly = false,
+      this.operationalOnly = false,
       this.privateOnly = false});
 }
 
@@ -48,23 +61,19 @@ class ShellScreen extends StatefulWidget {
 }
 
 class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
+  static const _automaticSyncInterval = Duration(hours: 1);
+  static const _lastSyncKey = 'last_sync_attempt_at_v1';
   int _index = 0;
   bool _syncing = false;
   String _syncMsg = '';
   int _pendentes = 0;
+  int _naoVistasCriticas = 0;
   int _filialVersion = 0;
   bool _tentouCargaCompletaComBaseVazia = false;
-  bool _updateCheckDone = false;
-  bool _updateDialogOpen = false;
-  bool _downloadingUpdate = false;
-  double? _updateDownloadProgress;
   String? _appVersionLabel;
-  UpdateStatus? _patchUpdateStatus;
-  String? _patchUpdateMessage;
   Timer? _autoSyncTimer;
-  final ShorebirdUpdater _shorebirdUpdater = ShorebirdUpdater();
-  static const _appUpdateChannel =
-      MethodChannel('com.vipe.abastecimento/app_update');
+  Map<String, Object?>? _updateInfo;
+  final Map<String, Widget> _screenCache = {};
 
   // Conectividade
   final Connectivity _connectivity = Connectivity();
@@ -81,19 +90,49 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       _NavItem(
           'Dashboard', Icons.dashboard_outlined, () => const DashboardScreen(),
           adminOnly: true),
+      _NavItem('Pergunte ao Pingo', Icons.smart_toy_outlined,
+          () => const PingoScreen(),
+          adminOnly: true),
       _NavItem(
           'Graficos', Icons.analytics_outlined, () => const GraficosScreen(),
           adminOnly: true),
       _NavItem('Abastecimentos', Icons.local_gas_station_outlined,
           () => const AbastecimentosListScreen()),
+      _NavItem('Historico do Tanque', Icons.water_drop_outlined,
+          () => const TanquesHistoricoScreen(),
+          adminOnly: true),
+      _NavItem('Lançar no Atua', Icons.sync_alt_outlined,
+          () => const IntegracaoAtuaScreen(),
+          adminOnly: true),
       _NavItem('Baixa em Lote', Icons.price_check_outlined,
           () => const BaixaScreen(),
           adminOnly: true),
+      _NavItem('Nova Baixa (Comprovante)', Icons.receipt_long_outlined,
+          () => const NovaBaixaComprovanteScreen(),
+          adminOnly: true),
       _NavItem('Entrada de Notas', Icons.receipt_long_outlined,
           () => const EntradaNotasScreen()),
+      _NavItem('Despesas', Icons.payments_outlined,
+          () => const DespesasAvulsasScreen(),
+          adminOnly: true),
+      _NavItem('Conciliacao Bancaria', Icons.account_balance_outlined,
+          () => const ConciliacaoBancariaScreen(),
+          adminOnly: true),
       _NavItem('Encerrante', Icons.speed_outlined,
           () => const EncerranteBombaScreen(),
-          operadorOnly: true),
+          adminOnly: true),
+      _NavItem('Encerrante diário', Icons.straighten_outlined,
+          () => const EncerranteDiarioScreen(),
+          operationalOnly: true),
+      _NavItem('Auditoria', Icons.fact_check_outlined,
+          () => const AuditoriaAbastecimentosScreen(),
+          adminOnly: true),
+      _NavItem('Conferência Vipe', Icons.rule_folder_outlined,
+          () => const ConferenciaVipeScreen(),
+          adminOnly: true),
+      _NavItem('Controle Encerrante', Icons.oil_barrel_outlined,
+          () => const ControleEncerranteScreen(),
+          adminOnly: true, privateOnly: true),
       _NavItem('Relatorios', Icons.assessment_outlined,
           () => const RelatoriosScreen(),
           adminOnly: true),
@@ -107,12 +146,19 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       _NavItem('Veiculos', Icons.directions_car_outlined,
           () => const VeiculosScreen()),
       _NavItem('Transferir Veiculo', Icons.swap_horiz_outlined,
-          () => const VeiculosScreen(),
-          adminOnly: true),
+          () => const TransferenciaVeiculoScreen(),
+          operationalOnly: true),
       _NavItem(
           'Motoristas', Icons.badge_outlined, () => const MotoristasScreen()),
       _NavItem('Usuarios', Icons.admin_panel_settings_outlined,
           () => const UsuariosScreen(),
+          adminOnly: true),
+      _NavItem('Notificações Críticas', Icons.notification_important_outlined, () => NotificacoesCriticasScreen(onUnreadCountChanged: (c) { if (mounted && _naoVistasCriticas != c) setState(() => _naoVistasCriticas = c); }), adminOnly: true),
+      _NavItem('Historico', Icons.history_outlined,
+          () => const HistoricoAlteracoesScreen(),
+          adminOnly: true),
+      _NavItem('Erros do App', Icons.warning_amber_outlined,
+          () => const AppErrosScreen(),
           adminOnly: true),
       _NavItem('Configuracoes', Icons.settings_outlined,
           () => const ConfiguracoesScreen()),
@@ -120,11 +166,11 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
     AppState.instance.auth.filialAtualNotifier
         .addListener(_onFilialAtualChanged);
     _loadAppVersionLabel();
-    _refreshPatchStateOnly();
     _refreshPendentes();
     _startAutoSync();
     _startConnectivityWatcher();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+    _checkAppUpdate();
+    _refreshNotificacoesCriticas(checkTanques: true);
   }
 
   Future<void> _loadAppVersionLabel() async {
@@ -133,15 +179,41 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       final version = info.version.trim();
       final build = info.buildNumber.trim();
       final base = build.isEmpty ? version : '$version+$build';
-      var label = base;
-      try {
-        final patch = await _shorebirdUpdater.readCurrentPatch();
-        label = patch == null
-            ? '$base - Sem patch'
-            : '$base - Patch ${patch.number}';
-      } catch (_) {}
-      if (mounted) setState(() => _appVersionLabel = label);
+      if (mounted) setState(() => _appVersionLabel = base);
     } catch (_) {}
+  }
+
+  /// Consulta o endpoint público /app-update e, se a versão publicada for
+  /// mais nova que a instalada, exibe o banner de atualização.
+  Future<void> _checkAppUpdate() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final instalado = int.tryParse(info.buildNumber.trim()) ?? 0;
+      final resp = await AppState.instance.api.get('/app-update');
+      if (resp is! Map) return;
+      final publicado =
+          int.tryParse('${resp['latest_version_code'] ?? ''}') ?? 0;
+      if (publicado <= instalado) return;
+      if (!mounted) return;
+      setState(() {
+        _updateInfo = {
+          'version_name': '${resp['latest_version_name'] ?? ''}',
+          'apk_url': '${resp['apk_url'] ?? ''}',
+          'required': resp['required'] == true,
+          'message': '${resp['message'] ?? 'Nova versão disponível.'}',
+        };
+      });
+    } catch (_) {
+      // Sem internet ou endpoint indisponível: segue sem banner.
+    }
+  }
+
+  Future<void> _baixarAtualizacao() async {
+    final url = (_updateInfo?['apk_url'] as String?) ?? '';
+    if (url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   @override
@@ -159,6 +231,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
     setState(() {
       _filialVersion++;
       _tentouCargaCompletaComBaseVazia = false;
+      _screenCache.clear();
     });
   }
 
@@ -166,52 +239,23 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _loadAppVersionLabel();
-      _refreshPatchStateOnly();
       _syncPendentesSeOnline();
+      _refreshNotificacoesCriticas(checkTanques: false);
     }
   }
 
-  Future<void> _refreshPatchStateOnly() async {
-    if (!Platform.isAndroid || !_shorebirdUpdater.isAvailable) return;
+  Future<void> _refreshNotificacoesCriticas({bool checkTanques = false}) async {
+    if (!Roles.isAdmin(AppState.instance.auth.tipo)) return;
     try {
-      final current = await _shorebirdUpdater.readCurrentPatch();
-      final next = await _shorebirdUpdater.readNextPatch();
-      if (!mounted) return;
-      final hasDownloadedPatch = next != null && next.number != current?.number;
-      setState(() {
-        if (hasDownloadedPatch) {
-          _patchUpdateStatus = UpdateStatus.restartRequired;
-          _patchUpdateMessage =
-              'Atualizacao parcial baixada. Feche e abra o app para aplicar.';
-        } else if (_patchUpdateStatus == UpdateStatus.restartRequired) {
-          _patchUpdateStatus = null;
-          _patchUpdateMessage = null;
-        }
-      });
+      if (checkTanques) {
+        unawaited(verificarTanquesTodasFiliaisAdmin(AppState.instance));
+      }
+      final count = await verificarNotificacoesCriticasAdmin(
+        AppState.instance,
+        checkTanques: checkTanques,
+      );
+      if (mounted) setState(() => _naoVistasCriticas = count);
     } catch (_) {}
-  }
-
-  Future<void> _showPatchUpdateDialog() async {
-    if (!Platform.isAndroid) return;
-    await showDialog<void>(
-      context: context,
-      builder: (_) => _PatchUpdateDialog(
-        updater: _shorebirdUpdater,
-        versionLabel: _appVersionLabel,
-        onStatusChanged: (status, message) {
-          if (!mounted) return;
-          setState(() {
-            _patchUpdateStatus = status == UpdateStatus.restartRequired
-                ? UpdateStatus.restartRequired
-                : null;
-            _patchUpdateMessage =
-                status == UpdateStatus.restartRequired ? message : null;
-          });
-        },
-      ),
-    );
-    await _loadAppVersionLabel();
-    await _refreshPatchStateOnly();
   }
 
   Future<void> _refreshPendentes() async {
@@ -223,7 +267,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
     final tipo = AppState.instance.auth.tipo;
     return _items.where((i) {
       if (i.adminOnly && !Roles.isAdmin(tipo)) return false;
-      if (i.operadorOnly && tipo != 'operador') return false;
+      if (i.operationalOnly && !Roles.canCreate(tipo)) return false;
       if (i.privateOnly && !_canAccessPrivateScreens()) return false;
       return true;
     }).toList();
@@ -238,10 +282,24 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
 
   void _startAutoSync() {
     _autoSyncTimer?.cancel();
-    // Mantem apenas a fila pendente drenando quando houver internet.
-    _autoSyncTimer = Timer.periodic(const Duration(minutes: 3), (_) async {
+    // O timer só verifica o relógio local. A rede é acessada no máximo uma vez
+    // por hora, salvo quando o usuário toca no botão Sincronizar.
+    _autoSyncTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
       await _syncPendentesSeOnline();
     });
+  }
+
+  Future<bool> _automaticSyncIsDue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastMillis = prefs.getInt(_lastSyncKey);
+    if (lastMillis == null) return true;
+    final last = DateTime.fromMillisecondsSinceEpoch(lastMillis);
+    return DateTime.now().difference(last) >= _automaticSyncInterval;
+  }
+
+  Future<void> _rememberSyncAttempt() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastSyncKey, DateTime.now().millisecondsSinceEpoch);
   }
 
   /// Escuta mudancas de conectividade: quando o dispositivo sai de "sem rede"
@@ -273,8 +331,14 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
 
   Future<void> _syncPendentesSeOnline() async {
     if (!mounted || _syncing || !_online) return;
+    if (!await _automaticSyncIsDue()) return;
     await _refreshPendentes();
-    if (!mounted || _syncing || !_online || _pendentes <= 0) return;
+    unawaited(_refreshNotificacoesCriticas(checkTanques: true));
+    if (!mounted || _syncing || !_online) return;
+    // Roda o sync silencioso mesmo sem pendências de envio: o download
+    // incremental é barato (sync_token) e é ele que traz os registros novos
+    // — inclusive os que disparam a notificação de novo abastecimento para
+    // administradores.
     await _sync(silent: true);
   }
 
@@ -301,11 +365,15 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _sync({bool silent = false, bool forceFull = false}) async {
+  Future<void> _sync({
+    bool silent = false,
+    bool forceFull = false,
+  }) async {
     if (_syncing) return;
     final onlineNow = await _verificarOnline();
     if (!onlineNow) {
       await _refreshPendentes();
+    unawaited(_refreshNotificacoesCriticas(checkTanques: true));
       if (!mounted || silent) return;
       final msg = _pendentes > 0
           ? 'Sem internet. $_pendentes pendente${_pendentes == 1 ? '' : 's'} aguardando conexao.'
@@ -318,6 +386,10 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       );
       return;
     }
+
+    // Tanto a sincronização automática quanto a manual reiniciam a janela de
+    // uma hora. Gravamos antes da chamada para evitar rajadas em caso de erro.
+    await _rememberSyncAttempt();
 
     setState(() {
       _syncing = true;
@@ -353,8 +425,10 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       _syncing = false;
       _syncMsg = '';
       _filialVersion++;
+      _screenCache.clear();
     });
     await _refreshPendentes();
+    unawaited(_refreshNotificacoesCriticas(checkTanques: true));
 
     final shouldNotify = !silent || result.enviados > 0;
     if (shouldNotify) {
@@ -370,10 +444,6 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
     if (result.erroGlobal != null && _isAuthError(result.erroGlobal!)) {
       await _logout(reason: 'Sessao encerrada apos erro de sincronizacao');
       return;
-    }
-
-    if (result.success) {
-      await _checkForUpdate(force: true);
     }
   }
 
@@ -422,13 +492,60 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
           version: current.label == 'Dashboard' ? _appVersionLabel : null,
         ),
         actions: [
-          if (_pendentes > 0) _PendingIcon(count: _pendentes),
+          if (_pendentes > 0)
+            InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SyncLogsScreen()),
+                );
+                await _refreshPendentes();
+    unawaited(_refreshNotificacoesCriticas(checkTanques: true));
+              },
+              child: _PendingIcon(count: _pendentes),
+            ),
           if (!_online)
             const Tooltip(
               message: 'Sem conexao - trabalhando offline',
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 4),
                 child: Icon(Icons.cloud_off_outlined, color: AppTheme.warning),
+              ),
+            ),
+          if (Roles.isAdmin(AppState.instance.auth.tipo))
+            IconButton(
+              tooltip: 'Notificações Críticas (Admin)',
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => NotificacoesCriticasScreen(
+                      standalone: true,
+                      onUnreadCountChanged: (c) {
+                        if (mounted) setState(() => _naoVistasCriticas = c);
+                      },
+                    ),
+                  ),
+                );
+                await _refreshNotificacoesCriticas(checkTanques: false);
+              },
+              icon: Badge(
+                isLabelVisible: _naoVistasCriticas > 0,
+                backgroundColor: const Color(0xFFDC2626),
+                label: Text(
+                  _naoVistasCriticas > 99 ? '99+' : '$_naoVistasCriticas',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                child: Icon(
+                  _naoVistasCriticas > 0
+                      ? Icons.notifications_active
+                      : Icons.notifications_outlined,
+                ),
               ),
             ),
           _FilialSwitcher(
@@ -438,7 +555,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             tooltip: 'Sincronizar',
-            onPressed: _syncing ? null : () => _sync(forceFull: true),
+            onPressed: _syncing ? null : () => _sync(forceFull: false),
             icon: _syncing
                 ? const SizedBox(
                     width: 20,
@@ -451,16 +568,10 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (v) async {
-              if (v == 'update') await _checkForUpdate(manual: true);
-              if (v == 'patch_update') await _showPatchUpdateDialog();
               if (v == 'logout') await _logout();
               if (v == 'reset') await _confirmReset();
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(
-                  value: 'update', child: Text('Verificar atualização')),
-              PopupMenuItem(
-                  value: 'patch_update', child: Text('Atualização parcial')),
               PopupMenuItem(value: 'reset', child: Text('Limpar cache local')),
               PopupMenuItem(value: 'logout', child: Text('Sair')),
             ],
@@ -470,28 +581,52 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       drawer: _buildDrawer(items),
       body: Column(
         children: [
-          if (_patchUpdateStatus == UpdateStatus.restartRequired)
-            _PatchUpdateBar(
-              message: _patchUpdateMessage ??
-                  'Atualizacao parcial baixada. Feche e abra o app para aplicar.',
-              onTap: _showPatchUpdateDialog,
+          if (_updateInfo != null)
+            MaterialBanner(
+              backgroundColor: const Color(0xFFFFF7E0),
+              leading: const Icon(Icons.system_update, color: AppTheme.warning),
+              content: Text(
+                'Versão ${_updateInfo!['version_name']} disponível. '
+                '${_updateInfo!['message']}',
+                style: const TextStyle(fontSize: 13),
+              ),
+              actions: [
+                if (_updateInfo!['required'] != true)
+                  TextButton(
+                    onPressed: () => setState(() => _updateInfo = null),
+                    child: const Text('Depois'),
+                  ),
+                FilledButton(
+                  onPressed: _baixarAtualizacao,
+                  child: const Text('Baixar'),
+                ),
+              ],
             ),
           if (_syncing) _SyncBar(message: _syncMsg),
           Expanded(
             child: IndexedStack(
               index: _index,
               children: items
-                  .map((i) => KeyedSubtree(
-                        key:
-                            ValueKey('${i.label}-$filialAtual-$_filialVersion'),
-                        child: i.build(),
-                      ))
+                  .map((i) => _screenFor(i, active: i.label == current.label))
                   .toList(),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _screenFor(_NavItem item, {required bool active}) {
+    final cached = _screenCache[item.label];
+    if (cached != null) return cached;
+    if (!active) return const SizedBox.shrink();
+
+    final screen = KeyedSubtree(
+      key: ValueKey('${item.label}-$_filialVersion'),
+      child: item.build(),
+    );
+    _screenCache[item.label] = screen;
+    return screen;
   }
 
   Widget _buildDrawer(List<_NavItem> items) {
@@ -585,18 +720,6 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
               },
             ),
             ListTile(
-              leading:
-                  const Icon(Icons.system_update_alt, color: AppTheme.primary),
-              title: const Text('Atualização parcial'),
-              subtitle: _patchUpdateStatus == UpdateStatus.restartRequired
-                  ? const Text('Reinicie para aplicar a atualização')
-                  : null,
-              onTap: () {
-                Navigator.of(context).pop();
-                _showPatchUpdateDialog();
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.bug_report_outlined,
                   color: AppTheme.warning),
               title: const Text('Logs de sincronizacao'),
@@ -641,6 +764,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
     if (ok == true) {
       await AppState.instance.db.resetAll();
       await _refreshPendentes();
+    unawaited(_refreshNotificacoesCriticas(checkTanques: true));
       if (!mounted) return;
       setState(() {
         _filialVersion++;
@@ -650,239 +774,6 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
         const SnackBar(content: Text('Cache local limpo.')),
       );
     }
-  }
-
-  Future<void> _checkForUpdate(
-      {bool manual = false, bool force = false}) async {
-    if (!Platform.isAndroid) return;
-    if (!mounted ||
-        _updateDialogOpen ||
-        (_updateCheckDone && !manual && !force)) return;
-    _updateCheckDone = true;
-
-    try {
-      final packageInfo = await PackageInfo.fromPlatform();
-      final currentCode = int.tryParse(packageInfo.buildNumber) ?? 0;
-      final currentName = packageInfo.version;
-      final response = await AppState.instance.api.get(
-        '/app-update',
-        query: {
-          'platform': 'android',
-          'current_version_code': currentCode,
-          'current_version_name': currentName,
-        },
-      );
-      if (response is! Map) return;
-
-      final latestCode =
-          int.tryParse(response['latest_version_code']?.toString() ?? '') ?? 0;
-      if (latestCode <= currentCode) {
-        if (manual && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Aplicativo já está atualizado.')),
-          );
-        }
-        return;
-      }
-
-      final info = _AppUpdateInfo.fromResponse(
-        response,
-        latestCode: latestCode,
-      );
-      if (info.apkUrl.isEmpty) return;
-
-      if (!mounted) return;
-      _updateDialogOpen = true;
-      _updateDownloadProgress = null;
-      _downloadingUpdate = false;
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: !info.required,
-        builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            title: Text(info.title),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Versão instalada: $currentName'),
-                  Text('Versão disponível: ${info.versionName}'),
-                  const SizedBox(height: 12),
-                  Text(info.message),
-                  if (info.notes.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Novidades:',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 6),
-                    ...info.notes.map((n) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('- $n'),
-                        )),
-                  ],
-                  if (_downloadingUpdate) ...[
-                    const SizedBox(height: 16),
-                    LinearProgressIndicator(value: _updateDownloadProgress),
-                    const SizedBox(height: 8),
-                    Text(
-                      _updateDownloadProgress == null
-                          ? 'Baixando atualização...'
-                          : 'Baixando atualização: ${((_updateDownloadProgress ?? 0) * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(color: AppTheme.textMuted),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              if (!info.required && !_downloadingUpdate)
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Depois'),
-                ),
-              ElevatedButton.icon(
-                onPressed: _downloadingUpdate
-                    ? null
-                    : () async {
-                        await _downloadAndInstallUpdate(
-                          info,
-                          onState: setDialogState,
-                        );
-                      },
-                icon: const Icon(Icons.system_update_alt),
-                label: Text(_downloadingUpdate ? 'Baixando...' : 'Atualizar'),
-              ),
-            ],
-          ),
-        ),
-      );
-      _updateDialogOpen = false;
-    } catch (e) {
-      if (!manual) {
-        _updateCheckDone = false;
-      }
-      if (manual && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Não foi possível verificar atualização: $e'),
-            backgroundColor: AppTheme.warning,
-          ),
-        );
-      }
-    } finally {
-      _updateDialogOpen = false;
-      if (mounted) {
-        setState(() {
-          _downloadingUpdate = false;
-          _updateDownloadProgress = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _downloadAndInstallUpdate(
-    _AppUpdateInfo info, {
-    required StateSetter onState,
-  }) async {
-    setState(() {
-      _downloadingUpdate = true;
-      _updateDownloadProgress = null;
-    });
-    onState(() {});
-
-    try {
-      final path = await _downloadApk(info, onProgress: (progress) {
-        if (!mounted) return;
-        setState(() => _updateDownloadProgress = progress);
-        onState(() {});
-      });
-      await _appUpdateChannel.invokeMethod<bool>('installApk', {'path': path});
-    } on PlatformException catch (e) {
-      if (!mounted) return;
-      final message = e.message ?? 'Falha ao instalar atualização.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), backgroundColor: AppTheme.warning),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Falha ao baixar atualização: $e'),
-          backgroundColor: AppTheme.danger,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _downloadingUpdate = false;
-          _updateDownloadProgress = null;
-        });
-        onState(() {});
-      }
-    }
-  }
-
-  Future<String> _downloadApk(
-    _AppUpdateInfo info, {
-    required void Function(double? progress) onProgress,
-  }) async {
-    final uri = Uri.parse(info.apkUrl);
-    final tempDir = await getTemporaryDirectory();
-    final file =
-        File('${tempDir.path}/vipe-abastecimento-${info.versionCode}.apk');
-    if (await file.exists()) {
-      await file.delete();
-    }
-
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(uri);
-      final response = await request.close();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('Download falhou (HTTP ${response.statusCode}).');
-      }
-
-      final total = response.contentLength;
-      var received = 0;
-      final sink = file.openWrite();
-      try {
-        await for (final chunk in response) {
-          received += chunk.length;
-          sink.add(chunk);
-          onProgress(total > 0 ? received / total : null);
-        }
-      } finally {
-        await sink.close();
-      }
-      final savedLength = await file.length();
-      if (total > 0 && savedLength != total) {
-        await file.delete();
-        throw Exception(
-          'Download incompleto (${_formatBytes(savedLength)} de ${_formatBytes(total)}). Tente atualizar novamente.',
-        );
-      }
-      if (savedLength < 1024 * 1024) {
-        await file.delete();
-        throw Exception(
-            'Arquivo de atualização inválido. Tente baixar novamente.');
-      }
-      onProgress(1);
-      return file.path;
-    } finally {
-      client.close(force: true);
-    }
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes >= 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    return '$bytes bytes';
   }
 }
 
@@ -948,307 +839,6 @@ class _VersionInfoLine extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _AppUpdateInfo {
-  final int versionCode;
-  final String versionName;
-  final String apkUrl;
-  final bool required;
-  final String title;
-  final String message;
-  final List<String> notes;
-
-  const _AppUpdateInfo({
-    required this.versionCode,
-    required this.versionName,
-    required this.apkUrl,
-    required this.required,
-    required this.title,
-    required this.message,
-    required this.notes,
-  });
-
-  factory _AppUpdateInfo.fromResponse(
-    Map response, {
-    required int latestCode,
-  }) {
-    final notes = (response['release_notes'] is List)
-        ? (response['release_notes'] as List)
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty)
-            .toList()
-        : <String>[];
-
-    return _AppUpdateInfo(
-      versionCode: latestCode,
-      versionName:
-          response['latest_version_name']?.toString().trim().isNotEmpty == true
-              ? response['latest_version_name'].toString().trim()
-              : 'nova versão',
-      apkUrl: response['apk_url']?.toString().trim() ?? '',
-      required: response['required'] == true,
-      title: response['title']?.toString().trim().isNotEmpty == true
-          ? response['title'].toString().trim()
-          : 'Nova atualização disponível',
-      message: response['message']?.toString().trim().isNotEmpty == true
-          ? response['message'].toString().trim()
-          : 'Atualize o aplicativo para receber as melhorias mais recentes.',
-      notes: notes,
-    );
-  }
-}
-
-class _PatchUpdateDialog extends StatefulWidget {
-  final ShorebirdUpdater updater;
-  final String? versionLabel;
-  final void Function(UpdateStatus? status, String? message) onStatusChanged;
-
-  const _PatchUpdateDialog({
-    required this.updater,
-    required this.versionLabel,
-    required this.onStatusChanged,
-  });
-
-  @override
-  State<_PatchUpdateDialog> createState() => _PatchUpdateDialogState();
-}
-
-class _PatchUpdateDialogState extends State<_PatchUpdateDialog> {
-  bool _checking = true;
-  bool _downloading = false;
-  UpdateStatus? _status;
-  Patch? _currentPatch;
-  Patch? _nextPatch;
-  String _message = 'Verificando atualização parcial...';
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(_check);
-  }
-
-  void _setStatus(UpdateStatus status, String message) {
-    if (!mounted) return;
-    setState(() {
-      _checking = false;
-      _downloading = false;
-      _status = status;
-      _message = message;
-    });
-    widget.onStatusChanged(status, message);
-  }
-
-  Future<void> _check() async {
-    if (!widget.updater.isAvailable) {
-      _setStatus(
-        UpdateStatus.unavailable,
-        'Atualização parcial indisponível nesta instalação.',
-      );
-      return;
-    }
-
-    setState(() {
-      _checking = true;
-      _downloading = false;
-      _error = null;
-      _message = 'Verificando atualização parcial...';
-    });
-
-    try {
-      final status = await widget.updater.checkForUpdate();
-      final current = await widget.updater.readCurrentPatch();
-      final next = await widget.updater.readNextPatch();
-      if (!mounted) return;
-      setState(() {
-        _status = status;
-        _currentPatch = current;
-        _nextPatch = next;
-        _checking = false;
-        _message = _messageFor(status);
-      });
-      widget.onStatusChanged(status, _messageFor(status));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = 'Não foi possível verificar agora: $e';
-        _message = 'Verificação interrompida.';
-      });
-      widget.onStatusChanged(null, null);
-    }
-  }
-
-  Future<void> _download() async {
-    setState(() {
-      _downloading = true;
-      _error = null;
-      _message = 'Baixando e preparando atualização...';
-    });
-
-    try {
-      await widget.updater.update();
-      final current = await widget.updater.readCurrentPatch();
-      final next = await widget.updater.readNextPatch();
-      if (!mounted) return;
-      setState(() {
-        _downloading = false;
-        _status = UpdateStatus.restartRequired;
-        _currentPatch = current;
-        _nextPatch = next;
-        _message = _messageFor(UpdateStatus.restartRequired);
-      });
-      widget.onStatusChanged(UpdateStatus.restartRequired, _message);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _downloading = false;
-        _error = 'Falha ao baixar atualização parcial: $e';
-        _message = 'Falha ao preparar atualização.';
-      });
-      widget.onStatusChanged(null, null);
-    }
-  }
-
-  String _messageFor(UpdateStatus status) {
-    switch (status) {
-      case UpdateStatus.outdated:
-        return 'Atualização parcial disponível.';
-      case UpdateStatus.restartRequired:
-        return 'Atualização baixada. Feche e abra o app para aplicar.';
-      case UpdateStatus.upToDate:
-        return 'O app já está com a atualização parcial mais recente.';
-      case UpdateStatus.unavailable:
-        return 'Atualização parcial indisponível nesta instalação.';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final busy = _checking || _downloading;
-    final version = widget.versionLabel?.trim();
-    final currentText = _currentPatch == null
-        ? 'Patch instalado: nenhum'
-        : 'Patch instalado: ${_currentPatch!.number}';
-    final nextText =
-        _nextPatch == null ? null : 'Patch preparado: ${_nextPatch!.number}';
-
-    return AlertDialog(
-      title: const Text('Atualização parcial'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (version != null && version.isNotEmpty) ...[
-              Text('Versão atual: $version'),
-              const SizedBox(height: 8),
-            ],
-            Text(currentText),
-            if (nextText != null) Text(nextText),
-            const SizedBox(height: 14),
-            Text(_message),
-            if (busy) ...[
-              const SizedBox(height: 16),
-              const LinearProgressIndicator(),
-              const SizedBox(height: 8),
-              Text(
-                _downloading
-                    ? 'O Shorebird não informa porcentagem real; este progresso mostra a etapa atual.'
-                    : 'Consultando atualizações disponíveis...',
-                style: const TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-            if (_status == UpdateStatus.restartRequired && !busy) ...[
-              const SizedBox(height: 12),
-              const Text(
-                'Para usar a atualização, feche o aplicativo completamente e abra de novo.',
-                style: TextStyle(color: AppTheme.textMuted),
-              ),
-            ],
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                style: const TextStyle(color: AppTheme.danger),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        if (!busy)
-          TextButton(
-            onPressed: _check,
-            child: const Text('Verificar'),
-          ),
-        if (_status == UpdateStatus.outdated && !busy)
-          ElevatedButton.icon(
-            onPressed: _download,
-            icon: const Icon(Icons.system_update_alt),
-            label: const Text('Baixar'),
-          )
-        else
-          TextButton(
-            onPressed: busy ? null : () => Navigator.pop(context),
-            child: const Text('Fechar'),
-          ),
-      ],
-    );
-  }
-}
-
-class _PatchUpdateBar extends StatelessWidget {
-  final String message;
-  final VoidCallback onTap;
-
-  const _PatchUpdateBar({
-    required this.message,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.warning.withOpacity(0.18),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Row(
-            children: [
-              const Icon(Icons.system_update_alt,
-                  color: AppTheme.warning, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  message,
-                  style: const TextStyle(
-                    color: AppTheme.textStrong,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Ver',
-                style: TextStyle(
-                  color: AppTheme.primary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

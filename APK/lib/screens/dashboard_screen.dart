@@ -5,10 +5,10 @@ import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_state.dart';
+import '../core/cached_remote_image.dart';
 import '../core/constants.dart';
 import '../core/date_utils.dart';
 import '../core/models.dart';
@@ -49,15 +49,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final version = info.version.trim();
       final build = info.buildNumber.trim();
       final base = build.isEmpty ? version : '$version+$build';
-      var label = base;
-      try {
-        final patch = await ShorebirdUpdater().readCurrentPatch();
-        label = patch == null
-            ? '$base - Sem patch'
-            : '$base - Patch ${patch.number}';
-      } catch (_) {}
       if (!mounted) return;
-      setState(() => _appVersionLabel = label);
+      setState(() => _appVersionLabel = base);
     } catch (_) {}
   }
 
@@ -1129,12 +1122,12 @@ class _AnexoThumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final image = _remote
-        ? Image.network(
-            url,
+        ? CachedRemoteImage(
+            url: url,
             width: 112,
             height: 84,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _imageFallback(),
+            error: _imageFallback(),
           )
         : Image.file(
             _localFile,
@@ -1186,7 +1179,11 @@ class _AnexoThumb extends StatelessWidget {
       context: context,
       builder: (_) {
         final preview = _remote
-            ? Image.network(url, fit: BoxFit.contain)
+            ? CachedRemoteImage(
+                url: url,
+                fit: BoxFit.contain,
+                thumbnail: false,
+              )
             : Image.file(_localFile, fit: BoxFit.contain);
         return Dialog(
           backgroundColor: Colors.black,
@@ -1316,7 +1313,7 @@ class _BarCard extends StatelessWidget {
                   barTouchData: BarTouchData(
                     enabled: true,
                     touchTooltipData: BarTouchTooltipData(
-                      tooltipRoundedRadius: 8,
+                      tooltipBorderRadius: BorderRadius.circular(8),
                       getTooltipColor: (_) => Colors.black87,
                       getTooltipItem: (group, _, rod, rodIndex) {
                         final month = groups[group.x.toInt()];

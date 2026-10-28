@@ -15,7 +15,9 @@ class AppState {
 
   AppState._(this.auth, this.api, this.db) {
     errorReporter = AppErrorReporter(api);
-    sync = SyncManager(api, db, errorReporter: errorReporter);
+    sync = SyncManager(api, db, errorReporter: errorReporter)
+      ..currentUserTipo = (() => auth.tipo)
+      ..currentUserNome = (() => auth.nome);
   }
 
   static AppState? _instance;

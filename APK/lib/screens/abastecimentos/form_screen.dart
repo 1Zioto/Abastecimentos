@@ -12,6 +12,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/api_client.dart';
 import '../../core/app_state.dart';
+import '../../core/cached_remote_image.dart';
+import '../../core/centavos_config.dart';
 import '../../core/constants.dart';
 import '../../core/date_utils.dart';
 import '../../core/models.dart';
@@ -21,7 +23,10 @@ import '../../widgets/empresa_picker.dart';
 
 class AbastecimentoFormScreen extends StatefulWidget {
   final Abastecimento? original;
-  const AbastecimentoFormScreen({super.key, this.original});
+  const AbastecimentoFormScreen({
+    super.key,
+    this.original,
+  });
 
   @override
   State<AbastecimentoFormScreen> createState() =>
@@ -32,9 +37,14 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     with WidgetsBindingObserver {
   bool _loading = true;
   bool _saving = false;
+  bool _anexando = false;
 
   // Rascunho: preserva dados se o app for ao fundo ou o usuário sair sem salvar
   static const _draftKey = 'abastecimento_form_draft_v1';
+
+  // Autosave: grava o rascunho enquanto o usuário digita (debounce), para que
+  // um encerramento abrupto do app no meio do preenchimento não perca o dado.
+  Timer? _draftDebounce;
 
   List<Proprietario> _proprietarios = [];
   List<Veiculo> _veiculos = [];
@@ -58,12 +68,22 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
 
   double? _valorPorLitro;
   double? _valorTotal;
+  CentavosConfig _centavosConfig = const CentavosConfig(
+    configurarCentavos: true,
+    dataInicio: CentavosConfig.defaultDataInicio,
+  );
   double? _odometroMin;
+  bool _buscandoOdometroSascar = false;
   String? _fotoOdometroUrl;
   String? _bombaUrl;
   String? _proprietarioNomeFallback;
   String? _veiculoNomeFallback;
   String? _motoristaNomeFallback;
+
+  // Preço de custo automático (proprietários com a flag ativada)
+  String? _custoAutomaticoKey;
+  double? _custoAutomaticoValor;
+  bool _custoAutomaticoLoading = false;
 
   bool get _isEdit => widget.original != null;
   String get _proprietarioNomeSelecionado {
@@ -96,11 +116,17 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable().catchError((_) {});
+    if (!_isEdit) {
+      _litrosCtrl.addListener(_agendarSalvarRascunho);
+      _odometroCtrl.addListener(_agendarSalvarRascunho);
+      _obsCtrl.addListener(_agendarSalvarRascunho);
+    }
     _load();
   }
 
   @override
   void dispose() {
+    _draftDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     WakelockPlus.disable().catchError((_) {});
     _litrosCtrl.dispose();
@@ -120,6 +146,18 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
   }
 
   // ─── Rascunho ────────────────────────────────────────────────────────────
+
+  /// Autosave com debounce: agenda a gravação do rascunho ~1,2s após a última
+  /// digitação. Chamado pelos listeners dos campos e pelas seleções, garante
+  /// que o preenchimento sobreviva a um encerramento abrupto do app (antes o
+  /// rascunho só era salvo ao pausar/voltar).
+  void _agendarSalvarRascunho() {
+    if (_isEdit) return;
+    _draftDebounce?.cancel();
+    _draftDebounce = Timer(const Duration(milliseconds: 1200), () {
+      _salvarRascunho();
+    });
+  }
 
   Future<void> _salvarRascunho() async {
     if (_isEdit) return;
@@ -161,8 +199,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
 
       // Rascunhos com mais de 4 horas são descartados automaticamente
       final savedAt = DateTime.tryParse(draft['savedAt']?.toString() ?? '');
-      if (savedAt != null &&
-          DateTime.now().difference(savedAt).inHours >= 4) {
+      if (savedAt != null && DateTime.now().difference(savedAt).inHours >= 4) {
         await prefs.remove(_draftKey);
         return;
       }
@@ -254,8 +291,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Sair sem salvar?'),
-        content:
-            const Text('O abastecimento ainda não foi registrado.'),
+        content: const Text('O abastecimento ainda não foi registrado.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, _SaidaAcao.continuar),
@@ -263,13 +299,11 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, _SaidaAcao.descartar),
-            style:
-                TextButton.styleFrom(foregroundColor: AppTheme.danger),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
             child: const Text('Descartar'),
           ),
           ElevatedButton(
-            onPressed: () =>
-                Navigator.pop(ctx, _SaidaAcao.salvarRascunho),
+            onPressed: () => Navigator.pop(ctx, _SaidaAcao.salvarRascunho),
             child: const Text('Salvar rascunho'),
           ),
         ],
@@ -300,6 +334,8 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     _motoristas = await db.listMotoristas(local: localAtual);
     _valores = await db.listValoresCombustivel(local: localAtual);
     _tiposCombustivel = _extrairTiposCombustivel(_valores);
+    _centavosConfig =
+        await CentavosConfig.loadRemote(AppState.instance.api);
 
     if (_isEdit) {
       var o = widget.original!;
@@ -338,6 +374,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
 
     // Oferece restaurar rascunho somente em novo abastecimento
     if (!_isEdit) await _tentarRestaurarRascunho();
+    if (mounted) _recalcular();
   }
 
   Future<Abastecimento?> _buscarAbastecimentoAtualizado(
@@ -484,26 +521,130 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     );
   }
 
+  /// Busca o odômetro atual do veículo direto da Sascar (via backend) e
+  /// preenche o campo. O valor continua editável — é apenas uma sugestão.
+  Future<void> _buscarOdometroSascar() async {
+    final placa = (_veiculoSelecionado?.placa ?? '').trim();
+    if (placa.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Selecione a placa/veiculo antes de buscar o odometro.'),
+        backgroundColor: AppTheme.danger,
+      ));
+      return;
+    }
+
+    setState(() => _buscandoOdometroSascar = true);
+    try {
+      final resp = await AppState.instance.api.get(
+        '/veiculos/odometro-sascar',
+        query: {'placa': placa},
+      );
+      final raw = resp is Map ? resp['odometro'] : null;
+      int? odo;
+      if (raw is num) {
+        odo = raw.round();
+      } else if (raw is String) {
+        odo = int.tryParse(raw) ?? double.tryParse(raw.replaceAll(',', '.'))?.round();
+      }
+      if (odo == null) {
+        throw Exception('Odometro nao retornado pela Sascar.');
+      }
+      if (!mounted) return;
+      setState(() => _odometroCtrl.text = odo.toString());
+
+      final fonte = resp is Map ? resp['fonte']?.toString() : null;
+      final aviso = resp is Map ? resp['aviso']?.toString() : null;
+      final aoVivo = fonte == 'sascar_live';
+      final msg = aoVivo
+          ? 'Odometro da Sascar: ${AppDates.number(odo.toDouble(), digits: 0)} km. Voce pode editar.'
+          : (aviso ??
+              'Odometro sincronizado: ${AppDates.number(odo.toDouble(), digits: 0)} km. Voce pode editar.');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg),
+        backgroundColor: aoVivo ? AppTheme.success : AppTheme.warning,
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is ApiException
+          ? e.message
+          : (e is OfflineException ? e.message : e.toString());
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Nao foi possivel buscar o odometro: $msg'),
+        backgroundColor: AppTheme.danger,
+      ));
+    } finally {
+      if (mounted) setState(() => _buscandoOdometroSascar = false);
+    }
+  }
+
+  /// Busca o preço de custo automático (última nota fiscal de entrada) para
+  /// o tipo de combustível/local informados, usado quando o proprietário
+  /// selecionado tem a flag "preço de custo automático" ativada. Resultado
+  /// é cacheado por tipo+local para evitar requisições repetidas.
+  Future<void> _atualizarPrecoCustoAutomatico(String tipo, String local) async {
+    final key = '$tipo|$local';
+    if (_custoAutomaticoKey == key &&
+        (_custoAutomaticoValor != null || _custoAutomaticoLoading)) {
+      return;
+    }
+    _custoAutomaticoKey = key;
+    _custoAutomaticoValor = null;
+    _custoAutomaticoLoading = true;
+    try {
+      final resp = await AppState.instance.api.get(
+        '/abastecimentos/preco-custo-automatico/$tipo',
+        query: {'local': local},
+      );
+      final raw = resp is Map ? resp['valor'] : null;
+      double? valor;
+      if (raw is num) {
+        valor = raw.toDouble();
+      } else if (raw is String) {
+        valor = double.tryParse(raw);
+      }
+      _custoAutomaticoValor = valor ?? 0;
+    } catch (_) {
+      _custoAutomaticoValor = 0;
+    } finally {
+      _custoAutomaticoLoading = false;
+    }
+    _recalcular();
+  }
+
   void _recalcular() {
     final litros = parseDecimal(_litrosCtrl.text) ?? 0;
     double? preco = _valorPorLitro;
     if (!_isEdit && _tipoCombustivel != null) {
-      // pega valor vigente da tabela local
       final localAtual = _local ?? AppState.instance.auth.filialAtual;
-      final first = _valores
-          .where((v) =>
-              v.tipoCombustivel == _tipoCombustivel &&
-              ((v.local ?? 'Matriz') == (localAtual ?? 'Matriz')))
-          .toList();
-      if (first.isNotEmpty) {
-        preco = first.first.valor;
+      final localResolvido = localAtual ?? 'Matriz';
+      if (_proprietarioSelecionadoUsaPrecoCusto) {
+        final key = '$_tipoCombustivel|$localResolvido';
+        if (_custoAutomaticoKey == key && _custoAutomaticoValor != null) {
+          preco = _custoAutomaticoValor;
+        } else {
+          // dispara a busca assíncrona (resultado aplicado quando concluir)
+          _atualizarPrecoCustoAutomatico(_tipoCombustivel!, localResolvido);
+        }
+      } else {
+        // pega valor vigente da tabela local
+        final first = _valores
+            .where((v) =>
+                v.tipoCombustivel == _tipoCombustivel &&
+                ((v.local ?? 'Matriz') == localResolvido))
+            .toList();
+        if (first.isNotEmpty) {
+          preco = first.first.valor;
+        }
       }
     }
     _valorPorLitro = preco;
     final totalCalculado = (preco ?? 0) * litros;
     final totalComCentavos =
         ((totalCalculado + 0.0000001) * 100).roundToDouble() / 100;
-    _valorTotal = (totalComCentavos + 0.5).floorToDouble();
+    _valorTotal = _centavosConfig.aplicaNaData(_data) ||
+            (litros - 1).abs() < 0.000001
+        ? totalComCentavos
+        : (totalComCentavos + 0.5).floorToDouble();
     if (mounted) setState(() {});
   }
 
@@ -643,6 +784,17 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     return proprietario.first.odometroObrigatorio;
   }
 
+  bool get _proprietarioSelecionadoUsaPrecoCusto {
+    final veiculo = _veiculos.where((v) => v.idVeiculo == _idVeiculo);
+    final idProprietarioVeiculo =
+        veiculo.isNotEmpty ? veiculo.first.idProprietario : null;
+    final idProprietario = idProprietarioVeiculo ?? _idProprietario;
+    final proprietario =
+        _proprietarios.where((p) => p.idProprietario == idProprietario);
+    if (proprietario.isEmpty) return false;
+    return proprietario.first.precoCustoAutomatico;
+  }
+
   String? _validar() {
     if (_idVeiculo == null) return 'Selecione a placa/veiculo.';
     if (_idProprietario == null) {
@@ -671,10 +823,13 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     if (_proprietarioSelecionadoExigeOdometro && odom == null) {
       return 'Odometro e obrigatorio para este proprietario.';
     }
-    if (odom != null && _odometroMin != null && odom <= _odometroMin!) {
-      final minimo = _odometroMin! + 1;
-      return 'Odometro deve ser maior que o ultimo registrado (${AppDates.number(_odometroMin!, digits: 0)}). Minimo: ${AppDates.number(minimo, digits: 0)}.';
-    }
+    // Bloqueio de odometro menor/igual ao ultimo registrado desativado
+    // temporariamente a pedido (em breve retornaremos com o bloqueio).
+    // Para reativar, restaure a validacao abaixo:
+    // if (odom != null && _odometroMin != null && odom <= _odometroMin!) {
+    //   final minimo = _odometroMin! + 1;
+    //   return 'Odometro deve ser maior que o ultimo registrado (${AppDates.number(_odometroMin!, digits: 0)}). Minimo: ${AppDates.number(minimo, digits: 0)}.';
+    // }
     if (_valorPorLitro == null || _valorPorLitro! <= 0) {
       return 'Nao foi possivel obter o preco do combustivel. Cadastre um valor primeiro.';
     }
@@ -690,6 +845,11 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
       return;
     }
     setState(() => _saving = true);
+
+    // Uma foto que sumiu do armazenamento (o Android limpa arquivos temporarios
+    // quando falta espaco) NAO pode impedir o registro. Descarta a referencia
+    // morta e segue salvando o dado numerico; a foto pode ser reanexada depois.
+    final anexosAusentes = await _sanitizarAnexosAusentes();
 
     final user = AppState.instance.auth;
     final litros = parseDecimal(_litrosCtrl.text)!;
@@ -736,32 +896,22 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     final db = AppState.instance.db;
 
     try {
-      final missingAttachmentMessage = await _validarAnexosLocaisPresentes();
-      if (missingAttachmentMessage != null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(missingAttachmentMessage),
-            backgroundColor: AppTheme.danger,
-          ),
-        );
-        return;
-      }
-
       if (!_isEdit) {
         await db.insertAbastecimentoLocal(abast);
         final printResult = await _printAutoIfEnabled(abast);
         if (!mounted) return;
         await _limparRascunho();
         Navigator.pop(context, true);
+        final baseMsg = anexosAusentes.isEmpty
+            ? 'Registro salvo. Foto e IA seguem na sincronizacao.'
+            : 'Registro salvo SEM ${anexosAusentes.join(' e ')} '
+                '(arquivo nao encontrado). Edite o registro depois para anexar a foto.';
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(_saveMessage(
-            'Registro salvo. Foto e IA seguem na sincronizacao.',
-            printResult,
-          )),
-          backgroundColor: printResult?.success == false
-              ? AppTheme.warning
-              : AppTheme.success,
+          content: Text(_saveMessage(baseMsg, printResult)),
+          backgroundColor:
+              (anexosAusentes.isNotEmpty || printResult?.success == false)
+                  ? AppTheme.warning
+                  : AppTheme.success,
         ));
       } else {
         final id = widget.original!.idAbastecimento;
@@ -793,19 +943,28 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     }
   }
 
-  Future<String?> _validarAnexosLocaisPresentes() async {
-    for (final item in [
-      (label: 'imagem da bomba', value: _bombaUrl),
-      (label: 'foto do hodometro', value: _fotoOdometroUrl),
-    ]) {
-      final raw = item.value?.trim();
-      if (raw == null || raw.isEmpty || _isRemoteUrl(raw)) continue;
-      final file = _attachmentFile(raw);
-      if (!await file.exists()) {
-        return 'Arquivo da ${item.label} nao foi encontrado. Anexe a foto novamente.';
-      }
+  /// Verifica os anexos locais (foto da bomba e do hodometro). Se o arquivo
+  /// tiver sumido do armazenamento, remove a referencia morta (para nao quebrar
+  /// o upload na sincronizacao) e devolve os rotulos afetados — SEM impedir o
+  /// registro. O dado numerico do abastecimento nunca pode ser perdido por
+  /// causa de uma foto ausente.
+  Future<List<String>> _sanitizarAnexosAusentes() async {
+    Future<bool> arquivoSumiu(String? raw) async {
+      final v = raw?.trim();
+      if (v == null || v.isEmpty || _isRemoteUrl(v)) return false;
+      return !await _attachmentFile(v).exists();
     }
-    return null;
+
+    final ausentes = <String>[];
+    if (await arquivoSumiu(_bombaUrl)) {
+      _bombaUrl = null;
+      ausentes.add('imagem da bomba');
+    }
+    if (await arquivoSumiu(_fotoOdometroUrl)) {
+      _fotoOdometroUrl = null;
+      ausentes.add('foto do hodometro');
+    }
+    return ausentes;
   }
 
   String _formatErrorForLog(Object error) {
@@ -884,6 +1043,9 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     try {
       final src = await _pickSource();
       if (src == null) return;
+      // Bloqueia o Salvar enquanto a foto está sendo capturada/copiada,
+      // para o registro nunca ser salvo com o anexo pela metade.
+      setState(() => _anexando = true);
       final picker = ImagePicker();
       final file = await picker.pickImage(
         source: src,
@@ -903,6 +1065,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
           _status = 'Pendente';
         }
       });
+      _agendarSalvarRascunho();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -922,7 +1085,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
         ),
       );
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() => _anexando = false);
     }
   }
 
@@ -967,6 +1130,76 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  /// Abre a imagem anexada (local ou remota) em um modal com zoom, para o
+  /// operador conferir a foto antes de salvar o abastecimento.
+  void _visualizarImagem({required String titulo, required String value}) {
+    final remote = _isRemoteUrl(value);
+    final Widget imagem = remote
+        ? CachedRemoteImage(
+            url: value,
+            fit: BoxFit.contain,
+            thumbnail: false,
+            error: const Center(
+              child: Icon(Icons.broken_image_outlined,
+                  size: 64, color: AppTheme.textMuted),
+            ),
+          )
+        : Image.file(
+            _attachmentFile(value),
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_outlined,
+                  size: 64, color: AppTheme.textMuted),
+            ),
+          );
+
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(12),
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              height: MediaQuery.of(ctx).size.height * 0.75,
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 5,
+                child: Center(child: imagem),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              left: 12,
+              right: 48,
+              child: Text(
+                titulo,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  shadows: [Shadow(color: Colors.black, blurRadius: 6)],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 0,
+              child: IconButton(
+                tooltip: 'Fechar',
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(ctx).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildImagemAnexoCard({
     required String titulo,
     required String? url,
@@ -978,12 +1211,12 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
 
     Widget? preview;
     if (hasImage && remote) {
-      preview = Image.network(
-        value,
+      preview = CachedRemoteImage(
+        url: value,
         height: 128,
         width: double.infinity,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Center(
+        error: const Center(
           child: Icon(Icons.broken_image_outlined, color: AppTheme.textMuted),
         ),
       );
@@ -1032,19 +1265,44 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
             ),
             if (preview != null) ...[
               const SizedBox(height: 8),
-              ClipRRect(
+              InkWell(
+                onTap: () => _visualizarImagem(titulo: titulo, value: value),
                 borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  height: 128,
-                  width: double.infinity,
-                  child: preview,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    height: 128,
+                    width: double.infinity,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        preview,
+                        const Positioned(
+                          right: 6,
+                          bottom: 6,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius:
+                                  BorderRadius.all(Radius.circular(6)),
+                            ),
+                            child: Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(Icons.zoom_in,
+                                  size: 18, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
               Text(
                 remote
-                    ? value
-                    : 'Imagem salva localmente. Será enviada na próxima sincronização.',
+                    ? 'Toque na imagem para ampliar.'
+                    : 'Imagem salva localmente. Toque para ampliar. Será enviada na próxima sincronização.',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -1061,11 +1319,15 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
             ],
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: _saving ? null : () => _uploadImagem(bomba: bomba),
+              onPressed: (_saving || _anexando)
+                  ? null
+                  : () => _uploadImagem(bomba: bomba),
               icon: Icon(hasImage
                   ? Icons.swap_horiz_outlined
                   : Icons.add_photo_alternate_outlined),
-              label: Text(hasImage ? 'Substituir' : 'Anexar'),
+              label: Text(_anexando
+                  ? 'Anexando...'
+                  : (hasImage ? 'Substituir' : 'Anexar')),
             ),
           ],
         ),
@@ -1291,7 +1553,9 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
       _idVeiculo = null;
       _idMotorista = null;
     });
+    _agendarSalvarRascunho();
     await _atualizarOdometroMin();
+    _recalcular();
   }
 
   Future<Proprietario?> _criarProprietarioInline({String? nomeInicial}) async {
@@ -1558,6 +1822,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
       _veiculoNomeFallback = selected.resumo;
       _preencherProprietarioPeloVeiculo(selected);
     });
+    _agendarSalvarRascunho();
     if (proprietarioDoVeiculo != null &&
         proprietarioDoVeiculo.isNotEmpty &&
         _isProprietarioBloqueado(proprietarioDoVeiculo.first)) {
@@ -1570,6 +1835,139 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
     }
     await _atualizarOdometroMin();
     _recalcular();
+  }
+
+  Map<String, dynamic> _responseDataMap(Object? resp) {
+    if (resp is! Map) return <String, dynamic>{};
+    final map = Map<String, dynamic>.from(resp);
+    for (final key in const ['data', 'veiculo', 'motorista']) {
+      final value = map[key];
+      if (value is Map) {
+        return Map<String, dynamic>.from(value);
+      }
+    }
+    return map;
+  }
+
+  String? _extractRemoteId(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  String? _stringFromData(Map<String, dynamic> data, String key) {
+    final value = data[key]?.toString().trim();
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
+  Future<Veiculo> _sincronizarVeiculoInline(
+    Veiculo local,
+    String localId, {
+    String? proprietarioNome,
+  }) async {
+    if (!localId.startsWith('local_')) return local;
+    try {
+      final payload = local.toJson()..remove('id_veiculo');
+      final resp = await AppState.instance.api.post('/veiculos', {
+        ...payload,
+        '_client_request_id': localId,
+      }).timeout(const Duration(seconds: 20));
+      final data = _responseDataMap(resp);
+      final remoteId = _extractRemoteId(data, const ['id_veiculo', 'id']);
+      if (remoteId == null || remoteId.startsWith('local_')) return local;
+
+      final remote = Veiculo(
+        idVeiculo: remoteId,
+        placa: _stringFromData(data, 'placa') ?? local.placa,
+        marca: _stringFromData(data, 'marca') ?? local.marca,
+        modelo: _stringFromData(data, 'modelo') ?? local.modelo,
+        ano: int.tryParse(data['ano']?.toString() ?? '') ?? local.ano,
+        tipoCombustivel:
+            _stringFromData(data, 'tipo_combustivel') ?? local.tipoCombustivel,
+        numeroChassi:
+            _stringFromData(data, 'numero_chassi') ?? local.numeroChassi,
+        idProprietario:
+            _stringFromData(data, 'id_proprietario') ?? local.idProprietario,
+        odometro: double.tryParse(data['odometro']?.toString() ?? '') ??
+            local.odometro,
+        renavam: _stringFromData(data, 'renavam') ?? local.renavam,
+        cor: _stringFromData(data, 'cor') ?? local.cor,
+        foto: _stringFromData(data, 'foto') ?? local.foto,
+        local: _stringFromData(data, 'local') ?? local.local,
+        proprietarioNome: _stringFromData(data, 'proprietario_nome') ??
+            proprietarioNome ??
+            local.proprietarioNome,
+      );
+      await AppState.instance.db.promoteLocalVeiculo(
+        localId: localId,
+        remote: remote,
+      );
+      await AppState.instance.db.addSyncLog(
+        level: 'info',
+        message: 'Veiculo inline sincronizado imediatamente',
+        context: 'localId=$localId remoteId=$remoteId placa=${remote.placa}',
+      );
+      return remote;
+    } catch (e) {
+      await AppState.instance.db.addSyncLog(
+        level: 'warn',
+        message: 'Veiculo inline ficou para sincronizacao posterior',
+        context: 'localId=$localId placa=${local.placa} erro=$e',
+      );
+      return local;
+    }
+  }
+
+  Future<Motorista> _sincronizarMotoristaInline(
+    Motorista local,
+    String localId, {
+    String? proprietarioNome,
+  }) async {
+    if (!localId.startsWith('local_')) return local;
+    try {
+      final payload = local.toJson()..remove('id_motorista');
+      final resp = await AppState.instance.api.post('/motoristas', {
+        ...payload,
+        '_client_request_id': localId,
+      }).timeout(const Duration(seconds: 20));
+      final data = _responseDataMap(resp);
+      final remoteId = _extractRemoteId(data, const ['id_motorista', 'id']);
+      if (remoteId == null || remoteId.startsWith('local_')) return local;
+
+      final remote = Motorista(
+        idMotorista: remoteId,
+        nome: _stringFromData(data, 'nome') ?? local.nome,
+        apelido: _stringFromData(data, 'apelido') ?? local.apelido,
+        idProprietario:
+            _stringFromData(data, 'id_proprietario') ?? local.idProprietario,
+        documento: _stringFromData(data, 'documento') ?? local.documento,
+        celular: _stringFromData(data, 'celular') ?? local.celular,
+        local: _stringFromData(data, 'local') ?? local.local,
+        proprietarioNome: _stringFromData(data, 'proprietario_nome') ??
+            proprietarioNome ??
+            local.proprietarioNome,
+      );
+      await AppState.instance.db.promoteLocalMotorista(
+        localId: localId,
+        remote: remote,
+      );
+      await AppState.instance.db.addSyncLog(
+        level: 'info',
+        message: 'Motorista inline sincronizado imediatamente',
+        context: 'localId=$localId remoteId=$remoteId nome=${remote.nome}',
+      );
+      return remote;
+    } catch (e) {
+      await AppState.instance.db.addSyncLog(
+        level: 'warn',
+        message: 'Motorista inline ficou para sincronizacao posterior',
+        context: 'localId=$localId nome=${local.nome} erro=$e',
+      );
+      return local;
+    }
   }
 
   Future<Veiculo?> _criarVeiculoInline({String? placaInicial}) async {
@@ -1644,7 +2042,8 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                           setDialogState(() => salvando = true);
                           try {
                             final proprietarioSelecionado = _proprietarios
-                                .where((p) => p.idProprietario == idProprietario)
+                                .where(
+                                    (p) => p.idProprietario == idProprietario)
                                 .toList();
                             final localProprietario =
                                 proprietarioSelecionado.isNotEmpty
@@ -1664,7 +2063,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                               novo,
                               isCreate: true,
                             );
-                            final created = Veiculo(
+                            final createdLocal = Veiculo(
                               idVeiculo: id,
                               placa: placa,
                               modelo: novo.modelo,
@@ -1676,9 +2075,17 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                                       ? proprietarioSelecionado.first.nome
                                       : null,
                             );
+                            final created = await _sincronizarVeiculoInline(
+                              createdLocal,
+                              id,
+                              proprietarioNome:
+                                  proprietarioSelecionado.isNotEmpty
+                                      ? proprietarioSelecionado.first.nome
+                                      : null,
+                            );
                             if (!mounted) return;
                             setState(() {
-                              _idProprietario = idProprietario;
+                              _idProprietario = created.idProprietario;
                               _veiculos.add(created);
                               _veiculos.sort((a, b) => a.placa
                                   .toLowerCase()
@@ -1686,9 +2093,13 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                             });
                             Navigator.pop(ctx, created);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
+                              SnackBar(
                                 content: Text(
-                                    'Veiculo criado. Sera sincronizado automaticamente.'),
+                                  created.idVeiculo?.startsWith('local_') ==
+                                          true
+                                      ? 'Veiculo criado localmente. Sera sincronizado automaticamente.'
+                                      : 'Veiculo criado e sincronizado.',
+                                ),
                                 backgroundColor: AppTheme.success,
                               ),
                             );
@@ -1877,6 +2288,7 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
       }
     });
     await _atualizarOdometroMin();
+    _recalcular();
   }
 
   Future<Motorista?> _criarMotoristaInline({String? nomeInicial}) async {
@@ -1950,7 +2362,8 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                           setDialogState(() => salvando = true);
                           try {
                             final proprietarioSelecionado = _proprietarios
-                                .where((p) => p.idProprietario == idProprietario)
+                                .where(
+                                    (p) => p.idProprietario == idProprietario)
                                 .toList();
                             final localProprietario =
                                 proprietarioSelecionado.isNotEmpty
@@ -1969,16 +2382,28 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                               novo,
                               isCreate: true,
                             );
-                            final created = Motorista(
+                            final createdLocal = Motorista(
                               idMotorista: id,
                               nome: nome,
                               documento: novo.documento,
                               idProprietario: idProprietario,
                               local: novo.local,
+                              proprietarioNome:
+                                  proprietarioSelecionado.isNotEmpty
+                                      ? proprietarioSelecionado.first.nome
+                                      : null,
+                            );
+                            final created = await _sincronizarMotoristaInline(
+                              createdLocal,
+                              id,
+                              proprietarioNome:
+                                  proprietarioSelecionado.isNotEmpty
+                                      ? proprietarioSelecionado.first.nome
+                                      : null,
                             );
                             if (!mounted) return;
                             setState(() {
-                              _idProprietario = idProprietario;
+                              _idProprietario = created.idProprietario;
                               _motoristas.add(created);
                               _motoristas.sort((a, b) => a.nome
                                   .toLowerCase()
@@ -1986,9 +2411,13 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
                             });
                             Navigator.pop(ctx, created);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
+                              SnackBar(
                                 content: Text(
-                                    'Motorista criado. Sera sincronizado automaticamente.'),
+                                  created.idMotorista?.startsWith('local_') ==
+                                          true
+                                      ? 'Motorista criado localmente. Sera sincronizado automaticamente.'
+                                      : 'Motorista criado e sincronizado.',
+                                ),
                                 backgroundColor: AppTheme.success,
                               ),
                             );
@@ -2032,275 +2461,357 @@ class _AbastecimentoFormScreenState extends State<AbastecimentoFormScreen>
         if (!didPop) _confirmarSaida();
       },
       child: Scaffold(
-      appBar: AppBar(
-        title: Text(_isEdit ? 'Editar abastecimento' : 'Novo abastecimento'),
-        actions: [
-          if (_isEdit &&
-              widget.original?.status != 'Cancelado' &&
-              Roles.isAdmin(AppState.instance.auth.tipo))
-            IconButton(
-              tooltip: 'Cancelar registro',
-              onPressed: _confirmarCancelamento,
-              icon: const Icon(Icons.block, color: AppTheme.danger),
-            ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : LoadingOverlay(
-              show: _saving,
-              message: 'Salvando...',
-              child: ListView(
-                padding:
-                    EdgeInsets.fromLTRB(14, 14, 14, 112 + bottomSafePadding),
-                children: [
-                  if (_proprietarioBloqueado)
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: AppTheme.danger.withOpacity(0.15),
-                        border: Border.all(color: AppTheme.danger),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'Proprietario BLOQUEADO. Nao permite novos registros.',
-                        style: TextStyle(
-                            color: AppTheme.danger,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  const SectionHeader(texto: 'Dados principais'),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: _selecionarVeiculo,
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Placa / Veiculo',
-                        suffixIcon: Icon(Icons.search),
-                      ),
-                      child: Text(
-                        _idVeiculo == null
-                            ? 'Toque para selecionar'
-                            : _veiculoNomeSelecionado,
-                        style: TextStyle(
-                          color: _idVeiculo == null
-                              ? AppTheme.textMuted
-                              : AppTheme.textStrong,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: _selecionarProprietario,
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Proprietario',
-                        suffixIcon: Icon(Icons.search),
-                      ),
-                      child: Text(
-                        _idProprietario == null
-                            ? 'Preenchido automaticamente pela placa'
-                            : _proprietarioNomeSelecionado,
-                        style: TextStyle(
-                          color: _idProprietario == null
-                              ? AppTheme.textMuted
-                              : AppTheme.textStrong,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: _selecionarMotorista,
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Motorista',
-                        suffixIcon: Icon(Icons.search),
-                      ),
-                      child: Text(
-                        _motoristaNomeSelecionado,
-                        style: TextStyle(
-                          color: _idMotorista == null
-                              ? AppTheme.textMuted
-                              : AppTheme.textStrong,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: _tipoCombustivel,
-                    isExpanded: true,
-                    decoration:
-                        const InputDecoration(labelText: 'Tipo de combustivel'),
-                    items: _tiposCombustivel
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                        .toList(),
-                    onChanged: _isEdit
-                        ? null
-                        : (v) {
-                            setState(() => _tipoCombustivel = v);
-                            _recalcular();
-                          },
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final p = await pickDateIso(context, initialIso: _data);
-                      if (p != null) setState(() => _data = p);
-                    },
-                    icon: const Icon(Icons.calendar_today_outlined),
-                    label: Text('Data: ${AppDates.formatDateBr(_data)}'),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final parts = _hora.split(':');
-                      final selected = await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay(
-                          hour:
-                              int.tryParse(parts.first) ?? DateTime.now().hour,
-                          minute: parts.length > 1
-                              ? (int.tryParse(parts[1]) ??
-                                  DateTime.now().minute)
-                              : DateTime.now().minute,
-                        ),
-                      );
-                      if (selected != null) {
-                        setState(() {
-                          _hora =
-                              '${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}';
-                        });
-                      }
-                    },
-                    icon: const Icon(Icons.schedule_outlined),
-                    label: Text('Hora: $_hora'),
-                  ),
-                  const SizedBox(height: 18),
-                  const SectionHeader(texto: 'Medicao'),
-                  DecimalField(
-                    controller: _litrosCtrl,
-                    label: 'Quantidade',
-                    suffix: 'L',
-                    onChanged: (_) => _recalcular(),
-                  ),
-                  const SizedBox(height: 12),
-                  DecimalField(
-                    controller: _odometroCtrl,
-                    label: _odometroMin != null
-                        ? 'Odometro${_proprietarioSelecionadoExigeOdometro ? ' *' : ''} (minimo: ${AppDates.number(_odometroMin! + 1, digits: 0)})'
-                        : 'Odometro${_proprietarioSelecionadoExigeOdometro ? ' *' : ''}',
-                    suffix: 'km',
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppTheme.surfaceAlt,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AppTheme.border),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Valor por litro',
-                                  style: TextStyle(
-                                      color: AppTheme.textMuted, fontSize: 11)),
-                              const SizedBox(height: 3),
-                              Text(AppDates.money(_valorPorLitro),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primary.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AppTheme.primary),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Valor total',
-                                  style: TextStyle(
-                                      color: AppTheme.textMuted, fontSize: 11)),
-                              const SizedBox(height: 3),
-                              Text(AppDates.money(_valorTotal),
-                                  style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      color: AppTheme.primary)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  const SectionHeader(texto: 'Outros'),
-                  DropdownButtonFormField<String>(
-                    value: _local,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Local'),
-                    items: AppState.instance.auth.filiaisAcesso
-                        .map((l) => DropdownMenuItem(value: l, child: Text(l)))
-                        .toList(),
-                    onChanged: (v) {
-                      setState(() => _local = v);
-                      _recalcular();
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  const SectionHeader(texto: 'Imagens'),
-                  _buildImagemAnexoCard(
-                    titulo: 'Foto Hodometro',
-                    url: _fotoOdometroUrl,
-                    bomba: false,
-                  ),
-                  _buildImagemAnexoCard(
-                    titulo: 'Imagem Bomba',
-                    url: _bombaUrl,
-                    bomba: true,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _obsCtrl,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                        labelText: 'Observacao (opcional)'),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: _saving ? null : _salvar,
-                    icon: const Icon(Icons.save_outlined),
-                    label: Text(_isEdit ? 'Salvar alteracoes' : 'Registrar'),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_isEdit && widget.original!.pendingSync)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Text(
-                        'Registro pendente de envio - edicao offline pode ser sobrescrita apos sync.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: AppTheme.warning),
-                      ),
-                    ),
-                ],
+        appBar: AppBar(
+          title: Text(_isEdit ? 'Editar abastecimento' : 'Novo abastecimento'),
+          actions: [
+            if (_isEdit &&
+                widget.original?.status != 'Cancelado' &&
+                Roles.isAdmin(AppState.instance.auth.tipo))
+              IconButton(
+                tooltip: 'Cancelar registro',
+                onPressed: _confirmarCancelamento,
+                icon: const Icon(Icons.block, color: AppTheme.danger),
               ),
-            ),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : LoadingOverlay(
+                show: _saving,
+                message: 'Salvando...',
+                child: ListView(
+                  padding:
+                      EdgeInsets.fromLTRB(14, 14, 14, 112 + bottomSafePadding),
+                  children: [
+                    if (_proprietarioBloqueado)
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.danger.withOpacity(0.15),
+                          border: Border.all(color: AppTheme.danger),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'Proprietario BLOQUEADO. Nao permite novos registros.',
+                          style: TextStyle(
+                              color: AppTheme.danger,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    const SectionHeader(texto: 'Dados principais'),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: _selecionarVeiculo,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Placa / Veiculo',
+                          suffixIcon: Icon(Icons.search),
+                        ),
+                        child: Text(
+                          _idVeiculo == null
+                              ? 'Toque para selecionar'
+                              : _veiculoNomeSelecionado,
+                          style: TextStyle(
+                            color: _idVeiculo == null
+                                ? AppTheme.textMuted
+                                : AppTheme.textStrong,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: _selecionarProprietario,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Proprietario',
+                          suffixIcon: Icon(Icons.search),
+                        ),
+                        child: Text(
+                          _idProprietario == null
+                              ? 'Preenchido automaticamente pela placa'
+                              : _proprietarioNomeSelecionado,
+                          style: TextStyle(
+                            color: _idProprietario == null
+                                ? AppTheme.textMuted
+                                : AppTheme.textStrong,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: _selecionarMotorista,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Motorista',
+                          suffixIcon: Icon(Icons.search),
+                        ),
+                        child: Text(
+                          _motoristaNomeSelecionado,
+                          style: TextStyle(
+                            color: _idMotorista == null
+                                ? AppTheme.textMuted
+                                : AppTheme.textStrong,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: _tipoCombustivel,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                          labelText: 'Tipo de combustivel'),
+                      items: _tiposCombustivel
+                          .map(
+                              (t) => DropdownMenuItem(value: t, child: Text(t)))
+                          .toList(),
+                      onChanged: _isEdit
+                          ? null
+                          : (v) {
+                              setState(() => _tipoCombustivel = v);
+                              _recalcular();
+                            },
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final p = await pickDateIso(context, initialIso: _data);
+                        if (p != null) {
+                          setState(() => _data = p);
+                          _recalcular();
+                        }
+                      },
+                      icon: const Icon(Icons.calendar_today_outlined),
+                      label: Text('Data: ${AppDates.formatDateBr(_data)}'),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final parts = _hora.split(':');
+                        final selected = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay(
+                            hour: int.tryParse(parts.first) ??
+                                DateTime.now().hour,
+                            minute: parts.length > 1
+                                ? (int.tryParse(parts[1]) ??
+                                    DateTime.now().minute)
+                                : DateTime.now().minute,
+                          ),
+                        );
+                        if (selected != null) {
+                          setState(() {
+                            _hora =
+                                '${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}';
+                          });
+                        }
+                      },
+                      icon: const Icon(Icons.schedule_outlined),
+                      label: Text('Hora: $_hora'),
+                    ),
+                    const SizedBox(height: 18),
+                    const SectionHeader(texto: 'Medicao'),
+                    DecimalField(
+                      controller: _litrosCtrl,
+                      label: 'Quantidade',
+                      suffix: 'L',
+                      onChanged: (_) => _recalcular(),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: DecimalField(
+                            controller: _odometroCtrl,
+                            label: _odometroMin != null
+                                ? 'Odometro${_proprietarioSelecionadoExigeOdometro ? ' *' : ''} (ultimo: ${AppDates.number(_odometroMin!, digits: 0)})'
+                                : 'Odometro${_proprietarioSelecionadoExigeOdometro ? ' *' : ''}',
+                            suffix: 'km',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          height: 52,
+                          child: FilledButton.tonalIcon(
+                            onPressed:
+                                _buscandoOdometroSascar ? null : _buscarOdometroSascar,
+                            icon: _buscandoOdometroSascar
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.gps_fixed, size: 20),
+                            label: Text(_buscandoOdometroSascar ? '...' : 'Sascar'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppTheme.primary.withOpacity(0.12),
+                              foregroundColor: AppTheme.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppTheme.surfaceAlt,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppTheme.border),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text('Valor por litro',
+                                        style: TextStyle(
+                                            color: AppTheme.textMuted,
+                                            fontSize: 11)),
+                                    if (!_isEdit)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color:
+                                              _proprietarioSelecionadoUsaPrecoCusto
+                                                  ? AppTheme.success
+                                                      .withOpacity(0.15)
+                                                  : AppTheme.surface,
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color:
+                                                _proprietarioSelecionadoUsaPrecoCusto
+                                                    ? AppTheme.success
+                                                    : AppTheme.border,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          _proprietarioSelecionadoUsaPrecoCusto
+                                              ? 'Custo'
+                                              : 'Tabela',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color:
+                                                _proprietarioSelecionadoUsaPrecoCusto
+                                                    ? AppTheme.success
+                                                    : AppTheme.textMuted,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                _custoAutomaticoLoading
+                                    ? const SizedBox(
+                                        height: 16,
+                                        width: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : Text(AppDates.money(_valorPorLitro),
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primary.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppTheme.primary),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Valor total',
+                                    style: TextStyle(
+                                        color: AppTheme.textMuted,
+                                        fontSize: 11)),
+                                const SizedBox(height: 3),
+                                Text(AppDates.money(_valorTotal),
+                                    style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w800,
+                                        color: AppTheme.primary)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    const SectionHeader(texto: 'Outros'),
+                    DropdownButtonFormField<String>(
+                      value: _local,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Local'),
+                      items: AppState.instance.auth.filiaisAcesso
+                          .map(
+                              (l) => DropdownMenuItem(value: l, child: Text(l)))
+                          .toList(),
+                      onChanged: (v) {
+                        setState(() => _local = v);
+                        _recalcular();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    const SectionHeader(texto: 'Imagens'),
+                    _buildImagemAnexoCard(
+                      titulo: 'Foto Hodometro',
+                      url: _fotoOdometroUrl,
+                      bomba: false,
+                    ),
+                    _buildImagemAnexoCard(
+                      titulo: 'Imagem Bomba',
+                      url: _bombaUrl,
+                      bomba: true,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _obsCtrl,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                          labelText: 'Observacao (opcional)'),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: (_saving || _anexando) ? null : _salvar,
+                      icon: const Icon(Icons.save_outlined),
+                      label: Text(_anexando
+                          ? 'Aguarde o anexo da imagem...'
+                          : (_isEdit ? 'Salvar alteracoes' : 'Registrar')),
+                    ),
+                    const SizedBox(height: 8),
+                    if (_isEdit && widget.original!.pendingSync)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Registro pendente de envio - edicao offline pode ser sobrescrita apos sync.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: AppTheme.warning),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
       ),
     );
   }

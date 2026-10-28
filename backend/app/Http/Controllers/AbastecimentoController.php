@@ -22,6 +22,8 @@ class AbastecimentoController extends Controller
 {
     private const ENCERRANTE_HORA_PADRAO = '07:00';
     private const ENCERRANTE_DIA_OBRIGATORIO = CarbonInterface::SATURDAY;
+    private const CONFIGURAR_CENTAVOS_KEY = 'abastecimento_configurar_centavos';
+    private const DATA_INICIO_CENTAVOS = '2026-10-23';
     private static bool $colunasVerificacaoImagemGarantidas = false;
     private static bool $colunasLimiteProprietariosGarantidas = false;
     private static bool $schemaEncerranteGarantido = false;
@@ -399,7 +401,11 @@ class AbastecimentoController extends Controller
         }
     }
 
-    private function calcularValorTotalAbastecimento(float|int|null $litros, float|int|null $valorPorLitro): float
+    private function calcularValorTotalAbastecimento(
+        float|int|null $litros,
+        float|int|null $valorPorLitro,
+        CarbonInterface|string|null $dataAbastecimento = null
+    ): float
     {
         $totalComCentavos = round(
             ((float) ($litros ?? 0) * (float) ($valorPorLitro ?? 0)),
@@ -407,7 +413,52 @@ class AbastecimentoController extends Controller
             PHP_ROUND_HALF_UP
         );
 
+        // Exceção comercial: uma venda de exatamente 1 litro sempre cobra o
+        // preço do litro com os centavos, mesmo quando o arredondamento geral
+        // para valor inteiro estiver ativado.
+        if (abs((float) ($litros ?? 0) - 1.0) < 0.000001) {
+            return $totalComCentavos;
+        }
+
+        if ($this->configurarCentavosAtivoPara($dataAbastecimento)) {
+            return $totalComCentavos;
+        }
+
         return (float) floor($totalComCentavos + 0.5);
+    }
+
+    /**
+     * A regra é deliberadamente válida somente a partir da sua data de
+     * implantação. Assim, uma alteração em um abastecimento histórico não
+     * muda o critério financeiro com que ele foi registrado.
+     */
+    private function configurarCentavosAtivoPara(CarbonInterface|string|null $dataAbastecimento): bool
+    {
+        $this->garantirSchemaEncerrante();
+
+        $valor = DB::table('configuracoes_sistema')
+            ->where('chave', self::CONFIGURAR_CENTAVOS_KEY)
+            ->value('valor');
+        $ativo = $valor === null
+            ? true
+            : filter_var($valor, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        if ($ativo === false) {
+            return false;
+        }
+
+        try {
+            $diaAbastecimento = $dataAbastecimento instanceof CarbonInterface
+                ? CarbonImmutable::instance($dataAbastecimento)->startOfDay()
+                : CarbonImmutable::parse((string) ($dataAbastecimento ?? now('America/Sao_Paulo')), 'America/Sao_Paulo')->startOfDay();
+            $inicio = CarbonImmutable::createFromFormat('Y-m-d', self::DATA_INICIO_CENTAVOS, 'America/Sao_Paulo')->startOfDay();
+
+            return $diaAbastecimento->greaterThanOrEqualTo($inicio);
+        } catch (\Throwable) {
+            // Em caso de data inválida, preserva a regra histórica para evitar
+            // gravar um valor diferente do esperado.
+            return false;
+        }
     }
 
     private function valorCombustivelAtualPorFilial(string $tipoCombustivel, string $local): float
@@ -878,7 +929,8 @@ class AbastecimentoController extends Controller
         $data['valor_por_litro'] = $valorAtual;
         $data['valor_total'] = $this->calcularValorTotalAbastecimento(
             $data['quantidade_litros'] ?? 0,
-            $valorAtual
+            $valorAtual,
+            $data['data'] ?? null
         );
 
         $this->validarLimiteProprietarioAbastecimento(
@@ -946,6 +998,9 @@ class AbastecimentoController extends Controller
         // automaticamente. Não pode quebrar a gravação — o service trata os
         // próprios erros e deixa pendente para a próxima tentativa.
         app(\App\Services\AtuaAbastecidaService::class)->enviarImediato($abastecimento);
+
+        // Avalia alertas críticos (inconsistência, retroativo, duplicidade/volume atípico, saldo de tanque)
+        \App\Services\NotificacaoCriticaService::aoCriarAbastecimento($abastecimento);
 
         return new \Illuminate\Http\JsonResponse($abastecimento->load(['veiculo','motorista','proprietario']), 201);
     }
@@ -1019,7 +1074,8 @@ class AbastecimentoController extends Controller
             if (isset($data['quantidade_litros'])) {
                 $data['valor_total'] = $this->calcularValorTotalAbastecimento(
                     $data['quantidade_litros'],
-                    $abastecimento->valor_por_litro
+                    $abastecimento->valor_por_litro,
+                    $data['data'] ?? $abastecimento->data
                 );
             }
 

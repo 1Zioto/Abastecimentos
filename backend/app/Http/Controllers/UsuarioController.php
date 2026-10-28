@@ -62,7 +62,20 @@ class UsuarioController extends Controller
         }
         $data['password'] = Hash::make($data['password']);
         $data['filiais_acesso'] = Usuario::normalizarFiliais($data['filiais_acesso'] ?? null);
-        return new \Illuminate\Http\JsonResponse($this->serializeUsuario(Usuario::create($data)), 201);
+        $novoUsuario = Usuario::create($data);
+        $autor = auth()->user()?->nome ?? auth()->user()?->login ?? 'Administrador';
+        \App\Services\NotificacaoCriticaService::registrar([
+            'tipo'          => 'usuario_alterado',
+            'categoria'     => 'cadastros_integracoes',
+            'prioridade'    => 'critica',
+            'titulo'        => "Novo Usuário Criado — {$novoUsuario->nome} ({$novoUsuario->tipo})",
+            'mensagem'      => "O usuário '{$novoUsuario->nome}' (login: {$novoUsuario->login}, perfil: {$novoUsuario->tipo}, filiais: " . implode(', ', $novoUsuario->filiaisAcesso()) . ") foi criado por {$autor}.",
+            'local'         => 'Geral',
+            'tabela_origem' => 'usuarios',
+            'registro_id'   => (string) $novoUsuario->id_user,
+            'dados'         => $this->serializeUsuario($novoUsuario),
+        ]);
+        return new \Illuminate\Http\JsonResponse($this->serializeUsuario($novoUsuario), 201);
     }
 
     public function show(string $id)

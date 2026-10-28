@@ -57,15 +57,48 @@ class EncerranteBombaController extends Controller
             'local' => 'required|string',
             'quantidade_tanque' => 'required|numeric|min:0',
             'litros_bomba' => 'required|numeric|min:0',
-            'foto' => 'required|string',
+            'foto' => 'nullable|string',
         ]);
+
+        $data['foto'] = $data['foto'] ?? '';
 
         $data['local'] = $this->normalizarLocal($data['local']);
         $user = auth('api')->user();
         $data['usuario_id'] = $user ? (string) $user->getAuthIdentifier() : null;
         $data['usuario_nome'] = $user?->nome ?? $user?->login ?? 'Sistema';
 
+        $anterior = EncerranteBomba::query()
+            ->where('local', $data['local'])
+            ->when(Schema::hasColumn('encerrantes_bomba', 'deleted_at'), fn ($q) => $q->whereNull('deleted_at'))
+            ->orderByDesc('data')
+            ->orderByDesc('created_at')
+            ->first();
+
         $registro = EncerranteBomba::create($data);
+
+        $divergencia = null;
+        if ($anterior) {
+            $encAnt = (float) $anterior->litros_bomba;
+            $encAtu = (float) $registro->litros_bomba;
+            $dataIni = optional($anterior->data)->toDateString() ?? (string) $anterior->data;
+            $dataFim = optional($registro->data)->toDateString() ?? (string) $registro->data;
+            $delta = $encAtu < $encAnt ? (self::LIMITE_ENCERRANTE - $encAnt) + $encAtu : $encAtu - $encAnt;
+            $saidas = $this->somaAbastecimentosPeriodo($data['local'], $dataIni, $dataFim, $request);
+            $entradas = $this->somaEntradasPeriodo($data['local'], $dataIni, $dataFim, $request);
+            $tanqueEst = ((float) $anterior->quantidade_tanque) + $entradas - $saidas;
+            $difBomba = round($delta - $saidas, 2);
+            $difTanque = round(((float) $registro->quantidade_tanque) - $tanqueEst, 2);
+            if (abs($difBomba) > 0.5 || abs($difTanque) > 0.5) {
+                $divergencia = [
+                    'divergente' => true,
+                    'diferenca_encerrante_saida' => $difBomba,
+                    'diferenca_tanque' => $difTanque,
+                    'delta_encerrante' => round($delta, 2),
+                    'saida_abastecimentos' => round($saidas, 2),
+                ];
+            }
+        }
+        \App\Services\NotificacaoCriticaService::aoMovimentarEncerranteBomba($registro, 'store', $divergencia);
 
         return new JsonResponse($registro, 201);
     }
@@ -84,8 +117,12 @@ class EncerranteBombaController extends Controller
             'local' => 'sometimes|required|string',
             'quantidade_tanque' => 'sometimes|required|numeric|min:0',
             'litros_bomba' => 'sometimes|required|numeric|min:0',
-            'foto' => 'sometimes|required|string',
+            'foto' => 'nullable|string',
         ]);
+
+        if (array_key_exists('foto', $data)) {
+            $data['foto'] = $data['foto'] ?? '';
+        }
 
         if (array_key_exists('local', $data)) {
             $data['local'] = $this->normalizarLocal($data['local']);
@@ -93,6 +130,8 @@ class EncerranteBombaController extends Controller
 
         $registro->fill($data);
         $registro->save();
+
+        \App\Services\NotificacaoCriticaService::aoMovimentarEncerranteBomba($registro, 'update');
 
         return new JsonResponse($registro);
     }
@@ -117,6 +156,8 @@ class EncerranteBombaController extends Controller
             $registro->delete();
         }
 
+        \App\Services\NotificacaoCriticaService::aoMovimentarEncerranteBomba($registro, 'delete');
+
         return new JsonResponse(['message' => 'Encerrante removido.']);
     }
 
@@ -138,9 +179,7 @@ class EncerranteBombaController extends Controller
             ->orderByDesc('created_at')
             ->first();
 
-        $obrigatorio = in_array($tipo, ['admin', 'operador'], true)
-            && $agora->greaterThanOrEqualTo($momentoObrigatorio)
-            && !$ultimo;
+        $obrigatorio = false; // Forçado para falso temporariamente para liberar o aplicativo
 
         return new JsonResponse([
             'local' => $local,

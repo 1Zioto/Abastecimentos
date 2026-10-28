@@ -79,6 +79,8 @@ class AppErroController extends Controller
             'created_at'   => now(),
         ]);
 
+        \App\Services\NotificacaoCriticaService::aoRegistrarErroApp((int) $id, $data, $user);
+
         return new JsonResponse(['id' => $id, 'message' => 'Erro registrado.'], 201);
     }
 

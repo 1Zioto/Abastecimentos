@@ -136,9 +136,111 @@ class GoogleDriveService
             'name' => $file['name'] ?? $safeName,
             'nome' => $file['name'] ?? $safeName,
             'mimeType' => $file['mimeType'] ?? $mimeType,
-            'webViewLink' => $file['webViewLink'] ?? null,
-            'webContentLink' => $file['webContentLink'] ?? null,
+            'webViewLink' => $fileId ? 'https://drive.google.com/uc?export=view&id=' . $fileId : null,
+            'webContentLink' => $fileId ? 'https://drive.google.com/uc?export=view&id=' . $fileId : null,
             'downloadUrl' => $fileId ? 'https://drive.google.com/uc?export=view&id=' . $fileId : null,
+        ];
+    }
+
+    /**
+     * Abre uma sessão de upload resumível e devolve a URI da sessão.
+     *
+     * O cliente (app, bot ou navegador) envia os bytes direto para essa URI,
+     * sem atravessar nosso backend. A URI é descartável e serve apenas para
+     * este arquivo: nenhuma credencial do Drive sai do servidor.
+     */
+    public function criarSessaoUpload(string $nomeArquivo, string $mimeType, ?int $tamanhoBytes = null, ?string $origin = null): array
+    {
+        $mimeType = trim($mimeType) === 'image/jpg' ? 'image/jpeg' : trim($mimeType);
+        // Mesma lista aceita pelo upload via proxy: como os bytes agora não
+        // passam por aqui, esta é a única barreira de tipo que temos.
+        if (!in_array($mimeType, ['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/svg+xml'], true)) {
+            throw new \InvalidArgumentException('Formato não suportado. Use JPG, PNG, PDF, DOCX ou SVG.');
+        }
+
+        $accessToken = $this->accessToken();
+        $folderId = $this->folderId($accessToken);
+        $safeName = $this->safeFileName($nomeArquivo, $mimeType);
+
+        $request = $this->newRequest()
+            ->withToken($accessToken)
+            ->timeout(25)
+            ->withHeaders(array_filter([
+                'X-Upload-Content-Type' => $mimeType,
+                'X-Upload-Content-Length' => $tamanhoBytes !== null ? (string) $tamanhoBytes : null,
+                // Sem este cabeçalho o Google não devolve os cabeçalhos CORS na
+                // URI da sessão, e um PUT vindo do navegador é bloqueado. Para
+                // app e bot (que não são navegadores) ele é irrelevante.
+                'Origin' => $origin,
+            ]));
+
+        $response = $request->post(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,mimeType',
+            [
+                'name' => $safeName,
+                'parents' => [$folderId],
+                'mimeType' => $mimeType,
+            ]
+        );
+
+        if (!$response->successful()) {
+            if ($response->status() === 401) {
+                throw new \RuntimeException('Token do Google expirado ou inválido. Autorize o Google Drive novamente.');
+            }
+            throw new \RuntimeException('Erro ao abrir sessão de upload no Google Drive: ' . $response->body());
+        }
+
+        $uploadUrl = $response->header('Location');
+        if (!$uploadUrl) {
+            throw new \RuntimeException('Google Drive não devolveu a URI da sessão de upload.');
+        }
+
+        return [
+            'uploadUrl' => $uploadUrl,
+            'name' => $safeName,
+            'mimeType' => $mimeType,
+        ];
+    }
+
+    /**
+     * Aplica a permissão pública e devolve os links do arquivo já enviado.
+     * Chamado depois que o cliente terminou o PUT direto no Google.
+     */
+    public function finalizarUpload(string $fileId): array
+    {
+        $accessToken = $this->accessToken();
+
+        $meta = $this->newRequest()
+            ->withToken($accessToken)
+            ->timeout(20)
+            ->get("https://www.googleapis.com/drive/v3/files/{$fileId}?fields=id,name,mimeType,size");
+
+        if (!$meta->successful()) {
+            throw new \RuntimeException('Arquivo não encontrado no Google Drive após o upload.');
+        }
+
+        if ((bool) config('google_drive.share_public', true)) {
+            $this->newRequest()
+                ->withToken($accessToken)
+                ->timeout(20)
+                ->post("https://www.googleapis.com/drive/v3/files/{$fileId}/permissions", [
+                    'role' => 'reader',
+                    'type' => 'anyone',
+                ]);
+        }
+
+        $file = $meta->json() ?? [];
+        $link = 'https://drive.google.com/uc?export=view&id=' . $fileId;
+
+        return [
+            'file_id' => $fileId,
+            'id' => $fileId,
+            'name' => $file['name'] ?? null,
+            'nome' => $file['name'] ?? null,
+            'mimeType' => $file['mimeType'] ?? null,
+            'webViewLink' => $link,
+            'webContentLink' => $link,
+            'downloadUrl' => $link,
         ];
     }
 
@@ -222,18 +324,36 @@ class GoogleDriveService
 
     public function extractFileId(string $url): ?string
     {
-        if (str_contains($url, 'drive.google.com/uc?id=')) {
-            $parts = parse_url($url);
-            if (isset($parts['query'])) {
-                parse_str($parts['query'], $query);
-                return $query['id'] ?? null;
+        if (str_contains($url, 'drive.google.com')) {
+            if (preg_match('/(?:id=|file\/d\/)([^&\/?]+)/', $url, $matches)) {
+                return $matches[1];
             }
         }
         return null;
     }
 
+    // Memoização por processo: evita repetir o refresh do token dentro da
+    // mesma execução quando accessToken() é chamado várias vezes (ex.: uma
+    // tela carregando vários comprovantes/imagens em sequência).
+    private static ?string $accessTokenMemo = null;
+
     public function accessToken(): string
     {
+        if (self::$accessTokenMemo !== null) {
+            return self::$accessTokenMemo;
+        }
+
+        // Cache persistido no banco (Postgres): o Cache::store padrão desta
+        // aplicação é "array" (em memória, não persiste entre invocações
+        // serverless), então usamos a tabela do próprio banco para reaproveitar
+        // o access token do Google (válido por ~1h) entre requisições
+        // diferentes e evitar um round-trip de OAuth a cada imagem carregada.
+        $cached = $this->tokenCacheGet();
+        if ($cached) {
+            self::$accessTokenMemo = $cached;
+            return $cached;
+        }
+
         $refreshToken = $this->refreshToken();
         if (!$refreshToken) {
             throw new \RuntimeException('Refresh token do Google Drive ausente. Acesse /google-drive/auth para autorizar.');
@@ -261,18 +381,56 @@ class GoogleDriveService
             throw new \RuntimeException('Token de acesso do Google Drive não retornado.');
         }
 
+        $this->tokenCacheSet($accessToken, (int) ($token['expires_in'] ?? 3600));
+        self::$accessTokenMemo = $accessToken;
+
         return $accessToken;
     }
 
-    private function folderId(string $accessToken): string
+    private function tokenCacheGet(): ?string
+    {
+        try {
+            $row = DB::table('google_drive_token_cache')->where('id', 1)->first();
+            if ($row && $row->expires_at && \Illuminate\Support\Carbon::parse($row->expires_at)->isFuture()) {
+                return $row->access_token;
+            }
+        } catch (\Throwable $e) {
+            // Tabela ainda não existe ou banco indisponível: segue sem cache.
+        }
+        return null;
+    }
+
+    private function tokenCacheSet(string $accessToken, int $expiresIn): void
+    {
+        try {
+            DB::statement(<<<'SQL'
+                CREATE TABLE IF NOT EXISTS google_drive_token_cache (
+                    id SMALLINT PRIMARY KEY,
+                    access_token TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL
+                )
+            SQL);
+
+            // Margem de segurança de 2 minutos antes do token expirar de verdade.
+            $expiresAt = now()->addSeconds(max(0, $expiresIn - 120));
+            DB::table('google_drive_token_cache')->updateOrInsert(
+                ['id' => 1],
+                ['access_token' => $accessToken, 'expires_at' => $expiresAt]
+            );
+        } catch (\Throwable $e) {
+            // Falha ao persistir o cache não deve quebrar o fluxo de upload/imagem.
+        }
+    }
+
+    public function folderId(string $accessToken): string
     {
         $configured = trim((string) config('google_drive.folder_id'));
-        if ($configured !== '') {
+        if ($configured !== '' && $this->folderExists($accessToken, $configured)) {
             return $configured;
         }
 
         $saved = $this->secretFromDatabase('google_drive_folder_id');
-        if ($saved) {
+        if ($saved && $this->folderExists($accessToken, $saved)) {
             return $saved;
         }
 
@@ -303,6 +461,23 @@ class GoogleDriveService
 
         $this->saveSecretToDatabase('google_drive_folder_id', $folderId);
         return $folderId;
+    }
+
+    private function folderExists(string $accessToken, string $folderId): bool
+    {
+        $response = $this->newRequest()
+            ->withToken($accessToken)
+            ->timeout(20)
+            ->get("https://www.googleapis.com/drive/v3/files/{$folderId}", [
+                'fields' => 'id,mimeType,trashed',
+            ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        return ($response->json('mimeType') === 'application/vnd.google-apps.folder')
+            && ($response->json('trashed') !== true);
     }
 
     private function oauthConfig(): array

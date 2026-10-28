@@ -76,16 +76,21 @@ class EntradaNotaController extends Controller
             $fornecedor = trim((string) $request->query('fornecedor'));
             $query->where('fornecedor', 'ilike', '%'.$fornecedor.'%');
         }
+        // A tela permite escolher a quantidade por página (inclusive "Todas").
+        // Limitado a 1000 para não gerar resposta grande demais.
+        $perPage = (int) $request->get('per_page', 30);
+        $perPage = max(1, min($perPage, 1000));
+
         if ($this->suportaSyncIncremental($request, 'entrada_notas')) {
             return new \Illuminate\Http\JsonResponse(
-                $query->orderBy('sync_token_at')->orderBy('id_financeiro')->paginate($request->get('per_page', 30))
+                $query->orderBy('sync_token_at')->orderBy('id_financeiro')->paginate($perPage)
             );
         }
         return new \Illuminate\Http\JsonResponse(
             $query
                 ->orderByRaw('COALESCE(data_hora, data::timestamp) DESC')
                 ->orderByDesc('id_financeiro')
-                ->paginate($request->get('per_page', 30))
+                ->paginate($perPage)
         );
     }
 

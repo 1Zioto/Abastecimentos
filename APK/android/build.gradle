@@ -13,6 +13,27 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Algumas dependências (ex: google_mlkit_commons) ainda compilam com Java 8,
+// o que gera os avisos "source/target value 8 is obsolete". Como o app já usa
+// Java 17, apenas suprimimos o aviso (-Xlint:-options) nos módulos das
+// dependências, sem alterar a compatibilidade delas (evita conflitos de
+// avaliação do Gradle com o novo plugin loader do Flutter).
+subprojects {
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs << "-Xlint:-options"
+    }
+}
+
+// O lint do Android está quebrando dentro do file_picker 12 beta em release
+// (falha interna do analisador Kotlin). A Play Store não exige essa etapa para o AAB.
+subprojects {
+    tasks.matching { task ->
+        task.name.toLowerCase().contains("lintvital")
+    }.configureEach {
+        enabled = false
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }

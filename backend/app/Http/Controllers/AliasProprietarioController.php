@@ -9,6 +9,8 @@ use Illuminate\Support\Str;
 
 class AliasProprietarioController extends Controller
 {
+    private static bool $tabelaGarantida = false;
+
     public function index(Request $request): JsonResponse
     {
         $this->garantirTabelaAliasProprietarios();
@@ -129,6 +131,10 @@ class AliasProprietarioController extends Controller
 
     public static function garantirTabelaAliasProprietarios(): void
     {
+        if (self::$tabelaGarantida) {
+            return;
+        }
+
         DB::statement(<<<'SQL'
             CREATE TABLE IF NOT EXISTS alias_proprietarios (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -142,5 +148,7 @@ class AliasProprietarioController extends Controller
             )
         SQL);
         DB::statement('ALTER TABLE alias_proprietarios ALTER COLUMN proprietario_id TYPE VARCHAR(120) USING proprietario_id::text');
+
+        self::$tabelaGarantida = true;
     }
 }

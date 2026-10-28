@@ -1,7 +1,7 @@
 name: abastecimento_vipe
 description: "App offline-first do sistema Abastecimento Vipe (sincroniza com backend Laravel na Vercel)."
 publish_to: 'none'
-version: 2.0.48+6026
+version: 2.0.51+6030
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

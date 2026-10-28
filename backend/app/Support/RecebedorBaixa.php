@@ -6,6 +6,7 @@ class RecebedorBaixa
 {
     public const VIPE = 'VIPE TRANSPORTES MULTIMODAIS LTDA';
     public const AUGUSTO = 'Augusto';
+    public const VIPE_AUGUSTO = 'VIPE TRANSPORTES MULTIMODAIS LTDA / Augusto';
 
     public static function normalizar(mixed $valor): ?string
     {
@@ -15,17 +16,23 @@ class RecebedorBaixa
         }
 
         $norm = self::semAcento($raw);
+        $temVipe = str_contains($norm, 'vipe')
+            || str_contains($norm, 'vipi')
+            || str_contains($norm, 'multimodais')
+            || str_contains(preg_replace('/\D+/', '', $raw) ?? '', '57312701000183');
+        $temAugusto = str_contains($norm, 'augusto');
+
+        if ($temVipe && $temAugusto) {
+            return self::VIPE_AUGUSTO;
+        }
 
         if (
-            str_contains($norm, 'vipe') ||
-            str_contains($norm, 'vipi') ||
-            str_contains($norm, 'multimodais') ||
-            str_contains(preg_replace('/\D+/', '', $raw) ?? '', '57312701000183')
+            $temVipe
         ) {
             return self::VIPE;
         }
 
-        if (str_contains($norm, 'augusto')) {
+        if ($temAugusto) {
             return self::AUGUSTO;
         }
 
@@ -34,7 +41,7 @@ class RecebedorBaixa
 
     public static function permitidos(): array
     {
-        return [self::VIPE, self::AUGUSTO];
+        return [self::VIPE, self::AUGUSTO, self::VIPE_AUGUSTO];
     }
 
     private static function semAcento(string $valor): string

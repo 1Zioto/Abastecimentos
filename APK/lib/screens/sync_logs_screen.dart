@@ -14,6 +14,7 @@ class SyncLogsScreen extends StatefulWidget {
 
 class _SyncLogsScreenState extends State<SyncLogsScreen> {
   bool _loading = true;
+  bool _syncing = false;
   List<SyncItem> _queue = [];
   List<Map<String, dynamic>> _logs = [];
 
@@ -67,6 +68,29 @@ class _SyncLogsScreenState extends State<SyncLogsScreen> {
     return b.toString();
   }
 
+  /// Reenvia agora os itens pendentes/com erro e recarrega a lista.
+  Future<void> _sincronizar() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      final r = await AppState.instance.sync.run();
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.resumo),
+        backgroundColor: r.success ? AppTheme.success : AppTheme.warning,
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Falha ao sincronizar: $e'),
+        backgroundColor: AppTheme.danger,
+      ));
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
   Future<void> _copyAll() async {
     final text = _buildCopyText();
     await Clipboard.setData(ClipboardData(text: text));
@@ -90,11 +114,11 @@ class _SyncLogsScreenState extends State<SyncLogsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Logs de Sync'),
+        title: const Text('Pendentes e Logs'),
         actions: [
           IconButton(
             tooltip: 'Recarregar',
-            onPressed: _loading ? null : _load,
+            onPressed: (_loading || _syncing) ? null : _load,
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
@@ -221,9 +245,20 @@ class _SyncLogsScreenState extends State<SyncLogsScreen> {
               ],
             ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _loading ? null : _copyAll,
-        icon: const Icon(Icons.copy_all),
-        label: const Text('Copiar erros/logs'),
+        onPressed: (_loading || _syncing) ? null : _sincronizar,
+        icon: _syncing
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            : const Icon(Icons.sync),
+        label: Text(_syncing
+            ? 'Sincronizando...'
+            : _queue.isEmpty
+                ? 'Sincronizar agora'
+                : 'Reenviar ${_queue.length} pendente${_queue.length == 1 ? '' : 's'}'),
       ),
     );
   }

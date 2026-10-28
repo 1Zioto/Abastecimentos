@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/api_client.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/sharing_manager.dart';
 import 'shell_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -82,6 +83,7 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const ShellScreen()),
       );
+      SharingManager.instance.checkPendingFiles();
     } on ApiException catch (e) {
       setState(() => _erro = e.message);
     } catch (e) {

@@ -30,6 +30,11 @@ class ComprovantePagamentoController extends Controller
         if ($request->filled('status')) {
             $query->where('c.status', $request->status);
         }
+        // Pendentes primeiro/somente: sem isso, comprovantes aguardando há mais
+        // tempo somem da tela quando os aplicados recentes lotam a página.
+        if ($request->boolean('apenas_pendentes')) {
+            $query->where('c.status', '<>', 'aplicado');
+        }
         if ($request->filled('proprietario_id')) {
             $query->where('c.proprietario_id', $request->proprietario_id);
         }
@@ -41,6 +46,12 @@ class ComprovantePagamentoController extends Controller
         }
 
         $result = $query->orderByDesc('c.created_at')->paginate($request->get('per_page', 40));
+        // A tela de listagem não usa o JSON completo da IA. O campo continua
+        // disponível no endpoint show, mas não é repetido em todas as linhas.
+        $result->through(function ($item) {
+            unset($item->dados_ia);
+            return $item;
+        });
         return new JsonResponse($result);
     }
 
@@ -150,6 +161,153 @@ class ComprovantePagamentoController extends Controller
     }
 
     // ─────────────────────────────────────────────
+    // UPLOAD EM LOTE (JWT autenticado)
+    // ─────────────────────────────────────────────
+
+    public function storeLote(Request $request): JsonResponse
+    {
+        $this->garantirTabelas();
+        $user = auth()->user();
+
+        $comprovantes = [];
+        $duplicados = [];
+        $erros = [];
+
+        // Clientes novos enviam os bytes direto ao Google Drive e repassam
+        // somente as URLs para análise, eliminando o tráfego binário da função.
+        if ($request->has('arquivo_urls') && is_array($request->arquivo_urls)) {
+            foreach ($request->arquivo_urls as $arquivoUrl) {
+                try {
+                    if (!filter_var($arquivoUrl, FILTER_VALIDATE_URL)) {
+                        throw new \InvalidArgumentException('URL de comprovante inválida.');
+                    }
+                    $arquivoTipo = str_contains(strtolower($arquivoUrl), '.pdf') ? 'pdf' : 'image';
+                    $comprovantes[] = $this->processarUnicoAutenticado(
+                        $arquivoUrl,
+                        $arquivoTipo,
+                        null,
+                        $user
+                    );
+                } catch (\Throwable $e) {
+                    $erros[] = ['message' => 'Falha ao processar URL: ' . $e->getMessage()];
+                }
+            }
+
+            return new JsonResponse([
+                'message'        => 'Lote processado.',
+                'comprovantes'   => $comprovantes,
+                'duplicados'     => $duplicados,
+                'erros'          => $erros,
+                'total_recebido' => count($comprovantes),
+            ], 200);
+        }
+
+        if (!$request->hasFile('arquivos')) {
+            return new JsonResponse(['message' => 'Nenhum arquivo fornecido.'], 400);
+        }
+
+        foreach ($request->file('arquivos') as $uploaded) {
+            try {
+                $hash = hash_file('sha256', $uploaded->getRealPath());
+                $duplicado = DB::table('comprovantes_pagamento')->where('arquivo_hash', $hash)->first();
+                if ($duplicado) {
+                    $duplicados[] = $this->enriquecerComprovante($duplicado);
+                    continue;
+                }
+
+                $driveResult = $this->uploadComprovanteFile($uploaded, 'comprovantes_pagamento');
+                $arquivoUrl = $driveResult['downloadUrl'] ?? '';
+                $arquivoTipo = $this->detectarTipoArquivo($uploaded->getMimeType() ?: '');
+
+                $comprovantes[] = $this->processarUnicoAutenticado($arquivoUrl, $arquivoTipo, $hash, $user);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Erro ao processar comprovante enviado: ' . $e->getMessage(), ['exception' => $e]);
+                $erros[] = ['message' => 'Falha no arquivo ' . $uploaded->getClientOriginalName() . ': ' . $e->getMessage()];
+            }
+        }
+
+        return new JsonResponse([
+            'message'        => 'Lote processado.',
+            'comprovantes'   => $comprovantes,
+            'duplicados'     => $duplicados,
+            'erros'          => $erros,
+            'total_recebido' => count($comprovantes),
+        ], 200);
+    }
+
+    private function processarUnicoAutenticado(string $arquivoUrl, string $arquivoTipo, ?string $hash, $user): array
+    {
+        $analise = $this->analisarComprovanteSeguro($arquivoUrl, $arquivoTipo);
+        $remetente = $this->extrairRemetente($analise);
+        $resolucao = $this->resolverProprietario($remetente);
+        $status = $resolucao['proprietario_id'] ? 'aguardando_confirmacao' : 'aguardando_proprietario';
+
+        $id = (string) Str::uuid();
+        DB::table('comprovantes_pagamento')->insert([
+            'id'                      => $id,
+            'arquivo_url'             => $arquivoUrl,
+            'arquivo_tipo'            => $arquivoTipo,
+            'arquivo_hash'            => $hash,
+            'valor_extraido'          => $this->numOuNull($analise['valor_pago'] ?? null),
+            'data_pagamento_extraida' => $this->dataOuNull($analise['data_pagamento'] ?? null),
+            'remetente_extraido'      => $remetente,
+            'proprietario_id'         => $resolucao['proprietario_id'],
+            'status'                  => $status,
+            'confianca_ia'            => $this->numOuNull($analise['confidence'] ?? null),
+            'dados_ia'                => json_encode($analise, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'usuario'                 => $user?->nome ?? $user?->login ?? 'sistema',
+            'usuario_id'              => $user ? (string) $user->getAuthIdentifier() : null,
+            'created_at'              => now(),
+            'updated_at'              => now(),
+        ]);
+
+        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
+        $this->moverComprovanteParaPasta($comprovante);
+        return $this->enriquecerComprovante($comprovante);
+    }
+
+    // ─────────────────────────────────────────────
+    // REANALISAR (JWT autenticado)
+    // ─────────────────────────────────────────────
+
+    public function verificarNovamente(string $id): JsonResponse
+    {
+        $this->garantirTabelas();
+
+        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
+        if (!$comprovante) {
+            return new JsonResponse(['message' => 'Comprovante não encontrado.'], 404);
+        }
+
+        $analise = $this->analisarComprovanteSeguro((string) $comprovante->arquivo_url, (string) ($comprovante->arquivo_tipo ?: 'image'));
+        $remetente = $this->extrairRemetente($analise);
+        $resolucao = $this->resolverProprietario($remetente);
+
+        $jaAplicado = ($comprovante->status ?? null) === 'aplicado';
+        $novoProprietario = $resolucao['proprietario_id'] ?? $comprovante->proprietario_id;
+        $status = $jaAplicado
+            ? 'aplicado'
+            : ($novoProprietario ? 'aguardando_confirmacao' : 'aguardando_proprietario');
+
+        DB::table('comprovantes_pagamento')->where('id', $id)->update([
+            'valor_extraido'          => $this->numOuNull($analise['valor_pago'] ?? null),
+            'data_pagamento_extraida' => $this->dataOuNull($analise['data_pagamento'] ?? null),
+            'remetente_extraido'      => $remetente,
+            'proprietario_id'         => $novoProprietario,
+            'status'                  => $status,
+            'confianca_ia'            => $this->numOuNull($analise['confidence'] ?? null),
+            'dados_ia'                => json_encode($analise, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'updated_at'              => now(),
+        ]);
+
+        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
+        if (!$jaAplicado) {
+            $this->moverComprovanteParaPasta($comprovante);
+        }
+        return new JsonResponse($this->enriquecerComprovante($comprovante));
+    }
+
+    // ─────────────────────────────────────────────
     // UPLOAD EXTERNO (API key)
     // ─────────────────────────────────────────────
 
@@ -244,6 +402,7 @@ class ComprovantePagamentoController extends Controller
                         
                         $comprovantes[] = $this->processarUnicoExterno($arquivoUrl, $arquivoTipo, $hash, $request->get('_api_key_nome', 'externo'));
                     } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::error('Erro ao processar comprovante enviado: ' . $e->getMessage(), ['exception' => $e]);
                         $erros[] = 'Falha no arquivo ' . $uploaded->getClientOriginalName() . ': ' . $e->getMessage();
                     }
                 }
@@ -265,6 +424,7 @@ class ComprovantePagamentoController extends Controller
                         $arquivoTipo = str_contains(strtolower($arquivoUrl), '.pdf') ? 'pdf' : 'image';
                         $comprovantes[] = $this->processarUnicoExterno($arquivoUrl, $arquivoTipo, $hash, $request->get('_api_key_nome', 'externo'));
                     } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::error('Erro ao processar comprovante por URL: ' . $e->getMessage(), ['exception' => $e]);
                         $erros[] = 'Falha na URL ' . $arquivoUrl . ': ' . $e->getMessage();
                     }
                 }
@@ -341,6 +501,7 @@ class ComprovantePagamentoController extends Controller
             ->update([
                 'proprietario_id' => $data['proprietario_id'],
                 'status'          => 'aguardando_confirmacao',
+                'isolado'         => DB::raw('false'),
                 'updated_at'      => now(),
             ]);
 
@@ -371,100 +532,6 @@ class ComprovantePagamentoController extends Controller
     }
 
     // ─────────────────────────────────────────────
-    // CONFIRMAR BAIXA
-    // ─────────────────────────────────────────────
-
-    public function confirmar(Request $request, string $id): JsonResponse
-    {
-        $this->garantirTabelas();
-
-        $data = $request->validate([
-            'ids_abastecimentos' => 'required|array|min:1',
-            'ids_abastecimentos.*' => 'exists:abastecimentos,id_abastecimento',
-            'forma_pagamento'    => 'nullable|string',
-            'data_baixa'         => 'nullable|date',
-            'tipo_despesa'       => 'nullable|string',
-            'descricao'          => 'nullable|string',
-            'recebedor'          => 'nullable|string',
-            'observacao'         => 'nullable|string',
-        ]);
-
-        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
-        if (!$comprovante) {
-            return new JsonResponse(['message' => 'Comprovante não encontrado.'], 404);
-        }
-        if (!$comprovante->proprietario_id) {
-            return new JsonResponse(['message' => 'Comprovante sem proprietário atribuído.'], 422);
-        }
-        if ($comprovante->status === 'aplicado') {
-            return new JsonResponse(['message' => 'Comprovante já foi aplicado.'], 422);
-        }
-
-        // Validate all abastecimentos belong to this proprietario
-        $abastecimentos = Abastecimento::whereIn('id_abastecimento', $data['ids_abastecimentos'])->get();
-        foreach ($abastecimentos as $abastecimento) {
-            if ((string) $abastecimento->id_proprietario !== (string) $comprovante->proprietario_id) {
-                return new JsonResponse([
-                    'message' => 'Abastecimento ' . $abastecimento->id_abastecimento . ' não pertence ao proprietário do comprovante.',
-                ], 422);
-            }
-        }
-
-        $user = auth()->user();
-        $notaEntrada = 'comprovante:' . $id;
-        $dataPayload = [
-            'forma_pagamento' => $data['forma_pagamento'] ?? 'PIX',
-            'data_pagamento'  => $data['data_baixa'] ?? $comprovante->data_pagamento_extraida ?? now()->format('Y-m-d'),
-            'nota_entrada'    => $notaEntrada,
-            'data_baixa'      => $data['data_baixa'] ?? now()->format('Y-m-d'),
-            'tipo_despesa'    => $data['tipo_despesa'] ?? 'Combustível',
-            'descricao'       => $data['descricao'] ?? null,
-            'recebedor'       => $data['recebedor'] ?? null,
-            'observacao'      => $data['observacao'] ?? null,
-            'valor'           => null,
-            'anexo'           => $comprovante->arquivo_url,
-        ];
-
-        $errors = [];
-        $success = 0;
-
-        DB::beginTransaction();
-        try {
-            foreach ($data['ids_abastecimentos'] as $idAbastecimento) {
-                try {
-                    $this->upsertBaixa($idAbastecimento, $dataPayload, $user);
-                    Abastecimento::where('id_abastecimento', $idAbastecimento)
-                        ->update($this->buildAbastecimentoBaixaUpdate($dataPayload));
-                    $success++;
-                } catch (\Throwable $e) {
-                    $errors[] = ['id_abastecimento' => $idAbastecimento, 'message' => $e->getMessage()];
-                }
-            }
-
-            if (empty($errors)) {
-                DB::table('comprovantes_pagamento')
-                    ->where('id', $id)
-                    ->update(['status' => 'aplicado', 'nota_entrada' => $notaEntrada, 'updated_at' => now()]);
-                DB::commit();
-            } else {
-                DB::rollBack();
-                return new JsonResponse([
-                    'message' => 'Erro ao aplicar parte das baixas.',
-                    'errors'  => $errors,
-                ], 500);
-            }
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            return new JsonResponse(['message' => 'Erro ao confirmar baixa: ' . $e->getMessage()], 500);
-        }
-
-        return new JsonResponse([
-            'message' => $success . ' baixa(s) registrada(s) com sucesso.',
-            'success' => $success,
-        ], 201);
-    }
-
-    // ─────────────────────────────────────────────
     // CONFIRMAR GRUPO (múltiplos comprovantes)
     // ─────────────────────────────────────────────
 
@@ -485,8 +552,16 @@ class ComprovantePagamentoController extends Controller
             'tipo_despesa'             => 'nullable|string',
             'descricao'                => 'nullable|string',
             'recebedor'                => 'nullable|string',
+            'recebedor2'               => 'nullable|string',
+            'valor_recebedor1'         => 'nullable|numeric|min:0',
+            'valor_recebedor2'         => 'nullable|numeric|min:0',
+            'abono_desconto'           => 'nullable|numeric|min:0',
+            'valor_recebido'           => 'nullable|numeric|min:0',
+            'credito_usado'            => 'nullable|numeric|min:0',
             'observacao'               => 'nullable|string',
         ]);
+
+        $this->garantirColunasRateioRecebedor();
 
         // Load all comprovantes
         $comprovantes = DB::table('comprovantes_pagamento')
@@ -525,6 +600,21 @@ class ComprovantePagamentoController extends Controller
             }
         }
 
+        // Regra de filial: a baixa segue a filial do abastecimento — não pode
+        // misturar abastecimentos de filiais diferentes na mesma baixa.
+        $locaisDistintos = $abastecimentos
+            ->map(fn ($a) => trim((string) ($a->local ?? '')))
+            ->filter(fn ($l) => $l !== '')
+            ->unique()
+            ->values();
+        if ($locaisDistintos->count() > 1) {
+            return new JsonResponse([
+                'message' => 'A baixa deve ser dada na mesma filial do abastecimento. '
+                    . 'Não é permitido baixar abastecimentos de filiais diferentes na mesma baixa. '
+                    . 'Filiais encontradas: ' . $locaisDistintos->implode(', ') . '.',
+            ], 422);
+        }
+
         $user = auth()->user();
         $notaEntrada = 'comprovantes:' . implode(',', $data['comprovante_ids']);
 
@@ -542,6 +632,10 @@ class ComprovantePagamentoController extends Controller
             'tipo_despesa'    => $data['tipo_despesa'] ?? 'Combustível',
             'descricao'       => $data['descricao'] ?? null,
             'recebedor'       => $data['recebedor'] ?? null,
+            'recebedor2'      => isset($data['recebedor2']) && trim((string) $data['recebedor2']) !== '' ? trim((string) $data['recebedor2']) : null,
+            'valor_recebedor1' => $data['valor_recebedor1'] ?? null,
+            'valor_recebedor2' => $data['valor_recebedor2'] ?? null,
+            'abono_desconto'  => $data['abono_desconto'] ?? null,
             'observacao'      => $data['observacao'] ?? null,
             'valor'           => null,
             'anexo'           => $anexo,
@@ -552,15 +646,37 @@ class ComprovantePagamentoController extends Controller
 
         DB::beginTransaction();
         try {
-            foreach ($data['ids_abastecimentos'] as $idAbastecimento) {
-                try {
-                    $this->upsertBaixa($idAbastecimento, $dataPayload, $user);
-                    Abastecimento::where('id_abastecimento', $idAbastecimento)
-                        ->update($this->buildAbastecimentoBaixaUpdate($dataPayload));
-                    $success++;
-                } catch (\Throwable $e) {
+            // Upsert das baixas em lote (3 queries no total) em vez de
+            // SELECT + INSERT/UPDATE por abastecimento no banco remoto.
+            $abastecimentosValidos = $data['ids_abastecimentos'];
+            try {
+                $this->upsertBaixasEmLote($abastecimentosValidos, $dataPayload, $user);
+                $success = count($abastecimentosValidos);
+            } catch (\Throwable $e) {
+                $abastecimentosValidos = [];
+                foreach ($data['ids_abastecimentos'] as $idAbastecimento) {
                     $errors[] = ['id_abastecimento' => $idAbastecimento, 'message' => $e->getMessage()];
                 }
+            }
+
+            if (!empty($abastecimentosValidos)) {
+                Abastecimento::whereIn('id_abastecimento', $abastecimentosValidos)
+                    ->update($this->buildAbastecimentoBaixaUpdate($dataPayload));
+
+                // Crédito do proprietário: o excedente do comprovante (valor_recebido
+                // acima do total selecionado) vira crédito; o saldo pode ser usado
+                // para cobrir parte do total. Roda na transação da baixa.
+                $totalBaixa = round((float) $abastecimentos->whereIn('id_abastecimento', $abastecimentosValidos)->sum('valor_total'), 2);
+                CreditoProprietarioController::aplicarNaBaixa(
+                    (string) $proprietarioId,
+                    $totalBaixa,
+                    $data['valor_recebido'] ?? null,
+                    $data['credito_usado'] ?? null,
+                    (float) ($data['abono_desconto'] ?? 0),
+                    'baixa_comprovante',
+                    $notaEntrada,
+                    $user
+                );
             }
 
             if (empty($errors)) {
@@ -604,7 +720,181 @@ class ComprovantePagamentoController extends Controller
             return new JsonResponse(['message' => 'Comprovante não encontrado ou já aplicado.'], 404);
         }
 
+        \App\Services\NotificacaoCriticaService::aoMovimentarComprovanteOuBaixa('comprovante_credito_alterado_excluido', "Comprovante de Pagamento Cancelado (#{$id})", "O comprovante de pagamento #{$id} foi cancelado/excluído por " . (auth()->user()?->nome ?? auth()->user()?->login ?? 'Administrador') . ".", 'comprovantes_pagamento', $id, 'Geral', ['id' => $id]);
         return new JsonResponse(['message' => 'Comprovante cancelado.']);
+    }
+
+    /**
+     * Tira o comprovante do grupo automático (mesmo proprietário) sem apagar
+     * nada: ele passa a aparecer sozinho, em uma caixa própria, disponível
+     * para ser usado numa baixa futura.
+     */
+    public function isolar(string $id): JsonResponse
+    {
+        $this->garantirTabelas();
+
+        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
+        if (!$comprovante) {
+            return new JsonResponse(['message' => 'Comprovante não encontrado.'], 404);
+        }
+
+        if (($comprovante->status ?? null) === 'aplicado') {
+            return new JsonResponse(['message' => 'Este comprovante já foi aplicado a uma baixa; use desvincular.'], 422);
+        }
+
+        DB::table('comprovantes_pagamento')->where('id', $id)->update([
+            'isolado'    => DB::raw('true'),
+            'updated_at' => now(),
+        ]);
+
+        return new JsonResponse(['message' => 'Comprovante separado em uma caixa própria.']);
+    }
+
+    public function atualizarFormaPagamento(Request $request, string $id): JsonResponse
+    {
+        $this->garantirTabelas();
+
+        $data = $request->validate([
+            'forma_pagamento' => 'required|string|max:40',
+        ]);
+
+        $atualizado = DB::table('comprovantes_pagamento')->where('id', $id)->update([
+            'forma_pagamento' => $data['forma_pagamento'],
+            'updated_at'      => now(),
+        ]);
+
+        if (!$atualizado) {
+            return new JsonResponse(['message' => 'Comprovante não encontrado.'], 404);
+        }
+
+        return new JsonResponse(['message' => 'Forma de pagamento atualizada.']);
+    }
+
+    public function desvincular(string $id): JsonResponse
+    {
+        $this->garantirTabelas();
+
+        $user = auth()->user();
+        if (!$user || ($user->tipo ?? null) !== 'admin') {
+            return new JsonResponse(['message' => 'Apenas administradores podem desvincular comprovantes.'], 403);
+        }
+
+        $comprovante = DB::table('comprovantes_pagamento')->where('id', $id)->first();
+        if (!$comprovante) {
+            return new JsonResponse(['message' => 'Comprovante não encontrado.'], 404);
+        }
+
+        if (($comprovante->status ?? null) !== 'aplicado' || empty($comprovante->nota_entrada)) {
+            DB::table('comprovantes_pagamento')->where('id', $id)->update([
+                'proprietario_id' => null,
+                'status'          => 'aguardando_proprietario',
+                'updated_at'      => now(),
+            ]);
+
+            return new JsonResponse([
+                'message' => 'Comprovante desvinculado do proprietário e devolvido para revisão.',
+                'baixa_revertida' => false,
+            ]);
+        }
+
+        $nota = (string) $comprovante->nota_entrada;
+        if (!str_starts_with($nota, 'comprovantes:')) {
+            return new JsonResponse(['message' => 'Este comprovante não está vinculado a uma baixa por comprovante.'], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            DB::table('comprovantes_pagamento')->where('id', $id)->update([
+                'status'       => $comprovante->proprietario_id ? 'aguardando_confirmacao' : 'aguardando_proprietario',
+                'nota_entrada' => null,
+                'isolado'      => DB::raw('true'),
+                'updated_at'   => now(),
+            ]);
+
+            $idsAbast = DB::table('baixa_abastecimento')
+                ->where('nota_entrada', $nota)
+                ->pluck('id_abastecimento')
+                ->all();
+
+            foreach ($idsAbast as $idAbast) {
+                DB::table('abastecimentos')
+                    ->where('id_abastecimento', $idAbast)
+                    ->update([
+                        'anexo' => $this->removerUrlDeAnexo($this->anexoAbastecimento($idAbast), (string) $comprovante->arquivo_url),
+                        'sync_token_at' => now(),
+                    ]);
+            }
+
+            $restantes = DB::table('comprovantes_pagamento')
+                ->where('nota_entrada', $nota)
+                ->count();
+
+            $baixaRevertida = false;
+            if ($restantes === 0 && !empty($idsAbast)) {
+                DB::table('abastecimentos')
+                    ->whereIn('id_abastecimento', $idsAbast)
+                    ->update([
+                        'baixa_abastecimento' => DB::raw('false'),
+                        'data_baixa'          => null,
+                        'tipo_despesa'        => null,
+                        'descricao'           => null,
+                        'valor'               => null,
+                        'placa1'              => null,
+                        'recebedor'           => null,
+                        'observacao'          => null,
+                        'anexo'               => null,
+                        'sync_token_at'       => now(),
+                    ]);
+
+                DB::table('baixa_abastecimento')->where('nota_entrada', $nota)->delete();
+                CreditoProprietarioController::removerPorNota($nota);
+                \App\Services\NotificacaoCriticaService::aoMovimentarComprovanteOuBaixa('baixa_excluida_estornada', "Baixa Revertida por Desvinculação (" . count($idsAbast) . " abast.)", "Comprovante #{$id} desvinculado por " . ($user->nome ?? $user->login ?? 'Administrador') . " — baixa estornada (" . count($idsAbast) . " abastecimentos voltaram para Pendente).", 'comprovantes_pagamento', $id, 'Geral', ['comprovante_id' => $id, 'baixa_revertida' => true, 'abastecimentos' => $idsAbast]);
+                $baixaRevertida = true;
+            }
+
+            DB::commit();
+
+            return new JsonResponse([
+                'message' => $baixaRevertida
+                    ? 'Comprovante desvinculado. Era o último: a baixa foi revertida e os abastecimentos voltaram para Pendente.'
+                    : 'Comprovante desvinculado da baixa e devolvido para "Baixa por Comprovante".',
+                'baixa_revertida' => $baixaRevertida,
+                'comprovantes_restantes' => $restantes,
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return new JsonResponse(['message' => 'Erro ao desvincular comprovante: ' . $e->getMessage()], 500);
+        }
+    }
+
+    private function anexoAbastecimento(string $idAbastecimento): ?string
+    {
+        $valor = DB::table('abastecimentos')
+            ->where('id_abastecimento', $idAbastecimento)
+            ->value('anexo');
+
+        return $valor !== null ? (string) $valor : null;
+    }
+
+    private function removerUrlDeAnexo($anexo, string $url): ?string
+    {
+        if (!$anexo) return null;
+        $s = trim((string) $anexo);
+        $lista = [];
+
+        if (str_starts_with($s, '[')) {
+            $dec = json_decode($s, true);
+            if (is_array($dec)) $lista = $dec;
+        } elseif ($s !== '') {
+            $lista = [$s];
+        }
+
+        $lista = array_values(array_filter($lista, fn ($u) => trim((string) $u) !== $url));
+        if (empty($lista)) return null;
+
+        return count($lista) === 1
+            ? $lista[0]
+            : json_encode($lista, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     // ─────────────────────────────────────────────
@@ -634,6 +924,67 @@ class ComprovantePagamentoController extends Controller
 
     private function prepararUrlParaAnalise(string $arquivoUrl, string $arquivoTipo): string
     {
+        if (str_contains($arquivoUrl, 'drive.google.com')) {
+            try {
+                $driveService = app(\App\Services\GoogleDriveService::class);
+                $fileId = $driveService->extractFileId($arquivoUrl);
+                
+                if ($fileId) {
+                    $accessToken = $driveService->accessToken();
+                    
+                    $request = \Illuminate\Support\Facades\Http::withToken($accessToken);
+                    if (PHP_OS_FAMILY === 'Windows') {
+                        $request = $request->withoutVerifying();
+                    }
+
+                    // First try to get the thumbnail link
+                    $response = $request->get("https://www.googleapis.com/drive/v3/files/{$fileId}?fields=thumbnailLink,mimeType");
+
+                    if ($response->successful()) {
+                        $data = $response->json();
+                        $thumbnailLink = $data['thumbnailLink'] ?? null;
+                        
+                        if ($thumbnailLink) {
+                            // Request larger thumbnail for better OCR
+                            $thumbnailLink = preg_replace('/=s\d+/', '=s1024', $thumbnailLink);
+                            
+                            $thumbRequest = \Illuminate\Support\Facades\Http::withToken($accessToken);
+                            if (PHP_OS_FAMILY === 'Windows') {
+                                $thumbRequest = $thumbRequest->withoutVerifying();
+                            }
+                            
+                            $thumbResponse = $thumbRequest->get($thumbnailLink);
+                            
+                            if ($thumbResponse->successful()) {
+                                $base64 = base64_encode($thumbResponse->body());
+                                return 'data:image/jpeg;base64,' . $base64;
+                            }
+                        }
+                        
+                        // If no thumbnail but it's an image, fetch original
+                        if (str_starts_with($data['mimeType'] ?? '', 'image/')) {
+                            $imgRequest = \Illuminate\Support\Facades\Http::withToken($accessToken);
+                            if (PHP_OS_FAMILY === 'Windows') {
+                                $imgRequest = $imgRequest->withoutVerifying();
+                            }
+                            
+                            $imgResponse = $imgRequest->get("https://www.googleapis.com/drive/v3/files/{$fileId}?alt=media");
+                            
+                            if ($imgResponse->successful()) {
+                                $mime = $data['mimeType'] ?: 'image/jpeg';
+                                $base64 = base64_encode($imgResponse->body());
+                                return 'data:' . $mime . ';base64,' . $base64;
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Erro ao baixar arquivo do Drive para IA: ' . $e->getMessage());
+            }
+        }
+
+        // Remoção completa do Cloudinary (Pente Fino)
+
         return $arquivoUrl;
     }
 
@@ -680,10 +1031,11 @@ Campos obrigatórios:
 REGRAS CRÍTICAS sobre o campo "remetente":
 1. O remetente é quem ESTÁ PAGANDO - o cliente/empresa que enviou o dinheiro.
 2. NUNCA retorne "VIPE", "VIPE Transportes" ou qualquer nome contendo a palavra "VIPE" como remetente.
-3. Se o nome do pagador contém "VIPE", use o nome do outro participante (destinatário/beneficiário) como remetente.
-4. O destinatário (quem recebe) é sempre a VIPE ou empresa de combustível - ignore este.
-5. Se não for possível identificar o remetente sem incluir VIPE, retorne remetente: null.
-6. Inclua CPF/CNPJ junto ao nome se visível, ex: "José Silva (123.456.789-00)".
+3. NUNCA retorne "Joao Augusto Barbosa" (ou variações do nome "Augusto") como remetente - essa pessoa é um recebedor interno, nunca o cliente pagador.
+4. Se o nome do pagador contém "VIPE" ou "Joao Augusto Barbosa"/"Augusto", use o nome do outro participante (destinatário/beneficiário) como remetente.
+5. O destinatário (quem recebe) é sempre a VIPE, "Joao Augusto Barbosa"/"Augusto" ou empresa de combustível - ignore este.
+6. Se não for possível identificar o remetente sem incluir VIPE ou Augusto, retorne remetente: null.
+7. Inclua CPF/CNPJ junto ao nome se visível, ex: "José Silva (123.456.789-00)".
 PROMPT;
 
         $response = Http::withToken($apiKey)
@@ -726,6 +1078,11 @@ PROMPT;
         }
         // Double-check: remove if contains VIPE
         if (stripos($remetente, 'VIPE') !== false) {
+            return null;
+        }
+        // Double-check: "Joao Augusto Barbosa" / "Augusto" é o recebedor interno (RecebedorBaixa::AUGUSTO),
+        // nunca um proprietário/cliente pagador — mesma regra dada à IA no prompt.
+        if (stripos($remetente, 'augusto') !== false) {
             return null;
         }
         return $remetente;
@@ -821,14 +1178,17 @@ PROMPT;
         ];
     }
 
-    private function upsertBaixa(string $idAbastecimento, array $data, $user): void
+    /**
+     * Upsert das baixas em lote: 1 SELECT dos existentes + 1 UPDATE whereIn
+     * + 1 bulk INSERT, em vez de 2 round-trips por abastecimento.
+     */
+    private function upsertBaixasEmLote(array $idsAbastecimentos, array $data, $user): void
     {
-        $existingId = DB::table('baixa_abastecimento')
-            ->where('id_abastecimento', $idAbastecimento)
-            ->value('id_baixa');
+        if (empty($idsAbastecimentos)) {
+            return;
+        }
 
-        $payload = [
-            'id_abastecimento' => $idAbastecimento,
+        $payloadComum = [
             'data_hora'        => now(),
             'usuario'          => $user?->nome ?? $user?->login ?? 'sistema',
             'forma_pagamento'  => $data['forma_pagamento'] ?? 'PIX',
@@ -837,18 +1197,48 @@ PROMPT;
             'sync_token_at'    => now(),
         ];
 
-        if ($existingId) {
-            DB::table('baixa_abastecimento')->where('id_baixa', $existingId)->update($payload);
-            return;
+        // Ao reaproveitar uma linha de baixa que estava inativa/excluída (o
+        // pluck abaixo não filtra deleted_at), é obrigatório REATIVÁ-LA. Sem
+        // isto a baixa era regravada mas continuava com deleted_at/status
+        // 'Inativo', ficando invisível no relatório de baixas efetuadas
+        // enquanto o abastecimento seguia marcado como baixado (estado órfão).
+        foreach (['deleted_at', 'deleted_by', 'deleted_by_id'] as $coluna) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('baixa_abastecimento', $coluna)) {
+                $payloadComum[$coluna] = null;
+            }
+        }
+        if (\Illuminate\Support\Facades\Schema::hasColumn('baixa_abastecimento', 'status')) {
+            $payloadComum['status'] = 'Ativo';
         }
 
-        $payload['id_baixa'] = (string) Str::uuid();
-        DB::table('baixa_abastecimento')->insert($payload);
+        $existentes = DB::table('baixa_abastecimento')
+            ->whereIn('id_abastecimento', $idsAbastecimentos)
+            ->pluck('id_baixa', 'id_abastecimento');
+
+        if ($existentes->isNotEmpty()) {
+            DB::table('baixa_abastecimento')
+                ->whereIn('id_baixa', $existentes->values()->all())
+                ->update($payloadComum);
+        }
+
+        $novos = [];
+        foreach ($idsAbastecimentos as $id) {
+            if ($existentes->has($id)) {
+                continue;
+            }
+            $novos[] = array_merge($payloadComum, [
+                'id_baixa'         => (string) Str::uuid(),
+                'id_abastecimento' => $id,
+            ]);
+        }
+        if (!empty($novos)) {
+            DB::table('baixa_abastecimento')->insert($novos);
+        }
     }
 
     private function buildAbastecimentoBaixaUpdate(array $data): array
     {
-        return [
+        $update = [
             'baixa_abastecimento' => DB::raw('true'),
             'data_baixa'          => $data['data_baixa'] ?? now(),
             'tipo_despesa'        => $data['tipo_despesa'] ?? 'Combustível',
@@ -859,10 +1249,32 @@ PROMPT;
             'anexo'               => $data['anexo'] ?? null,
             'sync_token_at'       => now(),
         ];
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('abastecimentos', 'valor_recebedor1')) {
+            $update['valor_recebedor1'] = $data['valor_recebedor1'] ?? null;
+            $update['recebedor2']       = $data['recebedor2'] ?? null;
+            $update['valor_recebedor2'] = $data['valor_recebedor2'] ?? null;
+        }
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('abastecimentos', 'abono_desconto')) {
+            $update['abono_desconto'] = $data['abono_desconto'] ?? null;
+        }
+
+        return $update;
     }
+
+    private static bool $tabelasGarantidas = false;
 
     private function garantirTabelas(): void
     {
+        // Memoizado por processo: este método roda em praticamente todo
+        // endpoint de comprovantes (tela "Nova Baixa por Comprovante"), então
+        // evitar repetir DDL a cada request tem impacto direto na latência
+        // percebida dessa tela.
+        if (self::$tabelasGarantidas) {
+            return;
+        }
+
         DB::statement(<<<'SQL'
             CREATE TABLE IF NOT EXISTS comprovantes_pagamento (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -876,7 +1288,7 @@ PROMPT;
                 status VARCHAR(40) NOT NULL DEFAULT 'aguardando_confirmacao',
                 confianca_ia NUMERIC(5,4) NULL,
                 dados_ia JSONB NULL,
-                nota_entrada VARCHAR(200) NULL,
+                nota_entrada TEXT NULL,
                 usuario VARCHAR(255) NULL,
                 usuario_id VARCHAR(120) NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -887,8 +1299,16 @@ PROMPT;
         DB::statement('CREATE INDEX IF NOT EXISTS idx_comprovantes_status ON comprovantes_pagamento (status)');
         DB::statement('CREATE INDEX IF NOT EXISTS idx_comprovantes_hash ON comprovantes_pagamento (arquivo_hash)');
         DB::statement('CREATE INDEX IF NOT EXISTS idx_comprovantes_proprietario ON comprovantes_pagamento (proprietario_id)');
-        DB::statement('ALTER TABLE comprovantes_pagamento ALTER COLUMN proprietario_id TYPE VARCHAR(120) USING proprietario_id::text');
+        DB::statement(
+            'ALTER TABLE comprovantes_pagamento ' .
+            "ALTER COLUMN proprietario_id TYPE VARCHAR(120) USING proprietario_id::text, " .
+            "ALTER COLUMN nota_entrada TYPE TEXT USING nota_entrada::text, " .
+            'ADD COLUMN IF NOT EXISTS isolado BOOLEAN NOT NULL DEFAULT FALSE, ' .
+            "ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(40) NOT NULL DEFAULT 'PIX'"
+        );
 
         AliasProprietarioController::garantirTabelaAliasProprietarios();
+
+        self::$tabelasGarantidas = true;
     }
 }

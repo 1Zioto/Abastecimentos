@@ -6,17 +6,54 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/app_state.dart';
+import 'core/background_tank_monitor.dart';
 import 'core/constants.dart';
+import 'core/local_notifications.dart';
+import 'core/sharing_manager.dart';
+import 'screens/abastecimentos/list_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/notificacoes_criticas_screen.dart';
 import 'screens/shell_screen.dart';
+
+/// Navigator global: permite navegar a partir do toque em notificações,
+/// fora da árvore de widgets.
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   await runZonedGuarded<Future<void>>(() async {
     WidgetsFlutterBinding.ensureInitialized();
     final state = await AppState.init();
     _installErrorHandlers(state);
-    unawaited(state.errorReporter.flushPending());
+
+    LocalNotifications.aoTocarNotificacao = () {
+      if (!AppState.instance.auth.isAuthenticated) return;
+      appNavigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => const AbastecimentosListScreen(),
+        ),
+      );
+    };
+
+    LocalNotifications.aoTocarNotificacaoCritica = (_) {
+      if (!AppState.instance.auth.isAuthenticated) return;
+      if (!Roles.isAdmin(AppState.instance.auth.tipo)) return;
+      appNavigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => const NotificacoesCriticasScreen(standalone: true),
+        ),
+      );
+    };
+
     runApp(const AbastecimentoVipeApp());
+
+    // Inicializa serviços acessórios após o primeiro frame para nunca
+    // bloquear ou travar a abertura da interface.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(state.errorReporter.flushPending());
+      SharingManager.instance.init();
+      unawaited(LocalNotifications.instance.init());
+      unawaited(registrarMonitorTanqueZerado());
+    });
   }, (error, stack) async {
     try {
       await AppState.instance.errorReporter.capture(
@@ -54,6 +91,7 @@ class AbastecimentoVipeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),

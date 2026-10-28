@@ -3,15 +3,10 @@ package com.vipe.abastecimento
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
-import android.provider.Settings
 import androidx.core.app.ActivityCompat
-import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
-import java.io.File
 import java.nio.charset.Charset
 import java.util.UUID
 import io.flutter.embedding.android.FlutterActivity
@@ -19,7 +14,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val appUpdateChannelName = "com.vipe.abastecimento/app_update"
     private val printerChannelName = "com.vipe.abastecimento/thermal_printer"
     private val bluetoothPermissionRequest = 5808
     private var pendingBluetoothResult: MethodChannel.Result? = null
@@ -27,21 +21,6 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, appUpdateChannelName)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "installApk" -> {
-                        val path = call.argument<String>("path")
-                        if (path.isNullOrBlank()) {
-                            result.error("APK_PATH_REQUIRED", "Arquivo APK não informado.", null)
-                            return@setMethodCallHandler
-                        }
-                        installApk(path, result)
-                    }
-                    else -> result.notImplemented()
-                }
-            }
-
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, printerChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -194,46 +173,5 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }.start()
-    }
-
-    private fun installApk(path: String, result: MethodChannel.Result) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                !packageManager.canRequestPackageInstalls()
-            ) {
-                val settingsIntent = Intent(
-                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:$packageName")
-                )
-                startActivity(settingsIntent)
-                result.error(
-                    "INSTALL_PERMISSION_REQUIRED",
-                    "Libere a instalação de apps desconhecidos para concluir a atualização.",
-                    null
-                )
-                return
-            }
-
-            val apkFile = File(path)
-            if (!apkFile.exists()) {
-                result.error("APK_NOT_FOUND", "Arquivo APK não encontrado.", null)
-                return
-            }
-
-            val apkUri = FileProvider.getUriForFile(
-                this,
-                "$packageName.fileprovider",
-                apkFile
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-            result.success(true)
-        } catch (e: Exception) {
-            result.error("INSTALL_APK_FAILED", e.message, null)
-        }
     }
 }

@@ -116,20 +116,32 @@ class AppDates {
     }
   }
 
-  static String money(num? v) {
-    if (v == null) return 'R\$ 0,00';
-    return _moneyBr.format(v);
+  /// Converte com segurança valores vindos do JSON da API: o Postgres
+  /// serializa NUMERIC como String ("123.45"), o que causava crashes
+  /// "type 'String' is not a subtype of type 'num?'" espalhados pelas telas.
+  static num? _asNum(Object? v) {
+    if (v == null) return null;
+    if (v is num) return v;
+    return double.tryParse(v.toString().replaceAll(',', '.'));
   }
 
-  static String number(num? v, {int digits = 2}) {
-    if (v == null) return '0';
+  static String money(Object? v) {
+    final n = _asNum(v);
+    if (n == null) return 'R\$ 0,00';
+    return _moneyBr.format(n);
+  }
+
+  static String number(Object? v, {int digits = 2}) {
+    final n = _asNum(v);
+    if (n == null) return '0';
     return NumberFormat.decimalPatternDigits(
             locale: 'pt_BR', decimalDigits: digits)
-        .format(v);
+        .format(n);
   }
 
-  static String intNumber(num? v) {
-    if (v == null) return '0';
-    return _numberBr.format(v.round());
+  static String intNumber(Object? v) {
+    final n = _asNum(v);
+    if (n == null) return '0';
+    return _numberBr.format(n.round());
   }
 }

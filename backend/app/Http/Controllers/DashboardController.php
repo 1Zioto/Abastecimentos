@@ -9,13 +9,6 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
-    private const STATUS_BAIXA_CASE = "
-        CASE
-            WHEN COALESCE(baixa_abastecimento, false) = true THEN 'Pago'
-            ELSE 'Pendente'
-        END
-    ";
-
     private function applyLocal($query, ?string $local)
     {
         $user = auth()->user();
@@ -49,16 +42,7 @@ class DashboardController extends Controller
             return $query->whereRaw("LOWER(COALESCE(status, '')) <> 'pago'");
         }
 
-        return $query->whereRaw('COALESCE(baixa_abastecimento, false) = false');
-    }
-
-    private function aplicarFiltroBaixado($query)
-    {
-        if (!$this->tabelaTemColuna('abastecimentos', 'baixa_abastecimento')) {
-            return $query->whereRaw("LOWER(COALESCE(status, '')) = 'pago'");
-        }
-
-        return $query->whereRaw('COALESCE(baixa_abastecimento, false) = true');
+        return $query->whereRaw('baixa_abastecimento IS NOT TRUE');
     }
 
     public function index(Request $request)
@@ -70,66 +54,78 @@ class DashboardController extends Controller
         $local = $request->query('local');
         $valorCompraFinalSql = $this->entradaNotaValorCompraFinalSql('entrada_notas');
 
-        $totalAbastecimentos = (int) $this->abastecimentosAtivos($request, $local)->count();
-        $totalLitros = (float) $this->abastecimentosAtivos($request, $local)
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
-            ->sum('quantidade_litros');
-        $valorTotalVendido = (float) $this->abastecimentosAtivos($request, $local)
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
-            ->sum('valor_total');
-        $comprasFinanceiras = $this->entradasAtivas($request, $local)
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()]);
-        $this->aplicarFiltroNotasAjusteEntradaNotas($comprasFinanceiras);
-        $valorTotalComprado = (float) $comprasFinanceiras
-            ->selectRaw("COALESCE(SUM({$valorCompraFinalSql}), 0) as valor")
-            ->value('valor');
-        $valorTotalPendente = (float) $this->aplicarFiltroPendenteBaixa(
-            $this->abastecimentosAtivos($request, $local)
-        )->sum('valor_total');
-        $valorTotalRecebido = (float) $this->aplicarFiltroBaixado(
-            $this->abastecimentosAtivos($request, $local)
-        )->sum('valor_total');
-        $litrosVendidosHoje = (float) $this->abastecimentosAtivos($request, $local)
-            ->whereDate('data', $hoje)
-            ->sum('quantidade_litros');
-        $valorVendidoHoje = (float) $this->abastecimentosAtivos($request, $local)
-            ->whereDate('data', $hoje)
-            ->sum('valor_total');
-        $totalPendenteBaixa = (int) $this->aplicarFiltroPendenteBaixa(
-            $this->abastecimentosAtivos($request, $local)
-        )->count();
-        $totalCompradoTanque = (float) $this->entradasAtivas($request, $local)
-            ->sum('quantidade');
-        $totalVendidoTanque = (float) $this->abastecimentosAtivos($request, $local)
-            ->sum('quantidade_litros');
+        $ini = $inicio12Meses->toDateString();
+        $fim = $fim12Meses->toDateString();
+
+        // Expressões de pago/pendente (com fallback para bancos sem a coluna),
+        // usadas nos FILTER (WHERE ...) abaixo.
+        $temColBaixa = $this->tabelaTemColuna('abastecimentos', 'baixa_abastecimento');
+        $pagoExpr = $temColBaixa ? 'baixa_abastecimento IS TRUE' : "LOWER(COALESCE(status, '')) = 'pago'";
+        $pendExpr = $temColBaixa ? 'baixa_abastecimento IS NOT TRUE' : "LOWER(COALESCE(status, '')) <> 'pago'";
+
+        // Todos os totais do painel em UMA passada na tabela (antes eram 9
+        // agregações sequenciais — cada uma pagando latência do banco remoto).
+        $tot = $this->abastecimentosAtivos($request, $local)
+            ->selectRaw("
+                COUNT(*) AS total_abastecimentos,
+                COALESCE(SUM(quantidade_litros) FILTER (WHERE data BETWEEN ? AND ?), 0) AS litros_12m,
+                COALESCE(SUM(valor_total) FILTER (WHERE data BETWEEN ? AND ?), 0) AS valor_12m,
+                COALESCE(SUM(valor_total) FILTER (WHERE {$pendExpr}), 0) AS valor_pendente,
+                COALESCE(SUM(valor_total) FILTER (WHERE {$pagoExpr}), 0) AS valor_recebido,
+                COALESCE(SUM(quantidade_litros) FILTER (WHERE data = ?), 0) AS litros_hoje,
+                COALESCE(SUM(valor_total) FILTER (WHERE data = ?), 0) AS valor_hoje,
+                COUNT(*) FILTER (WHERE {$pendExpr}) AS qtd_pendente,
+                COUNT(*) FILTER (WHERE {$pagoExpr}) AS qtd_pago,
+                COALESCE(SUM(quantidade_litros) FILTER (WHERE {$pendExpr}), 0) AS litros_pendente,
+                COALESCE(SUM(quantidade_litros) FILTER (WHERE {$pagoExpr}), 0) AS litros_pago,
+                COALESCE(SUM(quantidade_litros), 0) AS litros_total
+            ", [$ini, $fim, $ini, $fim, $hoje, $hoje])
+            ->first();
+
+        $totalAbastecimentos = (int) ($tot->total_abastecimentos ?? 0);
+        $totalLitros = (float) ($tot->litros_12m ?? 0);
+        $valorTotalVendido = (float) ($tot->valor_12m ?? 0);
+        $valorTotalPendente = (float) ($tot->valor_pendente ?? 0);
+        $valorTotalRecebido = (float) ($tot->valor_recebido ?? 0);
+        $litrosVendidosHoje = (float) ($tot->litros_hoje ?? 0);
+        $valorVendidoHoje = (float) ($tot->valor_hoje ?? 0);
+        $totalPendenteBaixa = (int) ($tot->qtd_pendente ?? 0);
+        $totalVendidoTanque = (float) ($tot->litros_total ?? 0);
+
+        // Entradas de nota: valor 12 meses + litros totais em uma query.
+        // (aplicarFiltroNotasAjusteEntradaNotas é identidade com a constante
+        // de números ignorados vazia, mantido pelo mesmo motivo do original.)
+        $entradasQuery = $this->entradasAtivas($request, $local);
+        $this->aplicarFiltroNotasAjusteEntradaNotas($entradasQuery);
+        $ent = $entradasQuery
+            ->selectRaw("
+                COALESCE(SUM({$valorCompraFinalSql}) FILTER (WHERE data BETWEEN ? AND ?), 0) AS comprado_valor_12m,
+                COALESCE(SUM(quantidade), 0) AS comprado_litros_total
+            ", [$ini, $fim])
+            ->first();
+        $valorTotalComprado = (float) ($ent->comprado_valor_12m ?? 0);
+        $totalCompradoTanque = (float) ($ent->comprado_litros_total ?? 0);
         $combustivelTanque = $totalCompradoTanque - $totalVendidoTanque;
 
-        $vendidoPorMes = $this->abastecimentosAtivos($request, $local)
-            ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade_litros), 0) as vendido_litros, COALESCE(SUM(valor_total), 0) as vendido_valor")
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
+        // Série mensal (total/pago/pendente) em UM GROUP BY, antes eram três.
+        $vendidoMensal = $this->abastecimentosAtivos($request, $local)
+            ->selectRaw("
+                TO_CHAR(data, 'YYYY-MM') as ym,
+                COALESCE(SUM(quantidade_litros), 0) as vendido_litros,
+                COALESCE(SUM(valor_total), 0) as vendido_valor,
+                COALESCE(SUM(quantidade_litros) FILTER (WHERE {$pagoExpr}), 0) as vendido_litros_pago,
+                COALESCE(SUM(valor_total) FILTER (WHERE {$pagoExpr}), 0) as vendido_valor_pago,
+                COALESCE(SUM(quantidade_litros) FILTER (WHERE {$pendExpr}), 0) as vendido_litros_pendente,
+                COALESCE(SUM(valor_total) FILTER (WHERE {$pendExpr}), 0) as vendido_valor_pendente
+            ")
+            ->whereBetween('data', [$ini, $fim])
             ->groupBy('ym')
             ->get()
             ->keyBy('ym');
 
-        $vendidoPagoPorMes = $this->abastecimentosAtivos($request, $local)
-            ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade_litros), 0) as vendido_litros_pago, COALESCE(SUM(valor_total), 0) as vendido_valor_pago")
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
-            ->groupBy('ym');
-        $this->aplicarFiltroBaixado($vendidoPagoPorMes);
-        $vendidoPagoPorMes = $vendidoPagoPorMes->get()
-            ->keyBy('ym');
-
-        $vendidoPendentePorMes = $this->abastecimentosAtivos($request, $local)
-            ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade_litros), 0) as vendido_litros_pendente, COALESCE(SUM(valor_total), 0) as vendido_valor_pendente")
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
-            ->groupBy('ym');
-        $this->aplicarFiltroPendenteBaixa($vendidoPendentePorMes);
-        $vendidoPendentePorMes = $vendidoPendentePorMes->get()
-            ->keyBy('ym');
-
         $compradoPorMes = $this->entradasAtivas($request, $local)
             ->selectRaw("TO_CHAR(data, 'YYYY-MM') as ym, COALESCE(SUM(quantidade), 0) as comprado_litros, COALESCE(SUM({$valorCompraFinalSql}), 0) as comprado_valor")
-            ->whereBetween('data', [$inicio12Meses->toDateString(), $fim12Meses->toDateString()])
+            ->whereBetween('data', [$ini, $fim])
             ->groupBy('ym');
         $this->aplicarFiltroNotasAjusteEntradaNotas($compradoPorMes);
         $compradoPorMes = $compradoPorMes->get()->keyBy('ym');
@@ -139,9 +135,7 @@ class DashboardController extends Controller
             $ref = $inicio12Meses->copy()->addMonths($i);
             $key = $ref->format('Y-m');
             $comprado = $compradoPorMes->get($key);
-            $vendido = $vendidoPorMes->get($key);
-            $vendidoPago = $vendidoPagoPorMes->get($key);
-            $vendidoPendente = $vendidoPendentePorMes->get($key);
+            $vendido = $vendidoMensal->get($key);
             $comparativo12Meses->push([
                 'mes_ref' => $key,
                 'label' => $ref->format('m/y'),
@@ -149,32 +143,26 @@ class DashboardController extends Controller
                 'comprado_valor' => round((float) ($comprado->comprado_valor ?? 0), 2),
                 'vendido_litros' => round((float) ($vendido->vendido_litros ?? 0), 2),
                 'vendido_valor' => round((float) ($vendido->vendido_valor ?? 0), 2),
-                'vendido_litros_pago' => round((float) ($vendidoPago->vendido_litros_pago ?? 0), 2),
-                'vendido_valor_pago' => round((float) ($vendidoPago->vendido_valor_pago ?? 0), 2),
-                'vendido_litros_pendente' => round((float) ($vendidoPendente->vendido_litros_pendente ?? 0), 2),
-                'vendido_valor_pendente' => round((float) ($vendidoPendente->vendido_valor_pendente ?? 0), 2),
+                'vendido_litros_pago' => round((float) ($vendido->vendido_litros_pago ?? 0), 2),
+                'vendido_valor_pago' => round((float) ($vendido->vendido_valor_pago ?? 0), 2),
+                'vendido_litros_pendente' => round((float) ($vendido->vendido_litros_pendente ?? 0), 2),
+                'vendido_valor_pendente' => round((float) ($vendido->vendido_valor_pendente ?? 0), 2),
             ]);
         }
 
-        $statusGeral = $this->abastecimentosAtivos($request, $local)
-            ->selectRaw(self::STATUS_BAIXA_CASE . ' as status')
-            ->selectRaw('COUNT(*) as total, COALESCE(SUM(valor_total), 0) as valor_total, COALESCE(SUM(quantidade_litros), 0) as litros_total')
-            ->groupByRaw(self::STATUS_BAIXA_CASE)
-            ->get()
-            ->keyBy('status');
-
+        // Resumo por status derivado da mesma agregação única de totais.
         $statusResumo = [
             [
                 'status' => 'Pendente',
-                'total' => (int) ($statusGeral->get('Pendente')->total ?? 0),
-                'valor_total' => round((float) ($statusGeral->get('Pendente')->valor_total ?? 0), 2),
-                'litros_total' => round((float) ($statusGeral->get('Pendente')->litros_total ?? 0), 2),
+                'total' => (int) ($tot->qtd_pendente ?? 0),
+                'valor_total' => round((float) ($tot->valor_pendente ?? 0), 2),
+                'litros_total' => round((float) ($tot->litros_pendente ?? 0), 2),
             ],
             [
                 'status' => 'Pago',
-                'total' => (int) ($statusGeral->get('Pago')->total ?? 0),
-                'valor_total' => round((float) ($statusGeral->get('Pago')->valor_total ?? 0), 2),
-                'litros_total' => round((float) ($statusGeral->get('Pago')->litros_total ?? 0), 2),
+                'total' => (int) ($tot->qtd_pago ?? 0),
+                'valor_total' => round((float) ($tot->valor_recebido ?? 0), 2),
+                'litros_total' => round((float) ($tot->litros_pago ?? 0), 2),
             ],
         ];
 

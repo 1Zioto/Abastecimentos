@@ -17,6 +17,9 @@
   .field .value { font-size: 12px; font-weight: 600; color: #0f172a; }
   .totals { background: #0f172a; color: #fff; border-radius: 8px; padding: 14px 16px; margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
   .totals .t-label { font-size: 9px; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
+  .id-destaque { display: inline-block; margin-left: 8px; padding: 2px 8px; border: 1px solid #c7d2fe;
+                 background: #eef2ff; color: #3730a3; border-radius: 10px;
+                 font-size: 11px; font-family: DejaVu Sans Mono, monospace; vertical-align: middle; }
   .totals .t-value { font-size: 16px; font-weight: 700; color: #fff; }
   .totals .t-value.accent { color: #4ade80; }
   .footer { margin-top: 20px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 10px; }
@@ -33,7 +36,12 @@
 </div>
 
 <div class="body">
-  <div class="title">Comprovante de Abastecimento</div>
+  <div class="title">
+    Comprovante de Abastecimento
+    @if (!empty($abastecimento->atua_id))
+      <span class="id-destaque">{{ $abastecimento->atua_id }}</span>
+    @endif
+  </div>
   @php
     $rawDataHora = method_exists($abastecimento, 'getRawOriginal') ? $abastecimento->getRawOriginal('data_hora') : ($abastecimento->data_hora ?? null);
     $tsDataHora = $rawDataHora ? strtotime((string) $rawDataHora) : false;
@@ -43,6 +51,12 @@
   @endphp
 
   <div class="grid">
+    @if (!empty($abastecimento->atua_id))
+    <div class="field">
+      <div class="label">Identificador</div>
+      <div class="value">{{ $abastecimento->atua_id }}</div>
+    </div>
+    @endif
     <div class="field">
       <div class="label">Data / Hora</div>
       <div class="value">{{ $dataHoraFmt }}</div>
@@ -103,7 +117,10 @@
   </div>
 
   <div class="footer">
-    <div class="id-code">ID: {{ $abastecimento->id_abastecimento }}</div>
+    @if (!empty($abastecimento->atua_id))
+      <div class="id-code"><strong>ID: {{ $abastecimento->atua_id }}</strong></div>
+    @endif
+    <div class="id-code">Ref.: {{ $abastecimento->id_abastecimento }}</div>
     <div>Emitido em {{ now()->format('d/m/Y \à\s H:i:s') }} — FuelTrack Sistema de Abastecimento</div>
   </div>
 </div>

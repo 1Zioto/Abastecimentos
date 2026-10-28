@@ -70,6 +70,105 @@ class SofitController extends Controller
         );
     }
 
+    public function gruposPendentes(Request $request): JsonResponse
+    {
+        $this->garantirColunas();
+
+        $filiais = ['Matriz', 'Viana'];
+        $user = auth()->user();
+        if ($user && method_exists($user, 'filiaisAcesso')) {
+            $filiais = $user->filiaisAcesso();
+        }
+
+        $query = DB::table('abastecimentos as a')
+            ->leftJoin('veiculos as v', 'v.id_veiculo', '=', 'a.id_veiculo')
+            ->leftJoin('motoristas as m', 'm.id_motorista', '=', 'a.id_motorista')
+            ->leftJoin('proprietarios as p', 'p.id_proprietario', '=', 'a.id_proprietario')
+            ->whereRaw("COALESCE(a.sofit_status, '') <> 'lancado'");
+
+        if (DB::getSchemaBuilder()->hasColumn('abastecimentos', 'deleted_at')) {
+            $query->whereNull('a.deleted_at');
+        }
+        if (DB::getSchemaBuilder()->hasColumn('abastecimentos', 'local')) {
+            $query->whereIn('a.local', $filiais);
+            if ($request->filled('local')) {
+                $query->whereRaw('LOWER(a.local) = LOWER(?)', [$request->get('local')]);
+            }
+        }
+        if ($request->filled('id_proprietario')) {
+            $query->where('a.id_proprietario', $request->get('id_proprietario'));
+        }
+        if ($request->filled('placa')) {
+            $placa = preg_replace('/[^A-Za-z0-9]/', '', (string) $request->get('placa'));
+            $query->whereRaw("REGEXP_REPLACE(COALESCE(v.placa, a.id_veiculo, ''), '[^A-Za-z0-9]', '', 'g') ILIKE ?", ['%' . $placa . '%']);
+        }
+        if ($request->filled('data_inicio')) {
+            $query->whereDate('a.data', '>=', $request->get('data_inicio'));
+        }
+        if ($request->filled('data_fim')) {
+            $query->whereDate('a.data', '<=', $request->get('data_fim'));
+        }
+
+        $items = $query
+            ->orderBy('v.placa')
+            ->orderBy('a.data_hora')
+            ->limit((int) $request->get('limit', 500))
+            ->get([
+                'a.id_abastecimento',
+                'a.data',
+                'a.data_hora',
+                'a.quantidade_litros',
+                'a.valor_total',
+                'a.odometro',
+                'a.nome_motorista',
+                'a.nome_proprietario',
+                'a.sofit_id',
+                'a.sofit_status',
+                'a.sofit_retorno',
+                'a.sofit_trip_id',
+                'v.placa',
+                'm.nome as motorista_cadastro',
+                'p.nome as proprietario_nome',
+            ]);
+
+        $grupos = [];
+        foreach ($items as $a) {
+            $placa = strtoupper(trim((string) ($a->placa ?: 'SEM PLACA')));
+            if (!isset($grupos[$placa])) {
+                $grupos[$placa] = [
+                    'placa' => $placa,
+                    'qtd' => 0,
+                    'data_mais_antiga' => null,
+                    'abastecimentos' => [],
+                ];
+            }
+
+            $dataRef = $a->data_hora ?: $a->data;
+            if (!$grupos[$placa]['data_mais_antiga'] || ($dataRef && (string) $dataRef < (string) $grupos[$placa]['data_mais_antiga'])) {
+                $grupos[$placa]['data_mais_antiga'] = $dataRef;
+            }
+
+            $grupos[$placa]['qtd']++;
+            $grupos[$placa]['abastecimentos'][] = [
+                'id_abastecimento' => $a->id_abastecimento,
+                'data' => $a->data,
+                'data_hora' => $a->data_hora,
+                'odometro' => $a->odometro,
+                'litros' => round((float) $a->quantidade_litros, 2),
+                'quantidade_litros' => round((float) $a->quantidade_litros, 2),
+                'valor_total' => round((float) $a->valor_total, 2),
+                'nome_motorista' => $a->nome_motorista ?: $a->motorista_cadastro,
+                'nome_proprietario' => $a->nome_proprietario ?: $a->proprietario_nome,
+                'sofit_id' => $a->sofit_id,
+                'sofit_status' => $a->sofit_status ?: 'pendente',
+                'sofit_retorno' => $a->sofit_retorno,
+                'sofit_trip_id' => $a->sofit_trip_id,
+            ];
+        }
+
+        return new JsonResponse(array_values($grupos));
+    }
+
     public function lancar(Request $request, string $id): JsonResponse
     {
         $this->garantirColunas();
@@ -145,12 +244,10 @@ class SofitController extends Controller
         $motoristaOriginal = trim((string) ($a->nome_motorista ?: $a->motorista_cadastro)) ?: null;
         $motoristaSofitInformado = trim((string) ($dados['motorista_sofit'] ?? '')) ?: null;
 
-        if ($motoristaSofitInformado && $motoristaOriginal) {
-            // Usuário informou o nome correto: usa e LEMBRA para as próximas ocorrências
-            $this->salvarAliasMotorista($motoristaOriginal, $motoristaSofitInformado);
+        if ($motoristaSofitInformado) {
             $motorista = $motoristaSofitInformado;
         } else {
-            // Traduz automaticamente se já houver vínculo salvo
+            // Traduz automaticamente se já houver vínculo salvo antigo
             $motorista = $this->buscarAliasMotorista($motoristaOriginal) ?? $motoristaOriginal;
         }
 

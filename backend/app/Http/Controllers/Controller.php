@@ -450,6 +450,8 @@ class Controller extends BaseController
 
             $this->registrarAuditoria($model, 'update', $campo, $anterior, $novo);
         }
+
+        \App\Services\NotificacaoCriticaService::aoEditarModelo($model, $data);
     }
 
     protected function manterSomenteAlteracoesReais(Model $model, array $data): array
@@ -492,6 +494,7 @@ class Controller extends BaseController
         }
 
         $this->registrarAuditoria($model, 'delete', null, $model->toArray(), $payload);
+        \App\Services\NotificacaoCriticaService::aoInativarModelo($model);
         $model->forceFill($payload)->save();
 
         return new \Illuminate\Http\JsonResponse(['message' => $mensagem]);

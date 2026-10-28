@@ -40,6 +40,7 @@ use App\Http\Controllers\TripController;
 use App\Http\Controllers\TelemetryCostController;
 use App\Http\Controllers\PingoController;
 use App\Http\Controllers\VariacaoEntradasSaidasController;
+use App\Http\Controllers\NotificacaoCriticaController;
 
 /*
 |--------------------------------------------------------------------------
@@ -175,6 +176,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('encerrantes-bomba/status', [EncerranteBombaController::class, 'status']);
     Route::get('configuracoes/encerrante-bomba', [EncerranteBombaController::class, 'config']);
     Route::get('configuracoes/abastecimento-analise', [AppConfigController::class, 'abastecimentoAnalise']);
+    Route::get('configuracoes/centavos', [AppConfigController::class, 'centavos']);
 
     // Usuários (leitura)
     Route::apiResource('usuarios', UsuarioController::class)->only(['index', 'show']);
@@ -223,6 +225,12 @@ Route::middleware('auth:api')->group(function () {
 
     // Escrita sensível (edição/exclusão): somente admin
     Route::middleware('admin')->group(function () {
+        // Notificações críticas (somente admin)
+        Route::get('notificacoes-criticas', [NotificacaoCriticaController::class, 'index']);
+        Route::get('notificacoes-criticas/resumo', [NotificacaoCriticaController::class, 'resumo']);
+        Route::post('notificacoes-criticas/marcar-vistas', [NotificacaoCriticaController::class, 'marcarVistasLote']);
+        Route::post('notificacoes-criticas/{id}/marcar-vista', [NotificacaoCriticaController::class, 'marcarVista']);
+
         // Histórico de alterações
         Route::get('auditoria', [AuditoriaController::class, 'index']);
         Route::delete('auditoria', [AuditoriaController::class, 'destroyAll']);
@@ -320,6 +328,7 @@ Route::middleware('auth:api')->group(function () {
         // Configurações
         Route::put('configuracoes/encerrante-bomba', [EncerranteBombaController::class, 'updateConfig']);
         Route::put('configuracoes/abastecimento-analise', [AppConfigController::class, 'updateAbastecimentoAnalise']);
+        Route::put('configuracoes/centavos', [AppConfigController::class, 'updateCentavos']);
         Route::put('encerrantes-bomba/{id}', [EncerranteBombaController::class, 'update']);
         Route::delete('encerrantes-bomba/{id}', [EncerranteBombaController::class, 'destroy']);
 

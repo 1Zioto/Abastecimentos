@@ -12,8 +12,11 @@ class AppConfigController extends Controller
     private const AI_ORIENTATION_KEY = 'abastecimento_ai_orientation';
     private const NOTA_FISCAL_AI_PROMPT_KEY = 'nota_fiscal_ai_prompt';
     private const ENCERRANTE_HORA_KEY = 'encerrante_bomba_hora';
+    private const CONFIGURAR_CENTAVOS_KEY = 'abastecimento_configurar_centavos';
+    private const DATA_INICIO_CENTAVOS = '2026-10-23';
     private const DEFAULT_ANALYSIS_ENGINE = 'ai';
     private const DEFAULT_ENCERRANTE_HORA = '08:00';
+    private const DEFAULT_CONFIGURAR_CENTAVOS = true;
     private const DEFAULT_AI_ORIENTATION = <<<'TEXT'
 Se nada for encontrado, tente encontrar na imagem a quantidade em litros.
 Primeiro classifique a imagem: bomba/medidor mecânico, recibo/papel, odômetro ou outro.
@@ -72,6 +75,34 @@ TEXT;
         return new JsonResponse($this->analysisPayload());
     }
 
+    /**
+     * Configuração global do cálculo de valor total dos abastecimentos.
+     * A vigência protege os lançamentos históricos, que continuam como foram
+     * registrados antes da adoção de centavos.
+     */
+    public function centavos(): JsonResponse
+    {
+        $this->ensureSchema();
+
+        return new JsonResponse($this->centavosPayload());
+    }
+
+    public function updateCentavos(Request $request): JsonResponse
+    {
+        $this->ensureSchema();
+
+        $data = $request->validate([
+            'configurar_centavos' => 'required|boolean',
+        ]);
+
+        DB::table('configuracoes_sistema')->updateOrInsert(
+            ['chave' => self::CONFIGURAR_CENTAVOS_KEY],
+            ['valor' => $data['configurar_centavos'] ? '1' : '0', 'updated_at' => now()]
+        );
+
+        return new JsonResponse($this->centavosPayload());
+    }
+
     private function analysisPayload(): array
     {
         $values = DB::table('configuracoes_sistema')
@@ -91,6 +122,22 @@ TEXT;
             'use_ai_analysis' => $engine === 'ai',
             'ai_orientation' => $orientation !== '' ? $orientation : self::DEFAULT_AI_ORIENTATION,
             'nota_fiscal_ai_prompt' => $notaFiscalPrompt !== '' ? $notaFiscalPrompt : self::DEFAULT_NOTA_FISCAL_AI_PROMPT,
+        ];
+    }
+
+    private function centavosPayload(): array
+    {
+        $value = DB::table('configuracoes_sistema')
+            ->where('chave', self::CONFIGURAR_CENTAVOS_KEY)
+            ->value('valor');
+
+        $enabled = $value === null
+            ? self::DEFAULT_CONFIGURAR_CENTAVOS
+            : filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        return [
+            'configurar_centavos' => $enabled ?? self::DEFAULT_CONFIGURAR_CENTAVOS,
+            'data_inicio' => self::DATA_INICIO_CENTAVOS,
         ];
     }
 
@@ -123,6 +170,11 @@ TEXT;
             [
                 'chave' => self::ENCERRANTE_HORA_KEY,
                 'valor' => self::DEFAULT_ENCERRANTE_HORA,
+                'updated_at' => now(),
+            ],
+            [
+                'chave' => self::CONFIGURAR_CENTAVOS_KEY,
+                'valor' => self::DEFAULT_CONFIGURAR_CENTAVOS ? '1' : '0',
                 'updated_at' => now(),
             ],
         ]);

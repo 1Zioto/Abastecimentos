@@ -16,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->api(prepend: [
+            \App\Http\Middleware\UseDatabaseFallback::class,
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
@@ -23,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth' => \App\Http\Middleware\Authenticate::class,
             'admin' => \App\Http\Middleware\EnsureAdmin::class,
             'admin_or_operador' => \App\Http\Middleware\EnsureAdminOrOperador::class,
+            'admin_or_visualizador' => \App\Http\Middleware\EnsureAdminOrVisualizador::class,
             'api_key' => \App\Http\Middleware\EnsureApiKey::class,
         ]);
 

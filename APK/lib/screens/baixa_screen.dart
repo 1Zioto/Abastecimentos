@@ -47,10 +47,25 @@ class _BaixaScreenState extends State<BaixaScreen> {
   String _formaPagamento = '';
   String _dataPagamento = AppDates.todayIso();
   String _horaPagamento = AppDates.currentTimeIso();
-  String _recebedor = 'Vipe Transportes';
+  String _recebedor = 'VIPE TRANSPORTES MULTIMODAIS LTDA';
   final _recebedorOutrosCtrl = TextEditingController();
   final _observacaoCtrl = TextEditingController();
+  final _valorVipeCtrl = TextEditingController();
+  final _valorAugustoCtrl = TextEditingController();
+  final _abonoCtrl = TextEditingController();
+  final _creditoUsadoCtrl = TextEditingController();
   final List<String> _anexoUrls = [];
+
+  // filtros do histórico (a API carrega inicialmente os últimos 60 dias)
+  final _histEmpresaCtrl = TextEditingController();
+  final _histPlacaCtrl = TextEditingController();
+  final _histValorCtrl = TextEditingController();
+  String _histFormaPagamento = '';
+  String _histRecebedor = '';
+  String _histDataInicio = '';
+  String _histDataFim = '';
+  bool _showFiltrosHistorico = false;
+  double _saldoCredito = 0;
 
   String _sortBy = 'data_hora';
   bool _sortAsc = false;
@@ -68,6 +83,13 @@ class _BaixaScreenState extends State<BaixaScreen> {
     _descricaoCtrl.dispose();
     _recebedorOutrosCtrl.dispose();
     _observacaoCtrl.dispose();
+    _valorVipeCtrl.dispose();
+    _valorAugustoCtrl.dispose();
+    _abonoCtrl.dispose();
+    _creditoUsadoCtrl.dispose();
+    _histEmpresaCtrl.dispose();
+    _histPlacaCtrl.dispose();
+    _histValorCtrl.dispose();
     super.dispose();
   }
 
@@ -82,11 +104,23 @@ class _BaixaScreenState extends State<BaixaScreen> {
   Future<void> _loadBaixas() async {
     setState(() => _loadingBaixas = true);
     try {
-      final resp =
-          await AppState.instance.api.get('/baixas', query: {'per_page': 200});
-      final rows = (resp is Map && resp['data'] is List)
-          ? List<dynamic>.from(resp['data'] as List)
-          : <dynamic>[];
+      final desde = DateTime.now().subtract(const Duration(days: 60));
+      final dataInicio =
+          '${desde.year.toString().padLeft(4, '0')}-${desde.month.toString().padLeft(2, '0')}-${desde.day.toString().padLeft(2, '0')}';
+      final rows = <dynamic>[];
+      var pagina = 1;
+      var ultimaPagina = 1;
+      do {
+        final resp = await AppState.instance.api.get('/baixas', query: {
+          'page': pagina,
+          'per_page': 50,
+          'data_inicio': dataInicio,
+        });
+        if (resp is! Map) break;
+        if (resp['data'] is List) rows.addAll(resp['data'] as List);
+        ultimaPagina = int.tryParse('${resp['last_page'] ?? 1}') ?? 1;
+        pagina++;
+      } while (pagina <= ultimaPagina);
       _baixas = rows
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -106,6 +140,7 @@ class _BaixaScreenState extends State<BaixaScreen> {
       return;
     }
     setState(() => _loadingPendentes = true);
+    await _loadSaldoCredito();
     try {
       final resp = await AppState.instance.api.get(
         '/abastecimentos/filter/baixa-pendente',
@@ -151,6 +186,21 @@ class _BaixaScreenState extends State<BaixaScreen> {
     }
   }
 
+  Future<void> _loadSaldoCredito() async {
+    final id = _idProprietario;
+    if (id == null || id.isEmpty) {
+      _saldoCredito = 0;
+      return;
+    }
+    try {
+      final resp =
+          await AppState.instance.api.get('/proprietarios/$id/credito');
+      _saldoCredito = resp is Map ? _toDouble(resp['saldo']) : 0;
+    } catch (_) {
+      _saldoCredito = 0;
+    }
+  }
+
   double get _totalSelecionado => _pendentes
       .where((a) => _selecionados.contains(a.idAbastecimento ?? ''))
       .fold<double>(
@@ -159,6 +209,17 @@ class _BaixaScreenState extends State<BaixaScreen> {
             acc +
             (a.valorTotal ?? ((a.valorPorLitro ?? 0) * a.quantidadeLitros)),
       );
+
+  double get _valorVipe => _toDouble(_valorVipeCtrl.text);
+  double get _valorAugusto => _toDouble(_valorAugustoCtrl.text);
+  double get _abono => _toDouble(_abonoCtrl.text);
+  double get _creditoUsado => _toDouble(_creditoUsadoCtrl.text);
+  double get _valorRecebido => _valorVipe + _valorAugusto;
+  double get _valorRecebidoEfetivo =>
+      _valorRecebido == 0 ? _totalSelecionado : _valorRecebido;
+  double get _faltaCobrir =>
+      (_totalSelecionado - _valorRecebidoEfetivo - _abono - _creditoUsado)
+          .clamp(0, double.infinity);
 
   void _toggleSelect(String id) {
     setState(() {
@@ -195,10 +256,7 @@ class _BaixaScreenState extends State<BaixaScreen> {
   }
 
   Future<String?> _uploadAnexoPath(String filePath) async {
-    final resp = await AppState.instance.api.postMultipartFile(
-      '/uploads/drive',
-      filePath: filePath,
-    );
+    final resp = await AppState.instance.api.uploadDriveDireto(filePath);
     final url = _uploadUrlFromResponse(resp);
     if (url == null || url.trim().isEmpty) {
       throw Exception('Upload sem URL de retorno');
@@ -245,7 +303,7 @@ class _BaixaScreenState extends State<BaixaScreen> {
       paths.add(file.path);
     } else {
       final slots = 4 - _anexoUrls.length;
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         allowMultiple: true,
         type: FileType.custom,
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
@@ -311,9 +369,33 @@ class _BaixaScreenState extends State<BaixaScreen> {
       return;
     }
 
+    if (_creditoUsado > _saldoCredito + 0.005) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            'O crédito informado é maior que o saldo disponível (${AppDates.money(_saldoCredito)}).'),
+        backgroundColor: AppTheme.warning,
+      ));
+      return;
+    }
+    if (_faltaCobrir > 0.005) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Ainda falta cobrir ${AppDates.money(_faltaCobrir)}.'),
+        backgroundColor: AppTheme.warning,
+      ));
+      return;
+    }
+
     setState(() => _saving = true);
+    // Compatibilidade com baixas simples: sem rateio preenchido, todo o valor
+    // selecionado é atribuído ao recebedor escolhido.
+    final semRateio = _valorVipe == 0 && _valorAugusto == 0;
+    final valorVipe =
+        semRateio && _recebedor != 'Augusto' ? _totalSelecionado : _valorVipe;
+    final valorAugusto = semRateio && _recebedor == 'Augusto'
+        ? _totalSelecionado
+        : _valorAugusto;
     final recebedor =
-        _recebedor == 'Outros' ? _recebedorOutrosCtrl.text.trim() : _recebedor;
+        valorVipe > 0 ? 'VIPE TRANSPORTES MULTIMODAIS LTDA' : 'Augusto';
     final payload = <String, dynamic>{
       'ids': _selecionados.toList(),
       'data_baixa': AppDates.combineDateTime(_dataBaixa, _horaBaixa),
@@ -323,6 +405,12 @@ class _BaixaScreenState extends State<BaixaScreen> {
       'data_pagamento':
           AppDates.combineDateTime(_dataPagamento, _horaPagamento),
       'recebedor': recebedor,
+      'recebedor2': valorVipe > 0 && valorAugusto > 0 ? 'Augusto' : null,
+      'valor_recebedor1': valorVipe,
+      'valor_recebedor2': valorAugusto,
+      'valor_recebido': valorVipe + valorAugusto,
+      'abono_desconto': _abono,
+      'credito_usado': _creditoUsado,
       'observacao': _observacaoCtrl.text.trim(),
       'anexo': _anexoUrls.isEmpty ? null : _anexoUrls.first,
       'anexos': _anexoUrls,
@@ -344,10 +432,15 @@ class _BaixaScreenState extends State<BaixaScreen> {
         _tipoDespesa = 'Combustível';
         _dataPagamento = AppDates.todayIso();
         _horaPagamento = AppDates.currentTimeIso();
-        _recebedor = 'Vipe Transportes';
+        _recebedor = 'VIPE TRANSPORTES MULTIMODAIS LTDA';
         _recebedorOutrosCtrl.clear();
         _observacaoCtrl.clear();
         _descricaoCtrl.clear();
+        _valorVipeCtrl.clear();
+        _valorAugustoCtrl.clear();
+        _abonoCtrl.clear();
+        _creditoUsadoCtrl.clear();
+        _saldoCredito = 0;
         _anexoUrls.clear();
       });
     } on OfflineException {
@@ -457,7 +550,7 @@ class _BaixaScreenState extends State<BaixaScreen> {
   }
 
   List<Map<String, dynamic>> get _baixasOrdenadas {
-    final list = [..._baixas];
+    final list = _baixas.where(_passaFiltroHistorico).toList();
     list.sort((a, b) {
       dynamic l;
       dynamic r;
@@ -512,6 +605,88 @@ class _BaixaScreenState extends State<BaixaScreen> {
     return list;
   }
 
+  String _normalizar(dynamic value) => (value ?? '')
+      .toString()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[áàãâä]'), 'a')
+      .replaceAll(RegExp(r'[éèêë]'), 'e')
+      .replaceAll(RegExp(r'[íìîï]'), 'i')
+      .replaceAll(RegExp(r'[óòõôö]'), 'o')
+      .replaceAll(RegExp(r'[úùûü]'), 'u')
+      .replaceAll('ç', 'c')
+      .trim();
+
+  Map<String, dynamic> _abast(Map<String, dynamic> baixa) =>
+      baixa['abastecimento'] is Map
+          ? Map<String, dynamic>.from(baixa['abastecimento'] as Map)
+          : <String, dynamic>{};
+
+  bool _passaFiltroHistorico(Map<String, dynamic> baixa) {
+    final a = _abast(baixa);
+    final empresa = a['nome_proprietario'] ?? a['proprietario']?['nome'];
+    final placa = a['veiculo']?['placa'] ?? a['placa'];
+    final data = (baixa['data_hora'] ?? '').toString();
+    final valorFiltro = _histValorCtrl.text.trim();
+    if (_histEmpresaCtrl.text.trim().isNotEmpty &&
+        !_normalizar(empresa).contains(_normalizar(_histEmpresaCtrl.text))) {
+      return false;
+    }
+    if (_histPlacaCtrl.text.trim().isNotEmpty &&
+        !_normalizar(placa).contains(_normalizar(_histPlacaCtrl.text))) {
+      return false;
+    }
+    if (_histFormaPagamento.isNotEmpty &&
+        _normalizar(baixa['forma_pagamento']) !=
+            _normalizar(_histFormaPagamento)) return false;
+    if (_histRecebedor.isNotEmpty &&
+        !_normalizar(a['recebedor']).contains(_normalizar(_histRecebedor))) {
+      return false;
+    }
+    if (_histDataInicio.isNotEmpty && data.compareTo(_histDataInicio) < 0) {
+      return false;
+    }
+    if (_histDataFim.isNotEmpty &&
+        data.compareTo('${_histDataFim}T23:59:59') > 0) return false;
+    if (valorFiltro.isNotEmpty &&
+        (_toDouble(a['valor_total']) - _toDouble(valorFiltro)).abs() >= 0.005) {
+      return false;
+    }
+    return true;
+  }
+
+  double get _histTotalValor => _baixasOrdenadas.fold<double>(
+      0, (sum, b) => sum + _toDouble(_abast(b)['valor_total']));
+  double get _histTotalLitros => _baixasOrdenadas.fold<double>(
+      0, (sum, b) => sum + _toDouble(_abast(b)['quantidade_litros']));
+  double get _histTotalVipe => _baixasOrdenadas.fold<double>(0, (sum, b) {
+        final a = _abast(b);
+        final rateio = a['valor_recebedor1'];
+        if (rateio != null) return sum + _toDouble(rateio);
+        return _normalizar(a['recebedor']).contains('augusto')
+            ? sum
+            : sum + _toDouble(a['valor_total']);
+      });
+  double get _histTotalAugusto => _baixasOrdenadas.fold<double>(0, (sum, b) {
+        final a = _abast(b);
+        final rateio = a['valor_recebedor2'];
+        if (rateio != null) return sum + _toDouble(rateio);
+        return _normalizar(a['recebedor']).contains('augusto')
+            ? sum + _toDouble(a['valor_total'])
+            : sum;
+      });
+
+  void _limparFiltrosHistorico() {
+    setState(() {
+      _histEmpresaCtrl.clear();
+      _histPlacaCtrl.clear();
+      _histValorCtrl.clear();
+      _histFormaPagamento = '';
+      _histRecebedor = '';
+      _histDataInicio = '';
+      _histDataFim = '';
+    });
+  }
+
   void _setSort(String key) {
     setState(() {
       if (_sortBy == key) {
@@ -539,6 +714,157 @@ class _BaixaScreenState extends State<BaixaScreen> {
     }
   }
 
+  Widget _buildResumoHistorico() {
+    final cards = [
+      KpiCard(
+          titulo: 'Total em litros',
+          valor: '${AppDates.number(_histTotalLitros)} L',
+          icone: Icons.local_gas_station_outlined),
+      KpiCard(
+          titulo: 'Valor baixado',
+          valor: AppDates.money(_histTotalValor),
+          icone: Icons.payments_outlined,
+          cor: AppTheme.success),
+      KpiCard(
+          titulo: 'Recebido VIPE',
+          valor: AppDates.money(_histTotalVipe),
+          icone: Icons.account_balance_wallet_outlined),
+      KpiCard(
+          titulo: 'Recebido Augusto',
+          valor: AppDates.money(_histTotalAugusto),
+          icone: Icons.person_outline),
+      KpiCard(
+          titulo: 'Registros',
+          valor: '${_baixasOrdenadas.length}',
+          icone: Icons.receipt_long_outlined),
+    ];
+    return LayoutBuilder(builder: (context, constraints) {
+      final largura = constraints.maxWidth >= 700
+          ? (constraints.maxWidth - 16) / 3
+          : constraints.maxWidth;
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children:
+            cards.map((card) => SizedBox(width: largura, child: card)).toList(),
+      );
+    });
+  }
+
+  Widget _buildFiltrosHistorico() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(children: [
+          Row(children: [
+            const Expanded(
+                child: Text('Filtros do histórico',
+                    style: TextStyle(fontWeight: FontWeight.w700))),
+            TextButton.icon(
+              onPressed: () => setState(
+                  () => _showFiltrosHistorico = !_showFiltrosHistorico),
+              icon:
+                  Icon(_showFiltrosHistorico ? Icons.expand_less : Icons.tune),
+              label: Text(_showFiltrosHistorico ? 'Recolher' : 'Filtrar'),
+            ),
+          ]),
+          if (_showFiltrosHistorico) ...[
+            TextField(
+                controller: _histEmpresaCtrl,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                    labelText: 'Empresa',
+                    prefixIcon: Icon(Icons.business_outlined))),
+            const SizedBox(height: 8),
+            TextField(
+                controller: _histPlacaCtrl,
+                textCapitalization: TextCapitalization.characters,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                    labelText: 'Placa',
+                    prefixIcon: Icon(Icons.local_shipping_outlined))),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                  child: DropdownButtonFormField<String>(
+                value: _histFormaPagamento,
+                decoration:
+                    const InputDecoration(labelText: 'Forma de pagamento'),
+                items: const [
+                  DropdownMenuItem(value: '', child: Text('Todas')),
+                  DropdownMenuItem(value: 'Dinheiro', child: Text('Dinheiro')),
+                  DropdownMenuItem(value: 'PIX', child: Text('PIX')),
+                  DropdownMenuItem(
+                      value: 'Cartão Crédito', child: Text('Cartão Crédito')),
+                  DropdownMenuItem(
+                      value: 'Cartão Débito', child: Text('Cartão Débito')),
+                  DropdownMenuItem(value: 'Cheque', child: Text('Cheque')),
+                  DropdownMenuItem(
+                      value: 'Transferência', child: Text('Transferência')),
+                  DropdownMenuItem(value: 'Boleto', child: Text('Boleto')),
+                ],
+                onChanged: (v) => setState(() => _histFormaPagamento = v ?? ''),
+              )),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: DropdownButtonFormField<String>(
+                value: _histRecebedor,
+                decoration: const InputDecoration(labelText: 'Recebedor'),
+                items: const [
+                  DropdownMenuItem(value: '', child: Text('Todos')),
+                  DropdownMenuItem(value: 'VIPE', child: Text('VIPE')),
+                  DropdownMenuItem(value: 'Augusto', child: Text('Augusto')),
+                ],
+                onChanged: (v) => setState(() => _histRecebedor = v ?? ''),
+              )),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                  child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final p = await pickDateIso(context,
+                            initialIso: _histDataInicio);
+                        if (p != null) setState(() => _histDataInicio = p);
+                      },
+                      icon: const Icon(Icons.event),
+                      label: Text(_histDataInicio.isEmpty
+                          ? 'Data início'
+                          : AppDates.formatDateBr(_histDataInicio)))),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final p = await pickDateIso(context,
+                            initialIso: _histDataFim);
+                        if (p != null) setState(() => _histDataFim = p);
+                      },
+                      icon: const Icon(Icons.event),
+                      label: Text(_histDataFim.isEmpty
+                          ? 'Data fim'
+                          : AppDates.formatDateBr(_histDataFim)))),
+            ]),
+            const SizedBox(height: 8),
+            TextField(
+                controller: _histValorCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                    labelText: 'Valor exato',
+                    prefixIcon: Icon(Icons.attach_money))),
+            Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                    onPressed: _limparFiltrosHistorico,
+                    icon: const Icon(Icons.filter_alt_off),
+                    label: const Text('Limpar filtros'))),
+          ],
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LoadingOverlay(
@@ -564,6 +890,10 @@ class _BaixaScreenState extends State<BaixaScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          _buildResumoHistorico(),
+          const SizedBox(height: 10),
+          _buildFiltrosHistorico(),
           const SizedBox(height: 10),
           if (_showNovaBaixa) ...[
             _buildNovaBaixaCard(),
@@ -909,6 +1239,84 @@ class _BaixaScreenState extends State<BaixaScreen> {
               ),
             ]),
             const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceAlt,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Rateio do recebimento',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'Se não preencher o rateio, o valor total será atribuído ao recebedor selecionado.',
+                      style:
+                          TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(
+                        child: TextField(
+                      controller: _valorVipeCtrl,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                          labelText: 'Valor VIPE', prefixText: 'R\$ '),
+                    )),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: TextField(
+                      controller: _valorAugustoCtrl,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                          labelText: 'Valor Augusto', prefixText: 'R\$ '),
+                    )),
+                  ]),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(
+                        child: TextField(
+                      controller: _abonoCtrl,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                          labelText: 'Abono/desconto', prefixText: 'R\$ '),
+                    )),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: TextField(
+                      controller: _creditoUsadoCtrl,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                          labelText: 'Crédito usado',
+                          helperText: 'Saldo: ${AppDates.money(_saldoCredito)}',
+                          prefixText: 'R\$ '),
+                    )),
+                  ]),
+                  const SizedBox(height: 8),
+                  Text(
+                    _faltaCobrir > 0.005
+                        ? 'Falta cobrir: ${AppDates.money(_faltaCobrir)}'
+                        : 'Valor totalmente coberto',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: _faltaCobrir > 0.005
+                            ? AppTheme.danger
+                            : AppTheme.success),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _descricaoCtrl,
               maxLines: 2,
@@ -987,24 +1395,15 @@ class _BaixaScreenState extends State<BaixaScreen> {
                   decoration: const InputDecoration(labelText: 'Recebedor'),
                   items: const [
                     DropdownMenuItem(
-                        value: 'Vipe Transportes',
-                        child: Text('Vipe Transportes')),
+                        value: 'VIPE TRANSPORTES MULTIMODAIS LTDA',
+                        child: Text('VIPE TRANSPORTES MULTIMODAIS LTDA')),
                     DropdownMenuItem(value: 'Augusto', child: Text('Augusto')),
-                    DropdownMenuItem(value: 'Outros', child: Text('Outros')),
                   ],
-                  onChanged: (v) =>
-                      setState(() => _recebedor = v ?? 'Vipe Transportes'),
+                  onChanged: (v) => setState(() =>
+                      _recebedor = v ?? 'VIPE TRANSPORTES MULTIMODAIS LTDA'),
                 ),
               ),
             ]),
-            if (_recebedor == 'Outros') ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: _recebedorOutrosCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'Recebedor (Outros)'),
-              ),
-            ],
             const SizedBox(height: 8),
             TextField(
               controller: _observacaoCtrl,

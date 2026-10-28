@@ -41,8 +41,11 @@ class ApiClient {
   Future<bool>? _refreshInFlight;
 
   static const _connectTimeout = Duration(seconds: 20);
-  static const _imageCompressThresholdBytes = 2 * 1024 * 1024;
-  static const _imageCompressTargetBytes = 1200 * 1024;
+  /// Upload direto para o Google: rede do motorista costuma ser lenta, e aqui
+  /// não há proxy nosso para abortar antes.
+  static const _uploadTimeout = Duration(seconds: 60);
+  static const _imageCompressThresholdBytes = 300 * 1024;
+  static const _imageCompressTargetBytes = 300 * 1024;
 
   /// Numero de tentativas em falhas transitorias (rede/5xx).
   /// 1 = sem retry; 3 = tentativa + 2 retentativas.
@@ -135,6 +138,11 @@ class ApiClient {
     return _send('PUT', _uri(path, query), body: body);
   }
 
+  Future<dynamic> patch(String path, Map<String, dynamic> body,
+      {Map<String, dynamic>? query}) async {
+    return _send('PATCH', _uri(path, query), body: body);
+  }
+
   Future<dynamic> delete(String path, {Map<String, dynamic>? query}) async {
     return _send('DELETE', _uri(path, query));
   }
@@ -144,9 +152,11 @@ class ApiClient {
     required String filePath,
     String fieldName = 'file',
     Map<String, String>? fields,
+    bool compress = true,
   }) async {
     final uri = _uri(path);
-    final uploadPath = await _prepareMultipartFilePath(filePath);
+    final uploadPath =
+        compress ? await _prepareMultipartFilePath(filePath) : filePath;
     final shouldDeleteTemp = uploadPath != filePath;
     var triedAuthRefresh = false;
 
@@ -192,6 +202,108 @@ class ApiClient {
     }
   }
 
+  /// Envia o arquivo direto para o Google Drive, sem passar os bytes pelo
+  /// nosso backend. O servidor só abre a sessão de upload e, no fim, aplica a
+  /// permissão do arquivo — o tráfego de imagem sai inteiro da nossa API.
+  ///
+  /// Devolve o mesmo formato de `postMultipartFile` em `/uploads/drive`, para
+  /// que os chamadores não precisem distinguir os dois caminhos.
+  Future<dynamic> uploadDriveDireto(
+    String filePath, {
+    bool compress = true,
+    String sessaoPath = '/uploads/drive/sessao',
+    String finalizarPath = '/uploads/drive/finalizar',
+  }) async {
+    final uploadPath =
+        compress ? await _prepareMultipartFilePath(filePath) : filePath;
+    final shouldDeleteTemp = uploadPath != filePath;
+
+    try {
+      try {
+        return await _uploadDriveSessao(uploadPath, sessaoPath, finalizarPath);
+      } catch (e) {
+        // O upload direto depende de endpoints novos no backend. Se o servidor
+        // ainda não os tiver (versão antiga em produção) ou o PUT no Google
+        // falhar, cai no upload via API: gasta mais banda, mas o motorista não
+        // fica travado sem conseguir registrar o abastecimento.
+        _log('upload direto Drive falhou ($e); usando /uploads/drive');
+        return await postMultipartFile(
+          '/uploads/drive',
+          filePath: uploadPath,
+          fieldName: 'file',
+          compress: false,
+        );
+      }
+    } finally {
+      if (shouldDeleteTemp) {
+        try {
+          await File(uploadPath).delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<dynamic> _uploadDriveSessao(
+    String uploadPath,
+    String sessaoPath,
+    String finalizarPath,
+  ) async {
+    {
+      final file = File(uploadPath);
+      final tamanho = await file.length();
+      final nome = uploadPath.split(Platform.pathSeparator).last.split('/').last;
+      final mimeType = _mimeTypeParaArquivo(nome);
+
+      final sessao = await post(sessaoPath, {
+        'filename': nome,
+        'mimeType': mimeType,
+        'size': tamanho,
+      });
+
+      final uploadUrl = (sessao is Map ? sessao['uploadUrl'] : null) as String?;
+      if (uploadUrl == null || uploadUrl.isEmpty) {
+        throw Exception('Servidor não devolveu a sessão de upload do Drive.');
+      }
+
+      final bytes = await file.readAsBytes();
+      final resp = await _http
+          .put(
+            Uri.parse(uploadUrl),
+            headers: {
+              'Content-Type': mimeType,
+              'Content-Length': '${bytes.length}',
+            },
+            body: bytes,
+          )
+          .timeout(_uploadTimeout);
+
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        _log('upload direto Drive -> HTTP ${resp.statusCode}: ${resp.body}');
+        throw Exception('Falha ao enviar arquivo para o Google Drive.');
+      }
+
+      final enviado = jsonDecode(resp.body) as Map<String, dynamic>;
+      final fileId = enviado['id'] as String?;
+      if (fileId == null || fileId.isEmpty) {
+        throw Exception('Google Drive não devolveu o id do arquivo.');
+      }
+
+      _log('upload direto Drive: ${_formatBytes(bytes.length)} -> $fileId');
+      return await post(finalizarPath, {'fileId': fileId});
+    }
+  }
+
+  String _mimeTypeParaArquivo(String nome) {
+    final lower = nome.toLowerCase().split('?').first;
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    if (lower.endsWith('.svg')) return 'image/svg+xml';
+    if (lower.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    return 'image/jpeg';
+  }
+
   Future<String> _prepareMultipartFilePath(String filePath) async {
     final file = File(filePath);
     if (!await file.exists()) return filePath;
@@ -210,9 +322,9 @@ class ApiClient {
       var bestSide = 0;
       var bestQuality = 0;
 
-      for (final maxSide in const [1600, 1280, 1024]) {
+      for (final maxSide in const [1280, 1024, 800]) {
         final resized = _resizeToMaxSide(oriented, maxSide);
-        for (final quality in const [78, 68, 58, 48]) {
+        for (final quality in const [70, 60, 50, 40]) {
           final encoded = img.encodeJpg(resized, quality: quality);
           if (bestBytes.isEmpty || encoded.length < bestBytes.length) {
             bestBytes = encoded;

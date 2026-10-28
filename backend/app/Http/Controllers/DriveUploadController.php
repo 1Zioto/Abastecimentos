@@ -2,36 +2,145 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\GoogleDriveService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class DriveUploadController extends Controller
 {
-    public function store(Request $request)
+    public function store(Request $request, GoogleDriveService $googleDrive): JsonResponse
     {
         $data = $request->validate([
             'file' => 'required|file|max:20480',
+            'destino' => 'nullable|string|max:80',
         ]);
 
         try {
             $uploaded = $data['file'];
+            $destino = trim((string) ($data['destino'] ?? ''));
+            $nomePadrao = $destino !== '' ? $destino : 'comprovante';
 
-            $cloudinaryUrl = (string) env('CLOUDINARY_URL', '');
-            // Cloudinary migration: all new uploads go directly to Google Drive
+            // Todos os uploads vão para o Google Drive configurado.
+            $file = $googleDrive->uploadComprovante(
+                $uploaded->getRealPath(),
+                $uploaded->getClientOriginalName() ?: $nomePadrao,
+                $uploaded->getMimeType() ?: 'application/octet-stream'
+            );
 
+            return new JsonResponse([
+                'message' => 'Arquivo enviado para o Google Drive.',
+                'file' => $file,
+            ], 201);
+        } catch (\Throwable $e) {
+            error_log('[upload-drive] ' . json_encode([
+                'destino' => $data['destino'] ?? null,
+                'message' => $e->getMessage(),
+                'exception' => get_class($e),
+            ], JSON_UNESCAPED_UNICODE));
 
-            $folderId = (string) env('GOOGLE_DRIVE_FOLDER_ID', '');
-            if (!$folderId) {
-                return response('Falha ao obter pasta no Google Drive.', 500);
-            }
+            return new JsonResponse([
+                'message' => $e->getMessage() ?: 'Falha ao enviar arquivo.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 
+    /**
+     * Abre uma sessão de upload resumível no Drive e devolve só a URI.
+     * O cliente manda os bytes direto para o Google — nada de imagem passa
+     * por este backend (nem pela cota de transferência da Vercel).
+     */
+    public function criarSessao(Request $request, GoogleDriveService $googleDrive): JsonResponse
+    {
+        $data = $request->validate([
+            'filename' => 'required|string|max:255',
+            'mimeType' => 'required|string|max:120',
+            'size' => 'nullable|integer|min:1|max:20971520',
+        ]);
+
+        try {
+            $sessao = $googleDrive->criarSessaoUpload(
+                $data['filename'],
+                $data['mimeType'],
+                isset($data['size']) ? (int) $data['size'] : null,
+                $request->header('Origin')
+            );
+
+            return new JsonResponse($sessao, 201);
+        } catch (\InvalidArgumentException $e) {
+            return new JsonResponse(['message' => $e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Erro DriveUploadController@criarSessao: ' . $e->getMessage(), ['exception' => $e]);
+            return new JsonResponse(['message' => $e->getMessage() ?: 'Falha ao abrir sessão de upload.'], 500);
+        }
+    }
+
+    /**
+     * Aplica a permissão pública e devolve os links do arquivo que o cliente
+     * acabou de enviar direto para o Drive.
+     */
+    public function finalizarSessao(Request $request, GoogleDriveService $googleDrive): JsonResponse
+    {
+        $data = $request->validate([
+            'fileId' => 'required|string|max:120',
+        ]);
+
+        try {
+            $file = $googleDrive->finalizarUpload($data['fileId']);
+            $mimeType = (string) ($file['mimeType'] ?? '');
+
+            // `file` atende app Flutter e frontend; os campos soltos mantêm o
+            // mesmo contrato que o bot já consome de upload-drive-base64.
+            return new JsonResponse([
+                'message' => 'Arquivo enviado para o Google Drive.',
+                'file' => $file,
+                'url' => $file['downloadUrl'],
+                'previewUrl' => $file['downloadUrl'],
+                'public_id' => $file['file_id'],
+                'resource_type' => str_starts_with($mimeType, 'image/') ? 'image' : 'raw',
+                'format' => explode('/', $mimeType)[1] ?? '',
+            ], 201);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Erro DriveUploadController@finalizarSessao: ' . $e->getMessage(), ['exception' => $e]);
+            return new JsonResponse(['message' => $e->getMessage() ?: 'Falha ao finalizar upload.'], 500);
+        }
+    }
+
+    private function temCloudinaryConfigurado(): bool
+    {
+        return trim((string) env('CLOUDINARY_URL', '')) !== ''
+            || trim((string) env('CLOUDINARY_URLS', '')) !== ''
+            || trim((string) env('CLOUDINARY_URL_2', '')) !== '';
+    }
+
+    public function storeBase64(Request $request)
+    {
+        $data = $request->validate([
+            'filename' => 'required|string',
+            'mimeType' => 'required|string',
+            'base64Data' => 'required|string',
+        ]);
+
+        try {
             $driveService = app(\App\Services\GoogleDriveService::class);
             $accessToken = $driveService->accessToken();
-            $extension = $uploaded->getClientOriginalExtension();
-            $targetName = Str::uuid()->toString() . ($extension ? '.' . strtolower($extension) : '');
-            $mimeType = $uploaded->getMimeType() ?: 'application/octet-stream';
-            $bytes = file_get_contents($uploaded->getRealPath());
+            $folderId = (string) env('GOOGLE_DRIVE_BAIXAS_FOLDER_ID', '');
+            if (!$folderId) {
+                $folderId = $driveService->folderId($accessToken);
+            }
+            if (!$folderId) {
+                return response()->json(['message' => 'Pasta do Google Drive não configurada.'], 500);
+            }
+
+            $bytes = base64_decode($data['base64Data']);
+            if ($bytes === false) {
+                return response()->json(['message' => 'Falha ao decodificar base64.'], 400);
+            }
+
+            $targetName = $data['filename'];
+            $mimeType = $data['mimeType'];
 
             $metadata = [
                 'name' => $targetName,
@@ -60,7 +169,7 @@ class DriveUploadController extends Controller
                 ->post('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,webContentLink');
 
             if (!$uploadResponse->successful()) {
-                return new \Illuminate\Http\JsonResponse([
+                return response()->json([
                     'message' => 'Falha ao enviar arquivo para o Google Drive.',
                     'error' => $uploadResponse->body(),
                 ], 500);
@@ -79,21 +188,22 @@ class DriveUploadController extends Controller
                     ]);
             }
 
-            return new \Illuminate\Http\JsonResponse([
+            // Mapeando a resposta para o formato esperado pelo Bot
+            $isPdf = str_contains(strtolower($mimeType), 'pdf');
+            $extParam = $isPdf ? '&ext=.pdf' : '';
+            $downloadUrl = $fileId ? 'https://drive.google.com/uc?id=' . $fileId . $extParam : null;
+            return response()->json([
                 'message' => 'Arquivo enviado para o Google Drive.',
-                'file' => [
-                    'id' => $fileId,
-                    'name' => $file['name'] ?? $targetName,
-                    'mimeType' => $file['mimeType'] ?? $mimeType,
-                    'size' => (int) ($file['size'] ?? strlen($bytes)),
-                    'webViewLink' => $file['webViewLink'] ?? null,
-                    'webContentLink' => $file['webContentLink'] ?? null,
-                    'downloadUrl' => $fileId ? 'https://drive.google.com/uc?id=' . $fileId : null,
-                ],
+                'url' => $downloadUrl,
+                'previewUrl' => $downloadUrl,
+                'public_id' => $fileId,
+                'resource_type' => str_starts_with($mimeType, 'image/') ? 'image' : 'raw',
+                'format' => explode('/', $mimeType)[1] ?? '',
             ], 201);
         } catch (\Throwable $e) {
-            return new \Illuminate\Http\JsonResponse([
-                'message' => 'Falha ao enviar arquivo para o Google Drive.',
+            \Illuminate\Support\Facades\Log::error('Erro DriveUploadController@storeBase64: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'message' => 'Falha interna ao enviar arquivo para o Google Drive.',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -116,8 +226,12 @@ class DriveUploadController extends Controller
             // Let's make accessToken public in GoogleDriveService and use it here.
             $accessToken = $driveService->accessToken();
 
-            $response = Http::withToken($accessToken)
-                ->get("https://www.googleapis.com/drive/v3/files/{$id}?alt=media");
+            $request = Http::withToken($accessToken);
+            if (PHP_OS_FAMILY === 'Windows') {
+                $request = $request->withoutVerifying();
+            }
+
+            $response = $request->get("https://www.googleapis.com/drive/v3/files/{$id}?alt=media");
 
             if (!$response->successful()) {
                 return response('Imagem não encontrada: ' . $response->body(), 404);
@@ -128,181 +242,64 @@ class DriveUploadController extends Controller
                 $contentType = 'image/jpeg';
             }
 
+            // s-maxage instrui a CDN da Vercel a cachear na borda: nas visitas
+            // seguintes a imagem sai direto do edge, sem acionar o PHP nem o
+            // Google Drive. O conteúdo de um fileId do Drive é imutável.
             return response($response->body(), 200)
                 ->header('Content-Type', $contentType)
-                ->header('Cache-Control', 'public, max-age=864000');
+                ->header('Cache-Control', 'public, max-age=864000, s-maxage=2592000, immutable');
         } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Erro DriveUploadController@showImage: ' . $e->getMessage(), ['exception' => $e]);
             return response('Erro ao buscar imagem: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine(), 500);
         }
     }
 
-    private function resolveServiceAccountCredentials(): array
+    public function showThumb(Request $request)
     {
-        $jsonEnv = (string) env('GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON', '');
-        if ($jsonEnv !== '') {
-            return $this->decodeCredentialJson($jsonEnv);
+        $id = $request->query('id');
+        if (!$id) {
+            return response('ID não informado', 400);
         }
 
-        $credentialPath = (string) env('GOOGLE_APPLICATION_CREDENTIALS', '');
-        if ($credentialPath !== '' && is_file($credentialPath)) {
-            $content = file_get_contents($credentialPath);
-            if ($content === false) {
-                throw new \RuntimeException('Não foi possível ler GOOGLE_APPLICATION_CREDENTIALS.');
+        try {
+            $driveService = app(\App\Services\GoogleDriveService::class);
+            $accessToken = $driveService->accessToken();
+
+            $request = Http::withToken($accessToken);
+            if (PHP_OS_FAMILY === 'Windows') {
+                $request = $request->withoutVerifying();
             }
-            return $this->decodeCredentialJson($content);
-        }
 
-        throw new \RuntimeException('Credenciais de service account não configuradas.');
-    }
+            $response = $request->get("https://www.googleapis.com/drive/v3/files/{$id}?fields=thumbnailLink");
 
-    private function decodeCredentialJson(string $raw): array
-    {
-        $trimmed = trim($raw);
-
-        if (
-            (str_starts_with($trimmed, '"') && str_ends_with($trimmed, '"')) ||
-            (str_starts_with($trimmed, "'") && str_ends_with($trimmed, "'"))
-        ) {
-            $trimmed = substr($trimmed, 1, -1);
-        }
-
-        if (!str_starts_with($trimmed, '{')) {
-            $decoded = base64_decode($trimmed, true);
-            if ($decoded !== false) {
-                $trimmed = trim($decoded);
+            if (!$response->successful()) {
+                return response('Arquivo não encontrado', 404);
             }
+
+            $data = $response->json();
+            $thumbnailLink = $data['thumbnailLink'] ?? null;
+
+            if (!$thumbnailLink) {
+                return response('Miniatura não disponível', 404);
+            }
+
+            $thumbRequest = Http::withToken($accessToken);
+            if (PHP_OS_FAMILY === 'Windows') {
+                $thumbRequest = $thumbRequest->withoutVerifying();
+            }
+            $thumbResponse = $thumbRequest->get($thumbnailLink);
+            if (!$thumbResponse->successful()) {
+                // If it fails, fallback to redirecting to the thumbnail link directly, 
+                // sometimes Google lh3 links work directly in the browser even if backend fetch fails
+                return redirect($thumbnailLink);
+            }
+
+            return response($thumbResponse->body(), 200)
+                ->header('Content-Type', 'image/jpeg')
+                ->header('Cache-Control', 'public, max-age=864000, s-maxage=2592000, immutable');
+        } catch (\Throwable $e) {
+            return response('Erro ao buscar miniatura: ' . $e->getMessage(), 500);
         }
-
-        $json = json_decode($trimmed, true);
-        if (!is_array($json)) {
-            throw new \RuntimeException('Credenciais do Google Drive inválidas.');
-        }
-
-        if (empty($json['client_email']) || empty($json['private_key'])) {
-            throw new \RuntimeException('Credenciais incompletas (client_email/private_key).');
-        }
-
-        $json['private_key'] = $this->normalizePrivateKey((string) $json['private_key']);
-
-        return $json;
     }
 
-    private function normalizePrivateKey(string $privateKey): string
-    {
-        $key = trim($privateKey);
-        $key = str_replace(["\\n", "\\r"], ["\n", "\r"], $key);
-
-        if (!str_contains($key, "\n") && str_contains($key, '-----BEGIN')) {
-            $key = preg_replace('/\s+/', "\n", $key) ?? $key;
-            $key = str_replace("\nPRIVATE\nKEY-----", " PRIVATE KEY-----", $key);
-            $key = str_replace("-----END\nPRIVATE\nKEY-----", "-----END PRIVATE KEY-----", $key);
-        }
-
-        return $key;
-    }
-
-    private function fetchAccessToken(): string
-    {
-        $serviceAccountJson = (string) env('GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON', '');
-        if ($serviceAccountJson !== '') {
-            $credentials = $this->resolveServiceAccountCredentials();
-            return $this->fetchAccessTokenFromServiceAccount($credentials);
-        }
-
-        $clientId = (string) env('GOOGLE_DRIVE_CLIENT_ID', '');
-        $clientSecret = (string) env('GOOGLE_DRIVE_CLIENT_SECRET', '');
-        $refreshToken = (string) env('GOOGLE_DRIVE_REFRESH_TOKEN', '');
-
-        if ($clientId !== '' && $clientSecret !== '' && $refreshToken !== '') {
-            return $this->fetchAccessTokenFromRefreshToken($clientId, $clientSecret, $refreshToken);
-        }
-
-        throw new \RuntimeException(
-            'Credenciais do Google Drive não configuradas. Use GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON ou GOOGLE_DRIVE_CLIENT_ID/GOOGLE_DRIVE_CLIENT_SECRET/GOOGLE_DRIVE_REFRESH_TOKEN.'
-        );
-    }
-
-    private function fetchAccessTokenFromServiceAccount(array $credentials): string
-    {
-        $clientEmail = $credentials['client_email'];
-        $privateKey = $credentials['private_key'];
-        $tokenUri = $credentials['token_uri'] ?? 'https://oauth2.googleapis.com/token';
-        $scope = 'https://www.googleapis.com/auth/drive.file';
-
-        $now = time();
-        $payload = [
-            'iss' => $clientEmail,
-            'scope' => $scope,
-            'aud' => $tokenUri,
-            'exp' => $now + 3600,
-            'iat' => $now,
-        ];
-
-        $jwt = $this->buildJwt($payload, $privateKey);
-
-        $response = Http::asForm()
-            ->connectTimeout(10)
-            ->timeout(20)
-            ->post($tokenUri, [
-            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-            'assertion' => $jwt,
-        ]);
-
-        if (!$response->successful()) {
-            throw new \RuntimeException('Falha ao obter token do Google: ' . $response->body());
-        }
-
-        $accessToken = $response->json('access_token');
-        if (!$accessToken) {
-            throw new \RuntimeException('Token de acesso do Google não retornado.');
-        }
-
-        return $accessToken;
-    }
-
-    private function fetchAccessTokenFromRefreshToken(string $clientId, string $clientSecret, string $refreshToken): string
-    {
-        $response = Http::asForm()
-            ->connectTimeout(10)
-            ->timeout(20)
-            ->post('https://oauth2.googleapis.com/token', [
-                'client_id' => $clientId,
-                'client_secret' => $clientSecret,
-                'refresh_token' => $refreshToken,
-                'grant_type' => 'refresh_token',
-            ]);
-
-        if (!$response->successful()) {
-            throw new \RuntimeException('Falha ao obter token via refresh_token: ' . $response->body());
-        }
-
-        $accessToken = $response->json('access_token');
-        if (!$accessToken) {
-            throw new \RuntimeException('Token de acesso OAuth não retornado.');
-        }
-
-        return $accessToken;
-    }
-
-    private function buildJwt(array $payload, string $privateKey): string
-    {
-        $header = ['alg' => 'RS256', 'typ' => 'JWT'];
-
-        $headerEncoded = $this->base64UrlEncode(json_encode($header, JSON_UNESCAPED_SLASHES));
-        $payloadEncoded = $this->base64UrlEncode(json_encode($payload, JSON_UNESCAPED_SLASHES));
-        $unsigned = $headerEncoded . '.' . $payloadEncoded;
-
-        $signature = '';
-        $ok = openssl_sign($unsigned, $signature, $privateKey, OPENSSL_ALGO_SHA256);
-        if (!$ok) {
-            throw new \RuntimeException('Falha ao assinar JWT com private_key: ' . (openssl_error_string() ?: 'erro desconhecido'));
-        }
-
-        return $unsigned . '.' . $this->base64UrlEncode($signature);
-    }
-
-    private function base64UrlEncode(string $value): string
-    {
-        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
-    }
 }

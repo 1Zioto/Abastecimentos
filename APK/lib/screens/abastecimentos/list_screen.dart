@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/app_state.dart';
 import '../../core/api_client.dart';
+import '../../core/cached_remote_image.dart';
 import '../../core/constants.dart';
 import '../../core/date_utils.dart';
 import '../../core/file_opener.dart';
@@ -34,6 +35,8 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
   String? _filtroTipo;
   String? _dataInicio;
   String? _dataFim;
+  double? _filtroValor;
+  bool? _filtroBaixa;
 
   final _placaCtrl = TextEditingController();
 
@@ -66,6 +69,8 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
       dataInicio: _dataInicio,
       dataFim: _dataFim,
       local: AppState.instance.auth.filialAtual,
+      valorTotal: _filtroValor,
+      baixa: _filtroBaixa,
     );
 
     if (!mounted) return;
@@ -106,6 +111,8 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
         initialTipo: _filtroTipo,
         initialDataInicio: _dataInicio,
         initialDataFim: _dataFim,
+        initialValor: _filtroValor,
+        initialBaixa: _filtroBaixa,
       ),
     );
 
@@ -117,6 +124,8 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
         _filtroTipo = result['tipo'] as String?;
         _dataInicio = result['data_inicio'] as String?;
         _dataFim = result['data_fim'] as String?;
+        _filtroValor = result['valor'] as double?;
+        _filtroBaixa = result['baixa'] as bool?;
       });
       await _load();
     }
@@ -278,7 +287,9 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
       (_filtroPlaca != null && _filtroPlaca!.isNotEmpty) ||
       _filtroTipo != null ||
       _dataInicio != null ||
-      _dataFim != null;
+      _dataFim != null ||
+      _filtroValor != null ||
+      _filtroBaixa != null;
 
   Future<void> _trocarFilial(String? filial) async {
     if (filial == null || filial.isEmpty) return;
@@ -292,6 +303,8 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
       _filtroTipo = null;
       _dataInicio = null;
       _dataFim = null;
+      _filtroValor = null;
+      _filtroBaixa = null;
     });
     await _load();
   }
@@ -317,6 +330,8 @@ class _AbastecimentosListScreenState extends State<AbastecimentosListScreen> {
                       _filtroTipo = null;
                       _dataInicio = null;
                       _dataFim = null;
+                      _filtroValor = null;
+                      _filtroBaixa = null;
                     });
                     _load();
                   }
@@ -696,10 +711,30 @@ class _AbastTile extends StatelessWidget {
       );
     }
 
-    final uri = Uri.parse(telefone == null
-        ? 'https://wa.me/?text=${Uri.encodeComponent(msg)}'
-        : 'https://wa.me/$telefone?text=${Uri.encodeComponent(msg)}');
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    // Tenta o esquema nativo primeiro (abre o app direto); o link wa.me passa
+    // pelo navegador e, em alguns aparelhos, redireciona para a Play Store
+    // mesmo com o WhatsApp instalado.
+    final texto = Uri.encodeComponent(msg);
+    final nativo = Uri.parse(telefone == null
+        ? 'whatsapp://send?text=$texto'
+        : 'whatsapp://send?phone=$telefone&text=$texto');
+    final web = Uri.parse(telefone == null
+        ? 'https://wa.me/?text=$texto'
+        : 'https://wa.me/$telefone?text=$texto');
+
+    var ok = false;
+    try {
+      ok = await launchUrl(nativo, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok) {
+      try {
+        ok = await launchUrl(web, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        ok = false;
+      }
+    }
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -844,6 +879,31 @@ class _AbastTile extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: item.baixaAbastecimento
+                          ? AppTheme.success.withOpacity(0.15)
+                          : AppTheme.warning.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: item.baixaAbastecimento
+                            ? AppTheme.success.withOpacity(0.5)
+                            : AppTheme.warning.withOpacity(0.5),
+                      ),
+                    ),
+                    child: Text(
+                      item.baixaAbastecimento ? 'Baixado' : 'Pendente',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: item.baixaAbastecimento
+                            ? AppTheme.success
+                            : AppTheme.warning,
                       ),
                     ),
                   ),
@@ -1006,12 +1066,12 @@ class _ImagemMiniatura extends StatelessWidget {
     required Widget Function() fallback,
   }) {
     if (_remote) {
-      return Image.network(
-        url,
+      return CachedRemoteImage(
+        url: url,
         width: width,
         height: height,
         fit: fit,
-        errorBuilder: (_, __, ___) => fallback(),
+        error: fallback(),
       );
     }
     return Image.file(
@@ -1085,6 +1145,8 @@ class _FiltrosSheet extends StatefulWidget {
   final String? initialTipo;
   final String? initialDataInicio;
   final String? initialDataFim;
+  final double? initialValor;
+  final bool? initialBaixa;
 
   const _FiltrosSheet({
     required this.proprietarios,
@@ -1094,6 +1156,8 @@ class _FiltrosSheet extends StatefulWidget {
     required this.initialTipo,
     required this.initialDataInicio,
     required this.initialDataFim,
+    required this.initialValor,
+    required this.initialBaixa,
   });
 
   @override
@@ -1105,7 +1169,9 @@ class _FiltrosSheetState extends State<_FiltrosSheet> {
   String? _tipo;
   String? _di;
   String? _df;
+  bool? _baixa;
   late TextEditingController _placaCtrl;
+  late TextEditingController _valorCtrl;
 
   @override
   void initState() {
@@ -1117,12 +1183,38 @@ class _FiltrosSheetState extends State<_FiltrosSheet> {
     }
     _di = widget.initialDataInicio;
     _df = widget.initialDataFim;
+    _baixa = widget.initialBaixa;
     _placaCtrl = TextEditingController(text: widget.initialPlaca ?? '');
+    _valorCtrl = TextEditingController(
+      text: widget.initialValor == null
+          ? ''
+          : _formatValorInicial(widget.initialValor!),
+    );
+  }
+
+  String _formatValorInicial(double v) {
+    final isInteiro = v == v.roundToDouble();
+    final texto = isInteiro ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+    return texto.replaceAll('.', ',');
+  }
+
+  double? _parseValor(String raw) {
+    final texto = raw.trim().replaceAll('R\$', '').trim();
+    if (texto.isEmpty) return null;
+    // Aceita 1.234,56 / 1234,56 / 1234.56
+    String normalizado;
+    if (texto.contains(',')) {
+      normalizado = texto.replaceAll('.', '').replaceAll(',', '.');
+    } else {
+      normalizado = texto;
+    }
+    return double.tryParse(normalizado);
   }
 
   @override
   void dispose() {
     _placaCtrl.dispose();
+    _valorCtrl.dispose();
     super.dispose();
   }
 
@@ -1153,6 +1245,29 @@ class _FiltrosSheetState extends State<_FiltrosSheet> {
             TextField(
               controller: _placaCtrl,
               decoration: const InputDecoration(labelText: 'Placa contem'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _valorCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Valor total (exato)',
+                hintText: 'Ex.: 1500 ou 1500,50',
+                prefixText: 'R\$ ',
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<bool?>(
+              value: _baixa,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Status da baixa'),
+              items: const [
+                DropdownMenuItem<bool?>(value: null, child: Text('Todos')),
+                DropdownMenuItem<bool?>(value: false, child: Text('Pendente')),
+                DropdownMenuItem<bool?>(value: true, child: Text('Baixado')),
+              ],
+              onChanged: (v) => setState(() => _baixa = v),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
@@ -1195,6 +1310,8 @@ class _FiltrosSheetState extends State<_FiltrosSheet> {
                       'tipo': null,
                       'data_inicio': null,
                       'data_fim': null,
+                      'valor': null,
+                      'baixa': null,
                     }),
                     child: const Text('Limpar'),
                   ),
@@ -1210,6 +1327,8 @@ class _FiltrosSheetState extends State<_FiltrosSheet> {
                       'tipo': _tipo,
                       'data_inicio': _di,
                       'data_fim': _df,
+                      'valor': _parseValor(_valorCtrl.text),
+                      'baixa': _baixa,
                     }),
                     child: const Text('Aplicar'),
                   ),

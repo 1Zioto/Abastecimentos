@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/analysis_config.dart';
 import '../core/api_client.dart';
 import '../core/app_state.dart';
+import '../core/centavos_config.dart';
 import '../core/constants.dart';
 import '../core/thermal_printer.dart';
 
@@ -18,11 +19,15 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
   bool _loading = true;
   bool _useAiAnalysis = false;
   bool _savingAnalysis = false;
+  bool _savingCentavos = false;
   bool _savingEncerrante = false;
   bool _loadingPrinters = false;
   bool _printingTest = false;
   bool _autoPrintAbastecimento = false;
+  bool _autoPrintEntradaNota = false;
+  bool _configurarCentavos = true;
   String _encerranteHora = '08:00';
+  String _dataInicioCentavos = CentavosConfig.defaultDataInicio;
   String? _printerAddress;
   String? _printerName;
   List<ThermalPrinterDevice> _printers = const [];
@@ -47,6 +52,7 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
   Future<void> _load() async {
     String encerranteHora = '08:00';
     var analysisConfig = await AnalysisConfig.loadLocal();
+    var centavosConfig = await CentavosConfig.loadLocal();
     try {
       final resp =
           await AppState.instance.api.get('/configuracoes/encerrante-bomba');
@@ -60,21 +66,27 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
       // Configuracao remota e opcional para visualizacao local.
     }
     analysisConfig = await AnalysisConfig.loadRemote(AppState.instance.api);
+    centavosConfig = await CentavosConfig.loadRemote(AppState.instance.api);
     if (!mounted) return;
     setState(() {
       _useAiAnalysis = analysisConfig.useAi;
       _aiOrientationCtrl.text = analysisConfig.orientation;
       _notaFiscalPromptCtrl.text = analysisConfig.notaFiscalPrompt;
+      _configurarCentavos = centavosConfig.configurarCentavos;
+      _dataInicioCentavos = centavosConfig.dataInicio;
       _encerranteHora = encerranteHora;
     });
     final prefs = await SharedPreferences.getInstance();
     final autoPrint =
         await ThermalPrinterService.instance.autoPrintAbastecimentoEnabled();
+    final autoPrintNota =
+        await ThermalPrinterService.instance.autoPrintEntradaNotaEnabled();
     if (!mounted) return;
     setState(() {
       _printerName = prefs.getString('thermal_printer_name');
       _printerAddress = prefs.getString('thermal_printer_address');
       _autoPrintAbastecimento = autoPrint;
+      _autoPrintEntradaNota = autoPrintNota;
       _loading = false;
     });
   }
@@ -124,6 +136,7 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
   }
 
   Future<void> _clearPrinter() async {
+    await ThermalPrinterService.instance.saveAutoPrintEntradaNotaEnabled(false);
     await ThermalPrinterService.instance.clearSelectedPrinter();
     await ThermalPrinterService.instance
         .saveAutoPrintAbastecimentoEnabled(false);
@@ -132,6 +145,7 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
       _printerAddress = null;
       _printerName = null;
       _autoPrintAbastecimento = false;
+      _autoPrintEntradaNota = false;
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Text('Impressora removida das configuracoes.'),
@@ -182,6 +196,47 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
   Future<void> _setUseAiAnalysis(bool value) async {
     if (!Roles.isAdmin(AppState.instance.auth.tipo)) return;
     await _saveAnalysisConfig(useAi: value);
+  }
+
+  Future<void> _setConfigurarCentavos(bool value) async {
+    if (!Roles.isAdmin(AppState.instance.auth.tipo)) return;
+    setState(() => _savingCentavos = true);
+    try {
+      final config = await CentavosConfig.saveRemote(
+        AppState.instance.api,
+        configurarCentavos: value,
+      );
+      if (!mounted) return;
+      setState(() {
+        _configurarCentavos = config.configurarCentavos;
+        _dataInicioCentavos = config.dataInicio;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Configuração de centavos salva para todos os aparelhos.'),
+        backgroundColor: AppTheme.success,
+      ));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Erro: ${e.message}'),
+        backgroundColor: AppTheme.danger,
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Erro ao salvar configuração de centavos: $e'),
+        backgroundColor: AppTheme.danger,
+      ));
+    } finally {
+      if (mounted) setState(() => _savingCentavos = false);
+    }
+  }
+
+  String get _dataInicioCentavosBr {
+    final parts = _dataInicioCentavos.split('-');
+    return parts.length == 3
+        ? '${parts[2]}/${parts[1]}/${parts[0]}'
+        : _dataInicioCentavos;
   }
 
   Future<void> _saveAiOrientation() async {
@@ -301,6 +356,34 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
       padding: const EdgeInsets.all(14),
       children: [
         if (isAdmin) ...[
+          const Text(
+            'Valores do abastecimento',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.textMuted,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Card(
+            child: SwitchListTile(
+              value: _configurarCentavos,
+              onChanged: _savingCentavos ? null : _setConfigurarCentavos,
+              title: const Text(
+                'Configurar centavos',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(_configurarCentavos
+                  ? 'Mantém os centavos no valor total dos novos abastecimentos a partir de $_dataInicioCentavosBr.'
+                  : 'Aplica o arredondamento para valor inteiro nos novos abastecimentos.'),
+              secondary: const Icon(
+                Icons.payments_outlined,
+                color: AppTheme.primary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
           const Text(
             'Comprovantes',
             style: TextStyle(
@@ -531,6 +614,26 @@ class _ConfiguracoesScreenState extends State<ConfiguracoesScreen> {
                     'Configuracao local deste aparelho. Usa a impressora selecionada acima.',
                   ),
                   secondary: const Icon(Icons.local_printshop_outlined),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _autoPrintEntradaNota,
+                  onChanged: (value) async {
+                    if (value && (_printerAddress?.isEmpty ?? true)) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text(
+                            'Selecione uma impressora antes de ativar a impressão.'),
+                      ));
+                      return;
+                    }
+                    await ThermalPrinterService.instance
+                        .saveAutoPrintEntradaNotaEnabled(value);
+                    if (mounted) setState(() => _autoPrintEntradaNota = value);
+                  },
+                  title: const Text('Imprimir ao registrar nota de entrada'),
+                  subtitle: const Text(
+                      'Configuração deste aparelho. Notas offline terão indicação de sincronização pendente.'),
+                  secondary: const Icon(Icons.receipt_long_outlined),
                 ),
                 if (_printerAddress != null) ...[
                   const SizedBox(height: 8),
