@@ -6,16 +6,6 @@
       "runtime": "vercel-php@0.7.1"
     }
   },
-  "crons": [
-    {
-      "path": "/relatorio-semanal/enviar",
-      "schedule": "0 10 * * 1"
-    },
-    {
-      "path": "/atua/enviar",
-      "schedule": "0 4 * * *"
-    }
-  ],
   "routes": [
     {
       "src": "/(.*)",

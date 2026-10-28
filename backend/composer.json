@@ -34,9 +34,6 @@
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
         ],
-        "vercel": [
-            "@php -r \"if (getenv('APP_KEY')) { passthru('php artisan config:cache && php artisan route:cache'); } else { echo 'config/route cache pulado: APP_KEY ausente no ambiente de build' . PHP_EOL; }\""
-        ],
         "post-update-cmd": [
             "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
         ],
